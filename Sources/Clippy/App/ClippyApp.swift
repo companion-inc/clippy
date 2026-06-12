@@ -8,7 +8,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private static let idleAnimations = [
         "Idle1_1", "IdleAtom", "IdleEyeBrowRaise", "IdleFingerTap",
         "IdleHeadScratch", "IdleRopePile", "IdleSideToSide", "IdleSnooze",
-        "LookLeft", "LookRight", "Thinking", "Searching",
+        "LookLeft", "LookRight",
     ]
     private static let gestureAnimations = [
         "Congratulate", "GetAttention", "Wave", "Print", "Save", "GetArtsy",
@@ -17,19 +17,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     ]
 
     private var mascotWindow: MascotWindowController?
-    private var bubbleWindow: BubbleWindowController?
     private var morphRenderer: CoreAnimationMorphRenderer?
     private var rasterRenderer: SpriteKitRasterCharacterRenderer?
     private var animator: ClippitAnimator?
     private var soundBank: ClippitSoundBank?
     private var pendingIdle: DispatchWorkItem?
 
-    private var askInput: AskInputController?
-    private var approvalPanel: ApprovalPanelController?
-    private var assistantLoop: AssistantLoop?
+    private var chatBubble: ClippyBubbleController?
+    private var conversation: ClaudeCLIConversation?
     private var isTurnRunning = false
-    private var pendingApproval: CheckedContinuation<Bool, Never>?
     private var commandTimer: Timer?
+    private var dragTrackTimer: Timer?
 
     static func main() {
         let app = NSApplication.shared
@@ -48,8 +46,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         } else {
             startMorphMascot()
         }
-        setUpAssistant()
+        setUpBrain()
         startCommandChannel()
+        startDragTracking()
     }
 
     // MARK: - Clippit raster character
@@ -64,34 +63,31 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let mascotWindow = MascotWindowController(rendererView: renderer.view, size: size) { point in
             CGRect(origin: .zero, size: size).contains(point)
         }
-        let bubbleWindow = BubbleWindowController()
         let soundBank = try? ClippitSoundBank(packRoot: Self.clippitResourceRoot())
         animator.soundBank = soundBank
+        let bubble = ClippyBubbleController()
 
         self.rasterRenderer = renderer
         self.animator = animator
         self.soundBank = soundBank
         self.mascotWindow = mascotWindow
-        self.bubbleWindow = bubbleWindow
-        self.askInput = AskInputController()
-        self.approvalPanel = ApprovalPanelController()
+        self.chatBubble = bubble
 
+        bubble.setAnchor(mascotWindow.frame)
+        bubble.configure { [weak self] text in
+            self?.sendMessage(text)
+        }
         mascotWindow.contextMenuProvider = { [weak self] in
             self?.makeContextMenu()
         }
         mascotWindow.onCharacterClick = { [weak self] in
-            self?.openAskInput()
+            self?.toggleChat()
         }
         mascotWindow.show()
         animator.play("Greeting") { [weak self] _, _ in
             self?.scheduleNextIdle()
         }
-        bubbleWindow.show(
-            text: "It looks like you're using a Mac. Would you like help?",
-            anchoredTo: mascotWindow.frame,
-            hideAfter: 6,
-            attachedTo: mascotWindow.window
-        )
+        bubble.showMessage("It looks like you're using a Mac. Click me to chat!", autoHide: 6)
         scheduleDebugSnapshots()
     }
 
@@ -120,48 +116,27 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Assistant brain
+    // MARK: - Brain: local Claude conversation
 
-    private func setUpAssistant() {
-        guard let apiKey = Self.loadAnthropicKey() else {
-            log("assistant disabled: no Anthropic API key found")
+    private func setUpBrain() {
+        guard let binary = ClaudeCLIConversation.locateBinary() else {
+            log("brain disabled: local `claude` CLI not found")
             return
         }
-        let system = """
-        You are Clippy, the classic paperclip assistant, now living on the user's macOS desktop. \
-        You can really act on this Mac through your tools. Prefer answering directly when no \
-        action is needed. Your replies appear in a small speech bubble, so keep them to one or \
-        two short sentences. Never use markdown.
-        """
-        let tools: [AnthropicModelClient.ToolSpec] = [
-            .init(
-                name: "shell.exec",
-                description: "Run a zsh command on the user's Mac and get its output. Requires user approval. Use for reading files, checking system state, opening apps (open -a), and other local actions.",
-                inputSchema: [
-                    "type": "object",
-                    "properties": [
-                        "command": ["type": "string", "description": "The zsh command to run"],
-                    ],
-                    "required": ["command"],
-                ]
-            ),
-        ]
-        let makeClient: @Sendable () -> AnthropicModelClient = {
-            AnthropicModelClient(apiKey: apiKey, system: system, tools: tools)
-        }
-        self.makeModelClient = makeClient
-        let router = ToolRouter()
-        self.toolRouter = router
-        Task {
-            await router.register(name: "shell.exec", executor: ShellToolExecutor())
-        }
+        log("brain ready: \(binary)")
+        self.conversation = ClaudeCLIConversation(
+            binaryPath: binary,
+            workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+        )
     }
 
-    private var makeModelClient: (@Sendable () -> AnthropicModelClient)?
-    private var toolRouter: ToolRouter?
-
-    private func openAskInput() {
-        guard let mascotWindow, let askInput, !isTurnRunning else {
+    private func toggleChat() {
+        guard let mascotWindow, let chatBubble else {
+            return
+        }
+        chatBubble.setAnchor(mascotWindow.frame)
+        if chatBubble.isInputMode {
+            chatBubble.hide()
             return
         }
         animator?.play("GetAttention") { [weak self] _, state in
@@ -169,92 +144,34 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 self?.animator?.exitCurrentAnimation()
             }
         }
-        askInput.show(
-            anchoredTo: mascotWindow.frame,
-            onSubmit: { [weak self] text in
-                self?.runTurn(text)
-            },
-            onCancel: { [weak self] in
-                self?.scheduleNextIdle()
-            }
-        )
+        chatBubble.openInput()
     }
 
-    private func runTurn(_ text: String) {
-        guard let makeModelClient, let toolRouter, !isTurnRunning else {
-            bubbleShow("I can't think right now — no API key configured.", hideAfter: 6)
+    private func sendMessage(_ text: String) {
+        guard let conversation, let chatBubble, !isTurnRunning else {
+            chatBubble?.showReply("(My local Claude brain isn't installed.)")
             return
         }
         isTurnRunning = true
         pendingIdle?.cancel()
-        bubbleWindow?.hide()
-        log("turn start: \(text)")
+        chatBubble.showThinking(forUserLine: text)
+        log("user: \(text)")
         playLooping("Thinking")
 
-        // Fresh client per turn: each turn is its own conversation.
-        let loop = AssistantLoop(modelClient: makeModelClient(), toolRouter: toolRouter)
-        self.assistantLoop = loop
-
-        let hooks = AssistantLoop.Hooks(
-            approvalHandler: { [weak self] request in
-                await self?.requestApproval(request) ?? false
-            },
-            onToolStarted: { [weak self] name in
-                Task { @MainActor in
-                    self?.log("tool start: \(name)")
-                    self?.playLooping("Processing")
-                }
-            },
-            onToolFinished: { [weak self] name, status in
-                Task { @MainActor in
-                    self?.log("tool done: \(name) -> \(status.rawValue)")
-                    self?.playLooping("Thinking")
-                }
-            }
-        )
-
         Task { [weak self] in
-            let result = await loop.run(userText: text, hooks: hooks)
+            let turn = await conversation.send(text)
             await MainActor.run {
-                self?.finishTurn(result)
+                self?.receiveReply(turn)
             }
         }
     }
 
-    private func requestApproval(_ request: ApprovalRequest) async -> Bool {
-        await withCheckedContinuation { continuation in
-            Task { @MainActor [weak self] in
-                guard let self, let mascotWindow, let approvalPanel else {
-                    continuation.resume(returning: false)
-                    return
-                }
-                self.log("approval requested: \(request.invocation.name) — \(request.reason)")
-                self.pendingApproval = continuation
-                self.playLooping("IdleEyeBrowRaise")
-                approvalPanel.show(request: request, anchoredTo: mascotWindow.frame) { [weak self] approved in
-                    self?.log("approval resolved: \(approved ? "approved" : "denied")")
-                    self?.pendingApproval = nil
-                    continuation.resume(returning: approved)
-                }
-            }
-        }
-    }
-
-    private func finishTurn(_ result: AssistantLoopResult) {
+    private func receiveReply(_ turn: ClaudeCLIConversation.Turn) {
         isTurnRunning = false
-        assistantLoop = nil
-        let usedTools = !result.toolResults.isEmpty
-        let answer: String
-        switch result.stopReason {
-        case .final, .modelError:
-            answer = result.finalText ?? "Hmm, I came up empty."
-        case .maxRounds:
-            answer = "That took too many steps — let's try something smaller."
-        case .approvalRequired:
-            answer = "I'd need your approval for that one."
-        }
-        log("turn done (\(result.stopReason.rawValue)): \(answer)")
-        animator?.play(usedTools ? "Congratulate" : "Explain") { [weak self] _, state in
+        chatBubble?.showReply(turn.text)
+        log("clippy: \(turn.text.prefix(120))")
+
+        animator?.play(turn.isError ? "Alert" : "Explain") { [weak self] _, state in
             switch state {
             case .waiting:
                 self?.animator?.exitCurrentAnimation()
@@ -262,10 +179,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 self?.scheduleNextIdle()
             }
         }
-        bubbleShow(answer, hideAfter: 14)
     }
 
-    /// Plays an animation and keeps replaying it until something else starts.
+    /// Plays an animation and keeps replaying it until the turn ends.
     private func playLooping(_ name: String) {
         animator?.play(name) { [weak self] played, state in
             guard let self else {
@@ -282,35 +198,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func bubbleShow(_ text: String, hideAfter: TimeInterval?) {
-        guard let mascotWindow, let bubbleWindow else {
-            return
-        }
-        bubbleWindow.show(
-            text: text,
-            anchoredTo: mascotWindow.frame,
-            hideAfter: hideAfter,
-            attachedTo: mascotWindow.window
-        )
-    }
+    // MARK: - Keep the chat window glued to Clippy when dragged
 
-    private static func loadAnthropicKey() -> String? {
-        let environment = ProcessInfo.processInfo.environment
-        if let key = environment["ANTHROPIC_API_KEY"], key.hasPrefix("sk-ant-"), !key.hasPrefix("sk-ant-oat") {
-            return key
-        }
-        // Local fallback: shared key file used by sibling Companion projects.
-        let envFile = FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "companion-android/.env")
-        guard let contents = try? String(contentsOf: envFile, encoding: .utf8) else {
-            return nil
-        }
-        for line in contents.split(separator: "\n") {
-            if line.hasPrefix("ANTHROPIC_API_KEY=") {
-                return String(line.dropFirst("ANTHROPIC_API_KEY=".count))
+    private func startDragTracking() {
+        dragTrackTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                guard let self, let frame = self.mascotWindow?.frame else {
+                    return
+                }
+                self.chatBubble?.setAnchor(frame)
             }
         }
-        return nil
     }
 
     // MARK: - Context menu (right-click on the character)
@@ -318,9 +216,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func makeContextMenu() -> NSMenu {
         let menu = NSMenu()
 
-        let ask = NSMenuItem(title: "Ask Clippy…", action: #selector(askClicked), keyEquivalent: "")
-        ask.target = self
-        menu.addItem(ask)
+        let chat = NSMenuItem(title: "Chat with Clippy…", action: #selector(chatClicked), keyEquivalent: "")
+        chat.target = self
+        menu.addItem(chat)
 
         let animate = NSMenuItem(title: "Animate!", action: #selector(animateNow), keyEquivalent: "")
         animate.target = self
@@ -340,8 +238,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         return menu
     }
 
-    @objc private func askClicked() {
-        openAskInput()
+    @objc private func chatClicked() {
+        toggleChat()
     }
 
     @objc private func animateNow() {
@@ -394,29 +292,29 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         ) { point in
             renderer.containsVisiblePoint(point)
         }
-        let bubbleWindow = BubbleWindowController()
+        let bubble = ClippyBubbleController()
 
         self.morphRenderer = renderer
         self.mascotWindow = mascotWindow
-        self.bubbleWindow = bubbleWindow
-        self.askInput = AskInputController()
-        self.approvalPanel = ApprovalPanelController()
+        self.chatBubble = bubble
 
+        bubble.setAnchor(mascotWindow.frame)
+        bubble.configure { [weak self] text in
+            self?.sendMessage(text)
+        }
+        mascotWindow.onCharacterClick = { [weak self] in
+            self?.toggleChat()
+        }
         mascotWindow.show()
         renderer.appear()
         renderer.startIdleBehaviors()
-        bubbleWindow.show(
-            text: "Hi! Need help with anything?",
-            anchoredTo: mascotWindow.frame,
-            hideAfter: 5,
-            attachedTo: mascotWindow.window
-        )
+        bubble.showMessage("Hi! Click me to chat.", autoHide: 5)
     }
 
     // MARK: - Debug instrumentation
 
     /// With CLIPPY_CMD_FILE set, polls a command file so the app can be driven
-    /// headlessly: `ask:<text>`, `approve`, `deny`, `snapshot`.
+    /// headlessly: `ask:<text>`, `snapshot`.
     private func startCommandChannel() {
         guard let path = ProcessInfo.processInfo.environment["CLIPPY_CMD_FILE"] else {
             return
@@ -441,20 +339,15 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         for line in text.split(separator: "\n") {
             let command = line.trimmingCharacters(in: .whitespaces)
             if command.hasPrefix("ask:") {
-                runTurn(String(command.dropFirst(4)))
-            } else if command == "approve" {
-                approvalPanel?.hide()
-                pendingApproval?.resume(returning: true)
-                log("approval resolved: approved (via command channel)")
-                pendingApproval = nil
-            } else if command == "deny" {
-                approvalPanel?.hide()
-                pendingApproval?.resume(returning: false)
-                log("approval resolved: denied (via command channel)")
-                pendingApproval = nil
+                sendMessage(String(command.dropFirst(4)))
+            } else if command == "open" {
+                if let frame = mascotWindow?.frame { chatBubble?.setAnchor(frame) }
+                chatBubble?.openInput()
             } else if command == "snapshot" {
                 writeSnapshot(index: 99, directory: snapshotDirectory ?? "/tmp")
-                writeBubbleSnapshot(directory: snapshotDirectory ?? "/tmp")
+                writeChatSnapshot(directory: snapshotDirectory ?? "/tmp")
+            } else if command == "expand" {
+                chatBubble?.debugToggleExpanded()
             }
         }
     }
@@ -476,19 +369,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Debug aid: with CLIPPY_SNAPSHOT_DIR set, renders the live SpriteKit
-    /// scene to PNG frames so the rendered look can be inspected headlessly.
     private func scheduleDebugSnapshots() {
         guard let dir = snapshotDirectory else {
             return
         }
-        for index in 1...10 {
+        for index in 1...8 {
             DispatchQueue.main.asyncAfter(deadline: .now() + Double(index) * 0.7) { [weak self] in
                 self?.writeSnapshot(index: index, directory: dir)
             }
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.writeBubbleSnapshot(directory: dir)
         }
     }
 
@@ -508,10 +396,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         try? data.write(to: url)
     }
 
-    private func writeBubbleSnapshot(directory: String) {
+    private func writeChatSnapshot(directory: String) {
         guard
-            let view = bubbleWindow?.window.contentView,
-            bubbleWindow?.window.isVisible == true,
+            let view = chatBubble?.window.contentView,
+            chatBubble?.isVisible == true,
             let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds)
         else {
             return
@@ -520,6 +408,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         guard let data = rep.representation(using: .png, properties: [:]) else {
             return
         }
-        try? data.write(to: URL(fileURLWithPath: directory).appending(path: "bubble.png"))
+        try? data.write(to: URL(fileURLWithPath: directory).appending(path: "chat.png"))
     }
 }
