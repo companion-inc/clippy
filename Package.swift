@@ -3,23 +3,23 @@
 import PackageDescription
 
 let package = Package(
-    name: "Clippy",
+    name: "Sidekick",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "Clippy", targets: ["Clippy"]),
-        .library(name: "ClippyCore", targets: ["ClippyCore"]),
+        .executable(name: "Sidekick", targets: ["Sidekick"]),
+        .library(name: "SidekickCore", targets: ["SidekickCore"]),
     ],
     targets: [
         .target(
-            name: "ClippyCore"
+            name: "SidekickCore"
         ),
         .executableTarget(
-            name: "Clippy",
-            dependencies: ["ClippyCore"]
+            name: "Sidekick",
+            dependencies: ["SidekickCore"]
         ),
         .testTarget(
-            name: "ClippyTests",
-            dependencies: ["ClippyCore"]
+            name: "SidekickTests",
+            dependencies: ["SidekickCore"]
         ),
     ]
 )

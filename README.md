@@ -1,8 +1,8 @@
-# Clippy
+# Sidekick
 
-Native macOS scaffold for Clippy: a morphing visible desktop assistant that can
-later listen, see the screen/camera, ask approvals, and act on the computer
-through an app-owned tool loop.
+Native macOS scaffold for Sidekick: a visible desktop assistant with a swappable
+mascot. It can listen, see the screen/camera, ask approvals, and act on the
+computer through an app-owned tool loop.
 
 Start with `Docs/STATUS.md` and `Docs/Handbook/README.md`.
 
@@ -21,29 +21,38 @@ The research archive lives inside this repo folder but is ignored by git:
 
 ## Resource Export
 
-The Clippit-compatible source pack is archived at:
+The Clippy-compatible source pack is archived at:
 
 `/Users/advaitpaliwal/Companion/Code/clippy/Research/sources/repos/pithings-clippy`
 
-Export the local pithings Clippit-compatible pack into this repo:
+Export the local pithings Clippy-compatible pack into this repo:
 
 ```sh
-node Scripts/export-pithings-clippit.mjs
+node Scripts/export-pithings-clippy.mjs
 ```
 
 That creates:
 
 ```text
-Resources/Characters/Clippit/character.json
-Resources/Characters/Clippit/sounds-mp3.json
-Resources/Characters/Clippit/map.png
-Resources/Characters/Clippit/manifest.json
+Resources/Characters/Clippy/character.json
+Resources/Characters/Clippy/sounds-mp3.json
+Resources/Characters/Clippy/map.png
+Resources/Characters/Clippy/manifest.json
 ```
 
 ## Renderer Split
 
-- Core Animation is for the new original morphing mascot.
-- SpriteKit is for classic Clippit-compatible raster sprite packs.
+- Core Animation is for the original morphing mascot fallback.
+- SpriteKit is for classic Clippy-compatible raster sprite packs.
 
-Fable should keep both paths. The original mascot is the long-term product path;
-Clippit-compatible packs are the fastest hackathon compatibility path.
+Sidekick should keep both paths. The product name is not tied to one mascot:
+Clippy-compatible packs are the current default, and future mascots should slot
+behind the same `DesktopMascot` surface.
+
+## Mascot Themes
+
+Each mascot ships with a `MascotTheme`. The app shell asks the active mascot for
+balloon styling, approval styling, chat/menu copy, greeting/reply/error
+animations, and agent-state animation bindings. Clippy owns the MS Agent-style
+yellow bubble and Clippy animation names; future Claude/Codex sidekicks should
+bring their own theme instead of inheriting Clippy-specific UI.
