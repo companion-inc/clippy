@@ -2,26 +2,21 @@ import AppKit
 
 /// Clippy's one and only bubble. It shows exactly one thing at a time:
 ///   • a single message line (greeting or the latest reply), or
-///   • the input field (when you click Clippy), or
-///   • the full history (toggled from the right-click menu).
+///   • the input field (when you double-click Clippy).
 /// While Clippy is thinking, the bubble is hidden entirely — the character's
-/// own Thinking animation carries it, like the original assistant. Click Clippy
-/// to open the input; click away and it disappears. Type face is Microsoft Sans
+/// own Thinking animation carries it, like the original assistant. Double-click
+/// Clippy to open the input; click away and it disappears. Type face is Microsoft Sans
 /// Serif (the modern name for the MS Sans Serif the original balloon used).
 public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWindowDelegate {
     private final class KeyPanel: NSPanel {
         override var canBecomeKey: Bool { true }
     }
 
-    private enum Mode { case message, input, history }
-    private enum Speaker { case user, clippy }
-    private struct Line { let speaker: Speaker; let text: String }
-
+    private enum Mode { case message, input }
     private static let balloonColor = NSColor(calibratedRed: 1.0, green: 1.0, blue: 225.0 / 255.0, alpha: 1)
     private static let width: CGFloat = 260
     private static let pad: CGFloat = 11
     private static let tailHeight: CGFloat = 12
-    private static let maxHistoryHeight: CGFloat = 300
 
     private static func uiFont(_ size: CGFloat, bold: Bool = false) -> NSFont {
         let name = bold ? "Microsoft Sans Serif Bold" : "Microsoft Sans Serif"
@@ -36,11 +31,8 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
     private let balloonLayer = CAShapeLayer()
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
     private let inputField = NSTextField()
-    private let scrollView = NSScrollView()
-    private let transcriptView = NSTextView()
 
     private var mode: Mode = .message
-    private var history: [Line] = []
     private var messageText = ""
     private var onSend: ((String) -> Void)?
     private var anchorFrame: CGRect = .zero
@@ -72,24 +64,16 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
         inputField.drawsBackground = false
         inputField.isBordered = false
         inputField.focusRingType = .none
-        inputField.placeholderString = "Ask Clippy…"
+        inputField.placeholderAttributedString = NSAttributedString(
+            string: "Ask Clippy…",
+            attributes: [
+                .font: Self.uiFont(13),
+                .foregroundColor: NSColor.black.withAlphaComponent(0.45),
+            ]
+        )
         inputField.delegate = self
         inputField.isHidden = true
         root.addSubview(inputField)
-
-        transcriptView.isEditable = false
-        transcriptView.isSelectable = true
-        transcriptView.drawsBackground = false
-        transcriptView.textContainerInset = NSSize(width: 2, height: 2)
-        transcriptView.isHorizontallyResizable = false
-        transcriptView.isVerticallyResizable = true
-        transcriptView.textContainer?.widthTracksTextView = true
-        transcriptView.autoresizingMask = [.width]
-        scrollView.hasVerticalScroller = true
-        scrollView.drawsBackground = false
-        scrollView.documentView = transcriptView
-        scrollView.isHidden = true
-        root.addSubview(scrollView)
 
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -104,8 +88,6 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
 
     public var isVisible: Bool { window.isVisible }
     public var isInputMode: Bool { mode == .input && window.isVisible }
-    public var isHistoryShown: Bool { mode == .history && window.isVisible }
-    public var hasHistory: Bool { history.count >= 2 }
 
     public func setAnchor(_ frame: CGRect) {
         anchorFrame = frame
@@ -127,7 +109,7 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
         scheduleAutoHide(autoHide)
     }
 
-    /// Click-Clippy: show only the input, focused. Click-away dismisses it.
+    /// Double-click-Clippy: show only the input, focused. Click-away dismisses it.
     public func openInput() {
         cancelAutoHide()
         mode = .input
@@ -141,16 +123,13 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
         if mode == .input && window.isVisible { hide() } else { openInput() }
     }
 
-    /// Record the user's line for history. No bubble UI — the character's
-    /// Thinking animation represents the thinking state.
-    public func recordUserLine(_ line: String) {
-        history.append(Line(speaker: .user, text: line))
+    /// The character's Thinking animation represents the thinking state.
+    public func recordUserLine(_ _: String) {
         cancelAutoHide()
     }
 
     /// Reply arrived — show just the reply.
     public func showReply(_ text: String) {
-        history.append(Line(speaker: .clippy, text: text))
         messageText = text
         mode = .message
         relayout()
@@ -162,22 +141,6 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
         window.orderOut(nil)
     }
 
-    /// Toggle the full transcript (driven from the right-click menu, not a
-    /// button inside the bubble).
-    public func toggleHistory() {
-        guard hasHistory else { return }
-        if mode == .history && window.isVisible {
-            mode = .message
-            messageText = history.last?.text ?? ""
-            relayout()
-        } else {
-            cancelAutoHide()
-            mode = .history
-            relayout()
-            window.orderFrontRegardless()
-        }
-    }
-
     // MARK: - Layout (one active region; bubble grows to fit)
 
     private func relayout() {
@@ -185,7 +148,6 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
 
         messageLabel.isHidden = mode != .message
         inputField.isHidden = mode != .input
-        scrollView.isHidden = mode != .history
 
         var contentHeight: CGFloat = 0
         switch mode {
@@ -193,13 +155,6 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
             contentHeight = 22
         case .message:
             contentHeight = measuredLabelHeight(messageText.isEmpty ? "…" : messageText, width: contentWidth)
-        case .history:
-            let transcript = rebuildTranscript()
-            let measured = transcript.boundingRect(
-                with: NSSize(width: contentWidth - 8, height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin, .usesFontLeading]
-            ).height
-            contentHeight = min(ceil(measured) + 10, Self.maxHistoryHeight)
         }
 
         let windowHeight = Self.tailHeight + Self.pad + contentHeight + Self.pad
@@ -216,13 +171,6 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
         case .message:
             messageLabel.frame = contentRect
             messageLabel.stringValue = messageText
-        case .history:
-            scrollView.frame = contentRect
-            transcriptView.minSize = NSSize(width: 0, height: contentHeight)
-            transcriptView.maxSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
-            transcriptView.frame = CGRect(x: 0, y: 0, width: contentWidth, height: contentHeight)
-            transcriptView.textContainer?.containerSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
-            transcriptView.scrollToEndOfDocument(nil)
         }
 
         positionWindow()
@@ -247,26 +195,6 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
         return ceil(rect.height) + 2
-    }
-
-    @discardableResult
-    private func rebuildTranscript() -> NSAttributedString {
-        let full = NSMutableAttributedString()
-        for (index, line) in history.enumerated() {
-            if index > 0 { full.append(NSAttributedString(string: "\n\n")) }
-            let prefix = line.speaker == .user ? "You: " : "Clippy: "
-            let prefixColor: NSColor = line.speaker == .user
-                ? NSColor(calibratedRed: 0.1, green: 0.3, blue: 0.6, alpha: 1)
-                : NSColor(calibratedRed: 0.5, green: 0.25, blue: 0.0, alpha: 1)
-            full.append(NSAttributedString(string: prefix, attributes: [
-                .font: Self.uiFont(12, bold: true), .foregroundColor: prefixColor,
-            ]))
-            full.append(NSAttributedString(string: line.text, attributes: [
-                .font: Self.uiFont(12), .foregroundColor: NSColor.black,
-            ]))
-        }
-        transcriptView.textStorage?.setAttributedString(full)
-        return full
     }
 
     private func scheduleAutoHide(_ delay: TimeInterval?) {

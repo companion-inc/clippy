@@ -87,7 +87,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         animator.play("Greeting") { [weak self] _, _ in
             self?.scheduleNextIdle()
         }
-        bubble.showMessage("It looks like you're using a Mac. Click me to chat!", autoHide: 6)
+        bubble.showMessage("It looks like you're using a Mac. Double-click me to chat!", autoHide: 6)
         scheduleDebugSnapshots()
     }
 
@@ -222,17 +222,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         chat.target = self
         menu.addItem(chat)
 
-        if chatBubble?.hasHistory == true {
-            let showing = chatBubble?.isHistoryShown == true
-            let history = NSMenuItem(
-                title: showing ? "Hide Conversation History" : "Show Conversation History",
-                action: #selector(toggleHistory),
-                keyEquivalent: ""
-            )
-            history.target = self
-            menu.addItem(history)
-        }
-
         let animate = NSMenuItem(title: "Animate!", action: #selector(animateNow), keyEquivalent: "")
         animate.target = self
         menu.addItem(animate)
@@ -253,11 +242,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     @objc private func chatClicked() {
         toggleChat()
-    }
-
-    @objc private func toggleHistory() {
-        if let frame = mascotWindow?.frame { chatBubble?.setAnchor(frame) }
-        chatBubble?.toggleHistory()
     }
 
     @objc private func animateNow() {
@@ -326,7 +310,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         mascotWindow.show()
         renderer.appear()
         renderer.startIdleBehaviors()
-        bubble.showMessage("Hi! Click me to chat.", autoHide: 5)
+        bubble.showMessage("Hi! Double-click me to chat.", autoHide: 5)
     }
 
     // MARK: - Debug instrumentation
@@ -364,8 +348,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             } else if command == "snapshot" {
                 writeSnapshot(index: 99, directory: snapshotDirectory ?? "/tmp")
                 writeChatSnapshot(directory: snapshotDirectory ?? "/tmp")
-            } else if command == "expand" {
-                chatBubble?.toggleHistory()
             }
         }
     }
