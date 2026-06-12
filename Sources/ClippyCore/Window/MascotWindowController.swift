@@ -9,6 +9,18 @@ public final class MascotWindowController {
         window.frame
     }
 
+    /// Context menu for right-clicking the character.
+    public var contextMenuProvider: (() -> NSMenu?)? {
+        get { contentView.menuProvider }
+        set { contentView.menuProvider = newValue }
+    }
+
+    /// Fired on a left-click on the character that isn't a drag.
+    public var onCharacterClick: (() -> Void)? {
+        get { contentView.onClick }
+        set { contentView.onClick = newValue }
+    }
+
     public init(
         rendererLayer: CALayer,
         size: CGSize = CGSize(width: 160, height: 160),

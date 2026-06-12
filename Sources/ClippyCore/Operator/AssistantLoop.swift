@@ -93,7 +93,26 @@ public actor AssistantLoop {
         self.toolRouter = toolRouter
     }
 
-    public func run(userText: String, maxRounds: Int = 8) async -> AssistantLoopResult {
+    /// Callbacks for driving the character while the loop runs. `approvalHandler`
+    /// resolves a protected action interactively; when nil (the default), the
+    /// loop stops at the first approval request and returns it.
+    public struct Hooks: Sendable {
+        public var approvalHandler: (@Sendable (ApprovalRequest) async -> Bool)?
+        public var onToolStarted: (@Sendable (String) -> Void)?
+        public var onToolFinished: (@Sendable (String, ToolResultStatus) -> Void)?
+
+        public init(
+            approvalHandler: (@Sendable (ApprovalRequest) async -> Bool)? = nil,
+            onToolStarted: (@Sendable (String) -> Void)? = nil,
+            onToolFinished: (@Sendable (String, ToolResultStatus) -> Void)? = nil
+        ) {
+            self.approvalHandler = approvalHandler
+            self.onToolStarted = onToolStarted
+            self.onToolFinished = onToolFinished
+        }
+    }
+
+    public func run(userText: String, maxRounds: Int = 8, hooks: Hooks = Hooks()) async -> AssistantLoopResult {
         var observations: [ToolResult] = []
 
         for _ in 0..<maxRounds {
@@ -117,15 +136,35 @@ public actor AssistantLoop {
             }
 
             for invocation in response.toolCalls {
+                hooks.onToolStarted?(invocation.name)
                 switch await toolRouter.route(invocation) {
                 case let .completed(result):
                     observations.append(result)
+                    hooks.onToolFinished?(invocation.name, result.status)
                 case let .approvalRequired(request):
-                    return AssistantLoopResult(
-                        stopReason: .approvalRequired,
-                        toolResults: observations,
-                        approvalRequest: request
-                    )
+                    guard let approvalHandler = hooks.approvalHandler else {
+                        return AssistantLoopResult(
+                            stopReason: .approvalRequired,
+                            toolResults: observations,
+                            approvalRequest: request
+                        )
+                    }
+                    let approved = await approvalHandler(request)
+                    guard approved else {
+                        let denial = ToolResult(
+                            invocationID: invocation.id,
+                            toolName: invocation.name,
+                            status: .failed,
+                            summary: "User denied permission to run \(invocation.name)."
+                        )
+                        observations.append(denial)
+                        hooks.onToolFinished?(invocation.name, .failed)
+                        continue
+                    }
+                    if case let .completed(result) = await toolRouter.route(invocation, approved: true) {
+                        observations.append(result)
+                        hooks.onToolFinished?(invocation.name, result.status)
+                    }
                 }
             }
         }

@@ -10,6 +10,7 @@ public final class ClippitSpriteSheet {
     private let keyedSheet: CGImage
     private let frameWidth: Int
     private let frameHeight: Int
+    private var frameTextureCache: [String: SKTexture] = [:]
 
     public init(packRoot: URL) throws {
         let pack = try CharacterResourceLoader.loadRasterPack(from: packRoot)
@@ -25,6 +26,24 @@ public final class ClippitSpriteSheet {
         self.frameHeight = pack.frameSize.dropFirst().first ?? 93
         self.frameSize = CGSize(width: frameWidth, height: frameHeight)
         self.keyedSheet = try Self.removingChromaKey(from: source)
+    }
+
+    /// Returns the composited, chroma-keyed texture for a single frame,
+    /// cached by the frame's layer coordinates.
+    public func texture(for frame: RasterFrame) -> SKTexture? {
+        guard let layers = frame.images, !layers.isEmpty else {
+            return nil
+        }
+        let key = layers.flatMap { $0 }.map(String.init).joined(separator: ",")
+        if let cached = frameTextureCache[key] {
+            return cached
+        }
+        guard let image = composite(layers) else {
+            return nil
+        }
+        let texture = SKTexture(cgImage: image)
+        frameTextureCache[key] = texture
+        return texture
     }
 
     public func frames(for animationName: String) -> (textures: [SKTexture], durations: [TimeInterval])? {
