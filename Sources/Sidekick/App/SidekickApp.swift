@@ -35,7 +35,14 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
 
     // MARK: - Mascot setup
 
-    private static func makeMascot() -> any DesktopMascot {
+    private static func makeMascot(selection: String? = nil) -> any DesktopMascot {
+        let choice = selection ?? ProcessInfo.processInfo.environment["SIDEKICK_MASCOT"]
+        if let choice, let kind = PixelAgentMascotKind(selection: choice) {
+            return PixelAgentMascot(kind: kind)
+        }
+        if choice?.lowercased() == "morph" || choice?.lowercased() == "vector" {
+            return MorphMascot()
+        }
         if ProcessInfo.processInfo.environment["SIDEKICK_RENDERER"] == "vector" {
             return MorphMascot()
         }
@@ -67,6 +74,14 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         }
         bubble.showMessage(mascot.theme.greetingText, autoHide: 6)
         scheduleDebugSnapshots()
+    }
+
+    private func switchMascot(to selection: String) {
+        pendingIdle?.cancel()
+        chatBubble?.hide()
+        mascot?.windowController.hide()
+        activeActivityState = .idle
+        startMascot(Self.makeMascot(selection: selection))
     }
 
     private func scheduleNextIdle() {
@@ -210,7 +225,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
 
     /// Plays an animation and keeps replaying it while that activity state remains visible.
     private func playLooping(_ name: String, while activityState: AgentActivityState) {
-        mascot?.play(name) { [weak self] played, endState in
+        mascot?.play(name) { [weak self] _, endState in
             guard let self else {
                 return
             }
@@ -218,7 +233,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
             case .waiting:
                 self.mascot?.exitCurrentAnimation()
             case .exited:
-                if self.activeActivityState == activityState, self.mascot?.currentAnimationName == played {
+                if self.activeActivityState == activityState {
                     self.playLooping(name, while: activityState)
                 }
             }
@@ -255,6 +270,18 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         animate.target = self
         menu.addItem(animate)
 
+        let sidekickMenu = NSMenu()
+        for option in Self.mascotMenuOptions {
+            let item = NSMenuItem(title: option.title, action: #selector(switchMascotFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = option.selection
+            item.state = mascot?.id == option.id ? .on : .off
+            sidekickMenu.addItem(item)
+        }
+        let sidekick = NSMenuItem(title: "Sidekick", action: nil, keyEquivalent: "")
+        sidekick.submenu = sidekickMenu
+        menu.addItem(sidekick)
+
         let mute = NSMenuItem(title: "Mute Sounds", action: #selector(toggleMute), keyEquivalent: "")
         mute.target = self
         mute.state = (mascot?.isMuted ?? false) ? .on : .off
@@ -289,6 +316,13 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    @objc private func switchMascotFromMenu(_ sender: NSMenuItem) {
+        guard let selection = sender.representedObject as? String else {
+            return
+        }
+        switchMascot(to: selection)
+    }
+
     @objc private func toggleMute() {
         mascot?.isMuted.toggle()
     }
@@ -316,7 +350,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
     // MARK: - Debug instrumentation
 
     /// With SIDEKICK_CMD_FILE set, polls a command file so the app can be driven
-    /// headlessly: `ask:<text>`, `state:<state>`,
+    /// headlessly: `ask:<text>`, `mascot:<id>`, `state:<state>`,
     /// `agent:<agent>:<session>:<event>`, `snapshot`.
     private func startCommandChannel() {
         guard let path = ProcessInfo.processInfo.environment["SIDEKICK_CMD_FILE"] else {
@@ -353,6 +387,8 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
                 moveMascot(command: String(command.dropFirst(5)))
             } else if command.hasPrefix("park:") {
                 parkMascot(command: String(command.dropFirst(5)))
+            } else if command.hasPrefix("mascot:") {
+                switchMascot(to: String(command.dropFirst(7)))
             } else if command.hasPrefix("state:") {
                 applyStateCommand(String(command.dropFirst(6)))
             } else if command.hasPrefix("agent:") {
@@ -450,4 +486,10 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         }
         try? data.write(to: URL(fileURLWithPath: directory).appending(path: "chat.png"))
     }
+
+    private static let mascotMenuOptions: [(id: String, selection: String, title: String)] = [
+        ("clippy", "clippy", "Clippy"),
+        ("claude-code", "claude-code", "Claude Code"),
+        ("codex", "codex", "Codex"),
+    ]
 }

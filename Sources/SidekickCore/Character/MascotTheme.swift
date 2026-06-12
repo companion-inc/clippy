@@ -78,6 +78,26 @@ public struct MascotBalloonTheme {
         mutedTextColor: NSColor.black.withAlphaComponent(0.5),
         cornerRadius: 6
     )
+
+    public static let claudeCode = MascotBalloonTheme(
+        fillColor: NSColor(calibratedRed: 1.00, green: 0.91, blue: 0.78, alpha: 1),
+        strokeColor: NSColor(calibratedRed: 0.22, green: 0.10, blue: 0.06, alpha: 1),
+        mutedTextColor: NSColor(calibratedRed: 0.22, green: 0.10, blue: 0.06, alpha: 0.55),
+        cornerRadius: 3,
+        tailHeight: 11,
+        regularFontName: "Menlo",
+        boldFontName: "Menlo-Bold"
+    )
+
+    public static let codex = MascotBalloonTheme(
+        fillColor: NSColor(calibratedRed: 0.86, green: 1.00, blue: 0.88, alpha: 1),
+        strokeColor: NSColor(calibratedRed: 0.02, green: 0.12, blue: 0.08, alpha: 1),
+        mutedTextColor: NSColor(calibratedRed: 0.02, green: 0.12, blue: 0.08, alpha: 0.55),
+        cornerRadius: 2,
+        tailHeight: 11,
+        regularFontName: "Menlo",
+        boldFontName: "Menlo-Bold"
+    )
 }
 
 public struct MascotTheme {
@@ -173,6 +193,56 @@ public struct MascotTheme {
             .sweeping: MascotAnimationBinding(animationName: "Glance"),
             .carrying: MascotAnimationBinding(animationName: "Explain"),
             .sleeping: MascotAnimationBinding(animationName: "Blink"),
+        ]
+    )
+
+    public static let claudeCode = MascotTheme(
+        id: "claude-code",
+        displayName: "Claude Code",
+        balloon: .claudeCode,
+        askPlaceholder: "Ask Claude Code…",
+        chatMenuTitle: "Chat with Claude Code…",
+        greetingText: "Claude Code sidekick online. Double-click to chat.",
+        greetingAnimationName: "ClaudeGreeting",
+        openInputAnimationName: "ClaudeWave",
+        replyAnimationName: "ClaudeExplain",
+        errorAnimationName: "ClaudeError",
+        fallbackGestureAnimationName: "ClaudeWave",
+        activityAnimations: [
+            .thinking: MascotAnimationBinding(animationName: "ClaudeThinking", repeatsUntilStateChange: true),
+            .working: MascotAnimationBinding(animationName: "ClaudeWorking", repeatsUntilStateChange: true),
+            .juggling: MascotAnimationBinding(animationName: "ClaudeJuggling", repeatsUntilStateChange: true),
+            .notification: MascotAnimationBinding(animationName: "ClaudeNotification"),
+            .attention: MascotAnimationBinding(animationName: "ClaudeHappy"),
+            .error: MascotAnimationBinding(animationName: "ClaudeError"),
+            .sweeping: MascotAnimationBinding(animationName: "ClaudeSweeping"),
+            .carrying: MascotAnimationBinding(animationName: "ClaudeCarrying"),
+            .sleeping: MascotAnimationBinding(animationName: "ClaudeSleeping"),
+        ]
+    )
+
+    public static let codex = MascotTheme(
+        id: "codex",
+        displayName: "Codex",
+        balloon: .codex,
+        askPlaceholder: "Ask Codex…",
+        chatMenuTitle: "Chat with Codex…",
+        greetingText: "Codex sidekick online. Double-click to chat.",
+        greetingAnimationName: "CodexGreeting",
+        openInputAnimationName: "CodexWave",
+        replyAnimationName: "CodexExplain",
+        errorAnimationName: "CodexError",
+        fallbackGestureAnimationName: "CodexWave",
+        activityAnimations: [
+            .thinking: MascotAnimationBinding(animationName: "CodexThinking", repeatsUntilStateChange: true),
+            .working: MascotAnimationBinding(animationName: "CodexWorking", repeatsUntilStateChange: true),
+            .juggling: MascotAnimationBinding(animationName: "CodexJuggling", repeatsUntilStateChange: true),
+            .notification: MascotAnimationBinding(animationName: "CodexNotification"),
+            .attention: MascotAnimationBinding(animationName: "CodexHappy"),
+            .error: MascotAnimationBinding(animationName: "CodexError"),
+            .sweeping: MascotAnimationBinding(animationName: "CodexSweeping"),
+            .carrying: MascotAnimationBinding(animationName: "CodexCarrying"),
+            .sleeping: MascotAnimationBinding(animationName: "CodexSleeping"),
         ]
     )
 }

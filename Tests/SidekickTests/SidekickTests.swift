@@ -105,6 +105,50 @@ import Testing
     #expect(fill.blueComponent < fill.redComponent)
 }
 
+@Test func claudeAndCodexThemesOwnTheirBubbleCopyAndActivityAnimations() throws {
+    let claude = MascotTheme.claudeCode
+    let codex = MascotTheme.codex
+
+    #expect(claude.id == "claude-code")
+    #expect(claude.displayName == "Claude Code")
+    #expect(claude.askPlaceholder == "Ask Claude Code…")
+    #expect(claude.chatMenuTitle == "Chat with Claude Code…")
+
+    #expect(codex.id == "codex")
+    #expect(codex.displayName == "Codex")
+    #expect(codex.askPlaceholder == "Ask Codex…")
+    #expect(codex.chatMenuTitle == "Chat with Codex…")
+
+    let claudeWorking = try #require(claude.animation(for: .working))
+    #expect(claudeWorking.animationName == "ClaudeWorking")
+    #expect(claudeWorking.repeatsUntilStateChange)
+
+    let codexNotification = try #require(codex.animation(for: .notification))
+    #expect(codexNotification.animationName == "CodexNotification")
+    #expect(codexNotification.repeatsUntilStateChange == false)
+}
+
+@Test func pixelAgentMascotSelectorAcceptsClaudeAndCodexAliases() throws {
+    #expect(PixelAgentMascotKind(selection: "claude") == .claudeCode)
+    #expect(PixelAgentMascotKind(selection: "claude-code") == .claudeCode)
+    #expect(PixelAgentMascotKind(selection: "codex") == .codex)
+    #expect(PixelAgentMascotKind(selection: "codex-cli") == .codex)
+    #expect(PixelAgentMascotKind(selection: "clippy") == nil)
+}
+
+@MainActor
+@Test func pixelAgentRendererProducesSnapshotsForClaudeAndCodexStyles() throws {
+    let claude = PixelSidekickRenderer(style: .claudeCode)
+    claude.show("ClaudeWorking")
+    let claudePNG = try #require(claude.snapshotPNGData())
+    #expect(claudePNG.count > 100)
+
+    let codex = PixelSidekickRenderer(style: .codex)
+    codex.show("CodexNotification")
+    let codexPNG = try #require(codex.snapshotPNGData())
+    #expect(codexPNG.count > 100)
+}
+
 @Test func clippySpriteSheetProducesVisibleRestPoseTexture() throws {
     let root = clippyResourceRoot()
     let sheet = try ClippySpriteSheet(packRoot: root)

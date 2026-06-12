@@ -17,13 +17,13 @@ swift build
 
 The research archive lives inside this repo folder but is ignored by git:
 
-`/Users/advaitpaliwal/Companion/Code/clippy/Research/sources/repos`
+`/Users/advaitpaliwal/Companion/Code/sidekick/Research/sources/repos`
 
 ## Resource Export
 
 The Clippy-compatible source pack is archived at:
 
-`/Users/advaitpaliwal/Companion/Code/clippy/Research/sources/repos/pithings-clippy`
+`/Users/advaitpaliwal/Companion/Code/sidekick/Research/sources/repos/pithings-clippy`
 
 Export the local pithings Clippy-compatible pack into this repo:
 
@@ -54,5 +54,17 @@ behind the same `DesktopMascot` surface.
 Each mascot ships with a `MascotTheme`. The app shell asks the active mascot for
 balloon styling, approval styling, chat/menu copy, greeting/reply/error
 animations, and agent-state animation bindings. Clippy owns the MS Agent-style
-yellow bubble and Clippy animation names; future Claude/Codex sidekicks should
-bring their own theme instead of inheriting Clippy-specific UI.
+yellow bubble and Clippy animation names. Claude Code and Codex ship as native
+pixel sidekicks with their own themes.
+
+Startup selection:
+
+```sh
+SIDEKICK_MASCOT=clippy swift run Sidekick
+SIDEKICK_MASCOT=claude-code swift run Sidekick
+SIDEKICK_MASCOT=codex swift run Sidekick
+```
+
+The running app also accepts `mascot:clippy`, `mascot:claude-code`, and
+`mascot:codex` over `SIDEKICK_CMD_FILE`, and the right-click Sidekick menu can
+switch the active mascot.
