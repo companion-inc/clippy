@@ -7,16 +7,36 @@ import AppKit
 /// own Thinking animation carries it, like the original assistant. Double-click
 /// Clippy to open the input; click away and it disappears. Type face is Microsoft Sans
 /// Serif (the modern name for the MS Sans Serif the original balloon used).
-public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWindowDelegate {
+public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private final class KeyPanel: NSPanel {
         override var canBecomeKey: Bool { true }
     }
 
+    private final class InputTextView: NSTextView {
+        var onSubmit: (() -> Void)?
+        var onCancel: (() -> Void)?
+
+        override func keyDown(with event: NSEvent) {
+            switch event.keyCode {
+            case 36 where !event.modifierFlags.contains(.shift),
+                 76 where !event.modifierFlags.contains(.shift):
+                onSubmit?()
+            case 53:
+                onCancel?()
+            default:
+                super.keyDown(with: event)
+            }
+        }
+    }
+
     private enum Mode { case message, input }
     private static let balloonColor = NSColor(calibratedRed: 1.0, green: 1.0, blue: 225.0 / 255.0, alpha: 1)
-    private static let width: CGFloat = 260
+    private static let minWidth: CGFloat = 150
+    private static let maxWidth: CGFloat = 300
     private static let pad: CGFloat = 11
     private static let tailHeight: CGFloat = 12
+    private static let minInputHeight: CGFloat = 22
+    private static let maxInputHeight: CGFloat = 112
 
     private static func uiFont(_ size: CGFloat, bold: Bool = false) -> NSFont {
         let name = bold ? "Microsoft Sans Serif Bold" : "Microsoft Sans Serif"
@@ -30,7 +50,9 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
     public let window: NSPanel
     private let balloonLayer = CAShapeLayer()
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
-    private let inputField = NSTextField()
+    private let inputScrollView = NSScrollView()
+    private let inputTextView = InputTextView(frame: .zero)
+    private let inputPlaceholderLabel = NSTextField(labelWithString: "Ask Clippy…")
 
     private var mode: Mode = .message
     private var messageText = ""
@@ -40,7 +62,7 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
 
     public override init() {
         self.window = KeyPanel(
-            contentRect: CGRect(x: 0, y: 0, width: Self.width, height: 70),
+            contentRect: CGRect(x: 0, y: 0, width: Self.minWidth, height: 70),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -59,21 +81,33 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
         messageLabel.maximumNumberOfLines = 0
         root.addSubview(messageLabel)
 
-        inputField.font = Self.uiFont(13)
-        inputField.textColor = .black
-        inputField.drawsBackground = false
-        inputField.isBordered = false
-        inputField.focusRingType = .none
-        inputField.placeholderAttributedString = NSAttributedString(
-            string: "Ask Clippy…",
-            attributes: [
-                .font: Self.uiFont(13),
-                .foregroundColor: NSColor.black.withAlphaComponent(0.45),
-            ]
-        )
-        inputField.delegate = self
-        inputField.isHidden = true
-        root.addSubview(inputField)
+        inputTextView.font = Self.uiFont(13)
+        inputTextView.textColor = .black
+        inputTextView.drawsBackground = false
+        inputTextView.isRichText = false
+        inputTextView.isAutomaticQuoteSubstitutionEnabled = false
+        inputTextView.isAutomaticDashSubstitutionEnabled = false
+        inputTextView.isHorizontallyResizable = false
+        inputTextView.isVerticallyResizable = true
+        inputTextView.textContainerInset = NSSize(width: 0, height: 1)
+        inputTextView.textContainer?.lineFragmentPadding = 0
+        inputTextView.textContainer?.widthTracksTextView = true
+        inputTextView.delegate = self
+        inputTextView.onSubmit = { [weak self] in self?.submitInput() }
+        inputTextView.onCancel = { [weak self] in self?.hide() }
+
+        inputScrollView.drawsBackground = false
+        inputScrollView.borderType = .noBorder
+        inputScrollView.hasVerticalScroller = true
+        inputScrollView.autohidesScrollers = true
+        inputScrollView.documentView = inputTextView
+        inputScrollView.isHidden = true
+        root.addSubview(inputScrollView)
+
+        inputPlaceholderLabel.font = Self.uiFont(13)
+        inputPlaceholderLabel.textColor = NSColor.black.withAlphaComponent(0.45)
+        inputPlaceholderLabel.isHidden = true
+        root.addSubview(inputPlaceholderLabel)
 
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -113,10 +147,11 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
     public func openInput() {
         cancelAutoHide()
         mode = .input
+        inputTextView.string = ""
         relayout()
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(inputField)
+        window.makeFirstResponder(inputTextView)
     }
 
     public func toggleInput() {
@@ -144,30 +179,42 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
     // MARK: - Layout (one active region; bubble grows to fit)
 
     private func relayout() {
-        let contentWidth = Self.width - Self.pad * 2
+        let contentWidth = measuredContentWidth()
+        let windowWidth = contentWidth + Self.pad * 2
 
         messageLabel.isHidden = mode != .message
-        inputField.isHidden = mode != .input
+        inputScrollView.isHidden = mode != .input
+        inputPlaceholderLabel.isHidden = mode != .input || !inputTextView.string.isEmpty
 
         var contentHeight: CGFloat = 0
         switch mode {
         case .input:
-            contentHeight = 22
+            contentHeight = measuredInputHeight(width: contentWidth)
         case .message:
             contentHeight = measuredLabelHeight(messageText.isEmpty ? "…" : messageText, width: contentWidth)
         }
 
         let windowHeight = Self.tailHeight + Self.pad + contentHeight + Self.pad
-        window.setContentSize(CGSize(width: Self.width, height: windowHeight))
-        balloonLayer.frame = CGRect(origin: .zero, size: CGSize(width: Self.width, height: windowHeight))
-        balloonLayer.path = Self.balloonPath(size: CGSize(width: Self.width, height: windowHeight))
+        window.setContentSize(CGSize(width: windowWidth, height: windowHeight))
+        balloonLayer.frame = CGRect(origin: .zero, size: CGSize(width: windowWidth, height: windowHeight))
+        balloonLayer.path = Self.balloonPath(size: CGSize(width: windowWidth, height: windowHeight))
 
         let contentY = Self.tailHeight + Self.pad
         let contentRect = CGRect(x: Self.pad, y: contentY, width: contentWidth, height: contentHeight)
 
         switch mode {
         case .input:
-            inputField.frame = contentRect
+            inputScrollView.frame = contentRect
+            inputTextView.minSize = NSSize(width: 0, height: contentHeight)
+            inputTextView.maxSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
+            inputTextView.frame = CGRect(origin: .zero, size: contentRect.size)
+            inputTextView.textContainer?.containerSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
+            inputPlaceholderLabel.frame = CGRect(
+                x: contentRect.minX,
+                y: contentRect.minY + 1,
+                width: contentRect.width,
+                height: 18
+            )
         case .message:
             messageLabel.frame = contentRect
             messageLabel.stringValue = messageText
@@ -188,6 +235,24 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
         window.setFrameOrigin(CGPoint(x: x, y: y))
     }
 
+    private func measuredContentWidth() -> CGFloat {
+        let text: String
+        let fontSize: CGFloat
+        switch mode {
+        case .input:
+            text = inputTextView.string.isEmpty ? inputPlaceholderLabel.stringValue : inputTextView.string
+            fontSize = 13
+        case .message:
+            text = messageText.isEmpty ? "…" : messageText
+            fontSize = 12
+        }
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let longest = lines.map { String($0) }.max { $0.count < $1.count } ?? text
+        let attributed = NSAttributedString(string: longest, attributes: [.font: Self.uiFont(fontSize)])
+        let width = ceil(attributed.size().width) + 4
+        return min(Self.maxWidth - Self.pad * 2, max(Self.minWidth - Self.pad * 2, width))
+    }
+
     private func measuredLabelHeight(_ text: String, width: CGFloat) -> CGFloat {
         let attributed = NSAttributedString(string: text, attributes: [.font: Self.uiFont(12)])
         let rect = attributed.boundingRect(
@@ -195,6 +260,17 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
         return ceil(rect.height) + 2
+    }
+
+    private func measuredInputHeight(width: CGFloat) -> CGFloat {
+        let text = inputTextView.string.isEmpty ? inputPlaceholderLabel.stringValue : inputTextView.string
+        let attributed = NSAttributedString(string: text, attributes: [.font: Self.uiFont(13)])
+        let rect = attributed.boundingRect(
+            with: NSSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        let height = max(Self.minInputHeight, ceil(rect.height) + 3)
+        return min(height, Self.maxInputHeight)
     }
 
     private func scheduleAutoHide(_ delay: TimeInterval?) {
@@ -216,19 +292,18 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
         if mode == .input { hide() }
     }
 
-    public func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
-        switch selector {
-        case #selector(NSResponder.insertNewline(_:)):
-            let text = inputField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            inputField.stringValue = ""
-            if !text.isEmpty { onSend?(text) }
-            return true
-        case #selector(NSResponder.cancelOperation(_:)):
-            hide()
-            return true
-        default:
-            return false
+    public func textDidChange(_ notification: Notification) {
+        if mode == .input {
+            relayout()
+            inputTextView.scrollRangeToVisible(NSRange(location: inputTextView.string.count, length: 0))
         }
+    }
+
+    private func submitInput() {
+        let text = inputTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        inputTextView.string = ""
+        relayout()
+        if !text.isEmpty { onSend?(text) }
     }
 
     private static func balloonPath(size: CGSize) -> CGPath {

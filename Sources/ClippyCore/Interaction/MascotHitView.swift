@@ -75,6 +75,13 @@ public final class MascotHitView: NSView {
             return
         }
 
+        if event.clickCount >= 2 {
+            lastClickScreenLocation = nil
+            lastClickTimestamp = nil
+            onClick?()
+            return
+        }
+
         let clickLocation = NSEvent.mouseLocation
         if
             let previousLocation = lastClickScreenLocation,
