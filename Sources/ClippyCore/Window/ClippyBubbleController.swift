@@ -1,11 +1,13 @@
 import AppKit
 
 /// Clippy's one and only bubble. It shows exactly one thing at a time:
-///   • a single message line (greeting, "thinking", or the latest reply), or
+///   • a single message line (greeting or the latest reply), or
 ///   • the input field (when you click Clippy), or
-///   • the full history (when you press "show history").
-/// Click Clippy to open the input; click away and it disappears. Same balloon
-/// for everything — greeting and chat are the same surface.
+///   • the full history (toggled from the right-click menu).
+/// While Clippy is thinking, the bubble is hidden entirely — the character's
+/// own Thinking animation carries it, like the original assistant. Click Clippy
+/// to open the input; click away and it disappears. Type face is Microsoft Sans
+/// Serif (the modern name for the MS Sans Serif the original balloon used).
 public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWindowDelegate {
     private final class KeyPanel: NSPanel {
         override var canBecomeKey: Bool { true }
@@ -16,10 +18,19 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
     private struct Line { let speaker: Speaker; let text: String }
 
     private static let balloonColor = NSColor(calibratedRed: 1.0, green: 1.0, blue: 225.0 / 255.0, alpha: 1)
-    private static let width: CGFloat = 280
-    private static let pad: CGFloat = 12
+    private static let width: CGFloat = 260
+    private static let pad: CGFloat = 11
     private static let tailHeight: CGFloat = 12
     private static let maxHistoryHeight: CGFloat = 300
+
+    private static func uiFont(_ size: CGFloat, bold: Bool = false) -> NSFont {
+        let name = bold ? "Microsoft Sans Serif Bold" : "Microsoft Sans Serif"
+        if let font = NSFont(name: name, size: size) {
+            return font
+        }
+        let fallback = NSFont(name: "Microsoft Sans Serif", size: size) ?? .systemFont(ofSize: size)
+        return bold ? NSFontManager.shared.convert(fallback, toHaveTrait: .boldFontMask) : fallback
+    }
 
     public let window: NSPanel
     private let balloonLayer = CAShapeLayer()
@@ -27,7 +38,6 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
     private let inputField = NSTextField()
     private let scrollView = NSScrollView()
     private let transcriptView = NSTextView()
-    private let historyButton = NSButton()
 
     private var mode: Mode = .message
     private var history: [Line] = []
@@ -35,8 +45,6 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
     private var onSend: ((String) -> Void)?
     private var anchorFrame: CGRect = .zero
     private var autoHideTimer: Timer?
-    private var thinkingTimer: Timer?
-    private var thinkingDots = 0
 
     public override init() {
         self.window = KeyPanel(
@@ -54,12 +62,12 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
         balloonLayer.strokeColor = NSColor.black.cgColor
         balloonLayer.lineWidth = 1
 
-        messageLabel.font = .systemFont(ofSize: 13)
+        messageLabel.font = Self.uiFont(12)
         messageLabel.textColor = .black
         messageLabel.maximumNumberOfLines = 0
         root.addSubview(messageLabel)
 
-        inputField.font = .systemFont(ofSize: 14)
+        inputField.font = Self.uiFont(13)
         inputField.textColor = .black
         inputField.drawsBackground = false
         inputField.isBordered = false
@@ -83,14 +91,6 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
         scrollView.isHidden = true
         root.addSubview(scrollView)
 
-        historyButton.isBordered = false
-        historyButton.font = .systemFont(ofSize: 10)
-        historyButton.contentTintColor = NSColor(calibratedWhite: 0.35, alpha: 1)
-        historyButton.target = self
-        historyButton.action = #selector(historyButtonClicked)
-        historyButton.isHidden = true
-        root.addSubview(historyButton)
-
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = true
@@ -104,14 +104,14 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
 
     public var isVisible: Bool { window.isVisible }
     public var isInputMode: Bool { mode == .input && window.isVisible }
+    public var isHistoryShown: Bool { mode == .history && window.isVisible }
+    public var hasHistory: Bool { history.count >= 2 }
 
-    /// Where Clippy is, so the tail always points at it.
     public func setAnchor(_ frame: CGRect) {
         anchorFrame = frame
         if window.isVisible { positionWindow() }
     }
 
-    /// Stable send handler; set once at startup.
     public func configure(onSend: @escaping (String) -> Void) {
         self.onSend = onSend
     }
@@ -120,7 +120,6 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
 
     /// A passive one-line message (greeting, reply). Doesn't steal focus.
     public func showMessage(_ text: String, autoHide: TimeInterval? = nil) {
-        stopThinking()
         messageText = text
         mode = .message
         relayout()
@@ -131,7 +130,6 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
     /// Click-Clippy: show only the input, focused. Click-away dismisses it.
     public func openInput() {
         cancelAutoHide()
-        stopThinking()
         mode = .input
         relayout()
         NSApp.activate(ignoringOtherApps: true)
@@ -140,33 +138,18 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
     }
 
     public func toggleInput() {
-        if mode == .input && window.isVisible {
-            hide()
-        } else {
-            openInput()
-        }
+        if mode == .input && window.isVisible { hide() } else { openInput() }
     }
 
-    /// User sent a line — record it, switch to the thinking shimmer.
-    public func showThinking(forUserLine userLine: String) {
-        history.append(Line(speaker: .user, text: userLine))
+    /// Record the user's line for history. No bubble UI — the character's
+    /// Thinking animation represents the thinking state.
+    public func recordUserLine(_ line: String) {
+        history.append(Line(speaker: .user, text: line))
         cancelAutoHide()
-        mode = .message
-        thinkingDots = 0
-        messageText = "Clippy is thinking"
-        relayout()
-        window.orderFrontRegardless()
-        thinkingTimer?.invalidate()
-        thinkingTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            self.thinkingDots = (self.thinkingDots + 1) % 4
-            self.messageLabel.stringValue = "Clippy is thinking" + String(repeating: ".", count: self.thinkingDots)
-        }
     }
 
-    /// Reply arrived — replace everything with just the reply.
+    /// Reply arrived — show just the reply.
     public func showReply(_ text: String) {
-        stopThinking()
         history.append(Line(speaker: .clippy, text: text))
         messageText = text
         mode = .message
@@ -176,35 +159,38 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
 
     public func hide() {
         cancelAutoHide()
-        stopThinking()
         window.orderOut(nil)
     }
 
-    // MARK: - History toggle
-
-    @objc private func historyButtonClicked() {
-        mode = (mode == .history) ? .message : .history
-        relayout()
+    /// Toggle the full transcript (driven from the right-click menu, not a
+    /// button inside the bubble).
+    public func toggleHistory() {
+        guard hasHistory else { return }
+        if mode == .history && window.isVisible {
+            mode = .message
+            messageText = history.last?.text ?? ""
+            relayout()
+        } else {
+            cancelAutoHide()
+            mode = .history
+            relayout()
+            window.orderFrontRegardless()
+        }
     }
-
-    public func debugToggleExpanded() { historyButtonClicked() }
 
     // MARK: - Layout (one active region; bubble grows to fit)
 
     private func relayout() {
         let contentWidth = Self.width - Self.pad * 2
-        let hasHistory = history.count >= 2
-        let showButton = hasHistory && mode != .input
 
         messageLabel.isHidden = mode != .message
         inputField.isHidden = mode != .input
         scrollView.isHidden = mode != .history
-        historyButton.isHidden = !showButton
 
         var contentHeight: CGFloat = 0
         switch mode {
         case .input:
-            contentHeight = 24
+            contentHeight = 22
         case .message:
             contentHeight = measuredLabelHeight(messageText.isEmpty ? "…" : messageText, width: contentWidth)
         case .history:
@@ -216,10 +202,7 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
             contentHeight = min(ceil(measured) + 10, Self.maxHistoryHeight)
         }
 
-        let buttonH: CGFloat = showButton ? 14 : 0
-        let buttonGap: CGFloat = showButton ? 6 : 0
-        let windowHeight = Self.tailHeight + Self.pad + buttonH + buttonGap + contentHeight + Self.pad
-
+        let windowHeight = Self.tailHeight + Self.pad + contentHeight + Self.pad
         window.setContentSize(CGSize(width: Self.width, height: windowHeight))
         balloonLayer.frame = CGRect(origin: .zero, size: CGSize(width: Self.width, height: windowHeight))
         balloonLayer.path = Self.balloonPath(size: CGSize(width: Self.width, height: windowHeight))
@@ -232,7 +215,7 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
             inputField.frame = contentRect
         case .message:
             messageLabel.frame = contentRect
-            if thinkingTimer == nil { messageLabel.stringValue = messageText }
+            messageLabel.stringValue = messageText
         case .history:
             scrollView.frame = contentRect
             transcriptView.minSize = NSSize(width: 0, height: contentHeight)
@@ -240,17 +223,6 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
             transcriptView.frame = CGRect(x: 0, y: 0, width: contentWidth, height: contentHeight)
             transcriptView.textContainer?.containerSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
             transcriptView.scrollToEndOfDocument(nil)
-        }
-
-        if showButton {
-            historyButton.title = mode == .history ? "▾ hide history" : "▸ show history"
-            historyButton.sizeToFit()
-            historyButton.frame = CGRect(
-                x: Self.width - Self.pad - historyButton.frame.width,
-                y: contentY + contentHeight + buttonGap,
-                width: historyButton.frame.width,
-                height: buttonH
-            )
         }
 
         positionWindow()
@@ -269,7 +241,7 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
     }
 
     private func measuredLabelHeight(_ text: String, width: CGFloat) -> CGFloat {
-        let attributed = NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 13)])
+        let attributed = NSAttributedString(string: text, attributes: [.font: Self.uiFont(12)])
         let rect = attributed.boundingRect(
             with: NSSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
@@ -287,10 +259,10 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
                 ? NSColor(calibratedRed: 0.1, green: 0.3, blue: 0.6, alpha: 1)
                 : NSColor(calibratedRed: 0.5, green: 0.25, blue: 0.0, alpha: 1)
             full.append(NSAttributedString(string: prefix, attributes: [
-                .font: NSFont.boldSystemFont(ofSize: 12), .foregroundColor: prefixColor,
+                .font: Self.uiFont(12, bold: true), .foregroundColor: prefixColor,
             ]))
             full.append(NSAttributedString(string: line.text, attributes: [
-                .font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.black,
+                .font: Self.uiFont(12), .foregroundColor: NSColor.black,
             ]))
         }
         transcriptView.textStorage?.setAttributedString(full)
@@ -310,15 +282,9 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
         autoHideTimer = nil
     }
 
-    private func stopThinking() {
-        thinkingTimer?.invalidate()
-        thinkingTimer = nil
-    }
-
     // MARK: - Click-away dismissal
 
     public func windowDidResignKey(_ notification: Notification) {
-        // Clicking outside while typing should put the input away.
         if mode == .input { hide() }
     }
 
@@ -341,7 +307,7 @@ public final class ClippyBubbleController: NSObject, NSTextFieldDelegate, NSWind
         let inset: CGFloat = 0.5
         let left = inset, right = size.width - inset
         let bottom = tailHeight, top = size.height - inset
-        let r: CGFloat = 7
+        let r: CGFloat = 6
         let tailLeftX = size.width * 0.5 - 8
         let tailRightX = size.width * 0.5 + 8
         let tipX = size.width * 0.5 - 4

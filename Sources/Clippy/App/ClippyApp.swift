@@ -154,7 +154,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         isTurnRunning = true
         pendingIdle?.cancel()
-        chatBubble.showThinking(forUserLine: text)
+        chatBubble.recordUserLine(text)
+        chatBubble.hide() // thinking is shown by the character, not text
         log("user: \(text)")
         playLooping("Thinking")
 
@@ -168,6 +169,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func receiveReply(_ turn: ClaudeCLIConversation.Turn) {
         isTurnRunning = false
+        if let frame = mascotWindow?.frame { chatBubble?.setAnchor(frame) }
         chatBubble?.showReply(turn.text)
         log("clippy: \(turn.text.prefix(120))")
 
@@ -220,6 +222,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         chat.target = self
         menu.addItem(chat)
 
+        if chatBubble?.hasHistory == true {
+            let showing = chatBubble?.isHistoryShown == true
+            let history = NSMenuItem(
+                title: showing ? "Hide Conversation History" : "Show Conversation History",
+                action: #selector(toggleHistory),
+                keyEquivalent: ""
+            )
+            history.target = self
+            menu.addItem(history)
+        }
+
         let animate = NSMenuItem(title: "Animate!", action: #selector(animateNow), keyEquivalent: "")
         animate.target = self
         menu.addItem(animate)
@@ -240,6 +253,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     @objc private func chatClicked() {
         toggleChat()
+    }
+
+    @objc private func toggleHistory() {
+        if let frame = mascotWindow?.frame { chatBubble?.setAnchor(frame) }
+        chatBubble?.toggleHistory()
     }
 
     @objc private func animateNow() {
@@ -347,7 +365,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 writeSnapshot(index: 99, directory: snapshotDirectory ?? "/tmp")
                 writeChatSnapshot(directory: snapshotDirectory ?? "/tmp")
             } else if command == "expand" {
-                chatBubble?.debugToggleExpanded()
+                chatBubble?.toggleHistory()
             }
         }
     }
