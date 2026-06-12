@@ -77,6 +77,18 @@ import Testing
     #expect(FileManager.default.fileExists(atPath: root.appending(path: "map.png").path))
 }
 
+@Test func clippitSpriteSheetProducesVisibleRestPoseTexture() throws {
+    let root = clippitResourceRoot()
+    let sheet = try ClippitSpriteSheet(packRoot: root)
+    let frames = try #require(sheet.frames(for: "RestPose"))
+    let texture = try #require(frames.textures.first)
+
+    #expect(sheet.frameSize == CGSize(width: 124, height: 93))
+    #expect(frames.textures.count == 1)
+    #expect(texture.size().width > 0)
+    #expect(texture.size().height > 0)
+}
+
 @Test func approvalPolicyProtectsSensitiveTools() throws {
     let policy = ApprovalPolicy()
     let shell = ToolInvocation(name: "shell.exec")
