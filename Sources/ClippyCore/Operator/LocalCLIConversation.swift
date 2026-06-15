@@ -89,6 +89,7 @@ public actor LocalCLIConversation: AgentBrain {
     public func send(_ message: String) async -> Turn {
         var arguments = [
             "-p", message,
+            "--safe-mode",
             "--output-format", "json",
             "--permission-mode", permissionMode,
         ]
@@ -168,6 +169,7 @@ public actor LocalCLIConversation: AgentBrain {
     private func runStreaming(_ message: String, continuation: AsyncStream<AgentStreamChunk>.Continuation, process box: ProcessBox) async {
         var arguments = [
             "-p", message,
+            "--safe-mode",
             "--output-format", "stream-json",
             "--include-partial-messages",
             "--verbose",

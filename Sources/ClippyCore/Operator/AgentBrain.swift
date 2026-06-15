@@ -24,7 +24,7 @@ public enum AgentStreamChunk: Sendable {
 public protocol AgentBrain: Actor {
     func send(_ message: String) async -> AgentTurn
     /// Streams the reply as it is generated. The default yields just the final
-    /// `send` result; LocalCLIConversation overrides it with real token streaming.
+    /// `send` result; local CLI adapters override it with real token streaming.
     nonisolated func stream(_ message: String) -> AsyncStream<AgentStreamChunk>
 }
 

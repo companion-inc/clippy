@@ -291,15 +291,15 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     /// Speak the reply as it streams: enqueue each newly-completed sentence (tags
     /// stripped) so Clippy talks before the whole reply lands. `final` flushes the
-    /// trailing partial sentence. Non-streaming brains (Codex) only hit `final`, which
-    /// then speaks the whole reply at once.
+    /// trailing partial sentence. Brains that only produce a final result still speak
+    /// the whole reply here.
     private func speakStreaming(_ text: String, final: Bool) {
         guard ttsEnabled, let tts = deepgramTTS else { return }
         let ns = text as NSString
         if ttsSpokenChars > ns.length { ttsSpokenChars = ns.length }
         let terminators = CharacterSet(charactersIn: ".!?\n")
         // Enqueue each complete sentence in the unspoken tail, one chunk at a time, so
-        // even a reply that arrives all at once (Codex) is spoken sentence by sentence.
+        // even a reply that arrives as one large final chunk is spoken sentence by sentence.
         while ttsSpokenChars < ns.length {
             let tail = NSRange(location: ttsSpokenChars, length: ns.length - ttsSpokenChars)
             let stop = ns.rangeOfCharacter(from: terminators, options: [], range: tail)
@@ -373,7 +373,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             chatBubble?.showReply(spoken)
         }
         // Flush any sentence not yet spoken. Streamed replies already spoke most of it
-        // sentence-by-sentence; non-streaming brains (Codex) speak the whole reply here.
+        // sentence-by-sentence; any non-streaming fallback speaks the whole reply here.
         if !turn.isError { speakStreaming(turn.text, final: true) }
         log("clippy: \(turn.text.prefix(120))")
 

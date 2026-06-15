@@ -1,7 +1,7 @@
 import Foundation
 
 /// A model the user can drive Clippy's brain with. `backend` picks the local CLI:
-/// Claude models run through `claude`, GPT-5.5 through `codex exec` — both at low effort.
+/// Claude models run through `claude`, GPT-5.5 through `codex app-server` — both at low effort.
 public struct ClippyModel: Equatable, Sendable, Identifiable {
     public enum Backend: String, Equatable, Sendable {
         case claude
