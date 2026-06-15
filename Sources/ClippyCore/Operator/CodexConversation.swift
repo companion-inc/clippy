@@ -71,7 +71,6 @@ public actor CodexConversation: AgentBrain {
         } catch {
             return AgentTurn(text: "I couldn't reach Codex: \(error.localizedDescription)", isError: true)
         }
-        _ = outPipe.fileHandleForReading.readDataToEndOfFile()
         let stdout = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         _ = errPipe.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()

@@ -76,29 +76,14 @@ public actor LocalCLIConversation: AgentBrain {
         return (path?.isEmpty == false) ? path : nil
     }
 
-    /// Path to the bundled ClippyMCP server (sits next to the Clippy executable in both
-    /// the .app bundle and the dev build). Nil if not present.
-    static func clippyMCPBinaryPath() -> String? {
-        guard let executable = Bundle.main.executableURL else { return nil }
-        let candidate = executable.deletingLastPathComponent().appendingPathComponent("ClippyMCP")
-        return FileManager.default.isExecutableFile(atPath: candidate.path) ? candidate.path : nil
-    }
-
-    /// `--mcp-config` + `--allowedTools` args that give the model Clippy's real MCP tools
-    /// (clippy_act / clippy_point / clippy_highlight) when the server binary is present.
+    /// `--allowedTools` args. Following Clippy's format: emote / point / highlight
+    /// are NOT tools — they're inline tags ([POINT]/[ACT]/…) that ride inside the
+    /// spoken reply so Clippy talks *while* it acts, in one model pass. MCP is
+    /// reserved for the real computer-use lane (get_window_state / click / set_value),
+    /// which is result-dependent and doesn't exist yet. So no `--mcp-config` here.
     private func toolAndMCPArguments() -> [String] {
-        var result: [String] = []
-        var tools = allowedTools
-        if let path = Self.clippyMCPBinaryPath(),
-           let data = try? JSONSerialization.data(withJSONObject: ["mcpServers": ["clippy": ["command": path]]]),
-           let json = String(data: data, encoding: .utf8) {
-            result.append(contentsOf: ["--mcp-config", json])
-            tools.append(contentsOf: ["mcp__clippy__clippy_act", "mcp__clippy__clippy_point", "mcp__clippy__clippy_highlight"])
-        }
-        if !tools.isEmpty {
-            result.append(contentsOf: ["--allowedTools", tools.joined(separator: ",")])
-        }
-        return result
+        guard !allowedTools.isEmpty else { return [] }
+        return ["--allowedTools", allowedTools.joined(separator: ",")]
     }
 
     public func send(_ message: String) async -> Turn {

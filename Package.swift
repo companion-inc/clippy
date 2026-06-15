@@ -7,7 +7,6 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .executable(name: "Clippy", targets: ["Clippy"]),
-        .executable(name: "ClippyMCP", targets: ["ClippyMCP"]),
         .library(name: "ClippyCore", targets: ["ClippyCore"]),
     ],
     targets: [
@@ -17,9 +16,6 @@ let package = Package(
         .executableTarget(
             name: "Clippy",
             dependencies: ["ClippyCore"]
-        ),
-        .executableTarget(
-            name: "ClippyMCP"
         ),
         .testTarget(
             name: "ClippyTests",

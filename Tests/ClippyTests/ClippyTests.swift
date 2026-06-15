@@ -126,11 +126,18 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         for await _ in conversation.stream("cancel me") {
         }
     }
-    try await Task.sleep(nanoseconds: 300_000_000)
+    // Wait until the fake codex has actually started (it writes "started") before
+    // cancelling — a fixed sleep races its startup under full-suite load.
+    let startDeadline = Date().addingTimeInterval(5)
+    while Date() < startDeadline {
+        let log = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+        if log.contains("started") { break }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
     task.cancel()
     _ = await task.result
 
-    let deadline = Date().addingTimeInterval(3)
+    let deadline = Date().addingTimeInterval(10)
     var log = ""
     while Date() < deadline {
         log = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""

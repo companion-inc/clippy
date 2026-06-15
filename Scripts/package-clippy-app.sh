@@ -12,7 +12,6 @@ xcrun swift build ${configuration:+--configuration "$configuration"}
 rm -rf "$app_dir"
 mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources/Characters"
 cp "$build_dir/Clippy" "$app_dir/Contents/MacOS/Clippy"
-cp "$build_dir/ClippyMCP" "$app_dir/Contents/MacOS/ClippyMCP"
 cp -R "$repo_root/Resources/Characters/Clippy" "$app_dir/Contents/Resources/Characters/Clippy"
 cp "$repo_root/Resources/Clippy.icns" "$app_dir/Contents/Resources/Clippy.icns"
 mkdir -p "$app_dir/Contents/Resources/Fonts"
@@ -76,7 +75,6 @@ if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$codesign_id
   # entitlements re-grant the mic + Apple Events that hardened runtime would
   # otherwise block. (Ad-hoc identity "-" can't timestamp, so skip it there.)
   ts_flag="--timestamp"; [ "$codesign_identity" = "-" ] && ts_flag="--timestamp=none"
-  codesign --force $ts_flag --options runtime --sign "$codesign_identity" "$app_dir/Contents/MacOS/ClippyMCP"
   codesign --force $ts_flag --options runtime \
     --entitlements "$repo_root/Resources/Clippy.entitlements" \
     --sign "$codesign_identity" "$app_dir"
