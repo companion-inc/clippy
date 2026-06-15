@@ -635,13 +635,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     @objc private func grantAccessibility() {
         _ = AccessibilityPermission.requestIfNeeded(prompt: true)
         openPrivacyPane("Privacy_Accessibility")
-        showPermissionDragPill("Drag Clippy into the Accessibility list →")
+        showPermissionDragPill("Drag Clippy into the Accessibility list")
     }
 
     @objc private func grantScreenRecording() {
         _ = ScreenPerception.requestPermission()
         openPrivacyPane("Privacy_ScreenCapture")
-        showPermissionDragPill("Drag Clippy into the Screen Recording list →")
+        showPermissionDragPill("Drag Clippy into the Screen Recording list")
     }
 
     @objc private func grantMicrophone() {

@@ -1,21 +1,30 @@
 import AppKit
 
-/// A "drag me into the list" permission guide, copied from Clippy's
-/// PermissionGuideAssistant: a pill of Clippy.app that **locks itself to the System
-/// Settings window** and follows it, so the privacy list you're dragging into is
-/// always right next to the pill. Dragging carries the `.app` file URL, which the
-/// Accessibility / Screen Recording list accepts as an "add this app" drop.
+/// A "drag me into the list" permission guide, modeled on Clippy's
+/// `PermissionGuideAssistant`: the strip **locks onto the System Settings window**
+/// and stays attached while you drag the Clippy app into the privacy list.
+///
+/// Clippy's own copy: *"As soon as Settings opens, Clippy will attach the
+/// guide automatically … the guide stays locked to System Settings."* So we don't
+/// position once and hope — we poll until the Settings window is actually visible
+/// on the active Space, attach the pill **centered directly underneath it**, and
+/// keep following it. The pill stays hidden whenever Settings isn't in front, so it
+/// never strands itself in a random corner (the old single-shot query did exactly
+/// that when Settings opened a beat later or on another Space).
 @MainActor
 public final class PermissionDragController {
     private let window: NSWindow
-    private let pill: AppDragPill
+    private let pill: RetroDragPill
     private var followTimer: Timer?
     private var hideWork: DispatchWorkItem?
-    private var targetScreen: NSScreen?
+    private var attached = false
+
+    /// Final on-screen frame of the pill window (diagnostics / tests).
+    public var windowFrame: NSRect { window.frame }
 
     public init(appURL: URL, prompt: String) {
-        pill = AppDragPill(appURL: appURL, prompt: prompt)
-        let size = NSSize(width: 264, height: 96)
+        pill = RetroDragPill(appURL: appURL, prompt: prompt)
+        let size = NSSize(width: 392, height: 88)
         window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: .borderless, backing: .buffered, defer: false
@@ -24,24 +33,20 @@ public final class PermissionDragController {
         window.backgroundColor = .clear
         window.hasShadow = true
         window.level = .floating
-        // NOT movable-by-background: that would steal the mouse-drag and move the
-        // window instead of starting the file drag into System Settings.
-        window.isMovableByWindowBackground = false
+        window.isMovableByWindowBackground = false // don't steal the file-drag gesture
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.contentView = pill
     }
 
-    /// Show the pill and keep it pinned beside the System Settings window. Follows it
-    /// (a 0.4s timer) so it stays put even if the user moves Settings around.
     public func show(autoHideAfter seconds: TimeInterval = 90) {
-        // Pin to the display under the cursor when triggered (like Codex's getDisplayNearestPoint).
-        targetScreen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
-        reposition()
-        window.orderFrontRegardless()
+        attached = false
+        // Poll for the Settings window and stay locked to it. Fast cadence so the
+        // pill appears the instant Settings comes forward, then keeps tracking it.
         followTimer?.invalidate()
-        followTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
-            self?.reposition()
+        followTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.track() }
         }
+        track()
         hideWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.hide() }
         hideWork = work
@@ -52,66 +57,126 @@ public final class PermissionDragController {
         followTimer?.invalidate(); followTimer = nil
         hideWork?.cancel(); hideWork = nil
         window.orderOut(nil)
+        attached = false
     }
 
-    /// Top-right of the target display's work area — copied from Codex's overlay
-    /// placement (x = workArea right edge − width, y a margin below the top). A fixed,
-    /// predictable spot, instead of chasing wherever System Settings happens to open.
-    private func reposition() {
-        guard let visible = (targetScreen ?? NSScreen.main)?.visibleFrame else { return }
+    /// Attach to / follow the System Settings window. While Settings isn't visible
+    /// on the active Space, keep the pill hidden rather than guess a position.
+    private func track() {
+        guard let settings = Self.systemSettingsFrame() else {
+            if attached { window.orderOut(nil); attached = false }
+            return
+        }
+        window.setFrameOrigin(pillOrigin(under: settings))
+        if !attached {
+            window.orderFrontRegardless()
+            attached = true
+        }
+    }
+
+    /// Centered directly UNDERNEATH the Settings window, clamped to stay on the same
+    /// display (so it never jumps onto a second monitor when Settings sits near an edge).
+    private func pillOrigin(under settings: CGRect) -> NSPoint {
         let size = window.frame.size
-        let margin: CGFloat = 16
-        window.setFrameOrigin(NSPoint(
-            x: visible.maxX - size.width - margin,
-            y: visible.maxY - size.height - margin
-        ))
+        var x = settings.midX - size.width / 2
+        var y = settings.minY - size.height - 12 // just below the bottom edge
+
+        let screen = NSScreen.screens.max {
+            $0.frame.intersection(settings).area < $1.frame.intersection(settings).area
+        }?.visibleFrame ?? NSScreen.main?.visibleFrame ?? settings
+        x = min(max(x, screen.minX + 8), screen.maxX - size.width - 8)
+        y = min(max(y, screen.minY + 8), screen.maxY - size.height - 8)
+        return NSPoint(x: x, y: y)
+    }
+
+    /// The System Settings (or legacy System Preferences) window in global AppKit
+    /// coordinates. Bounds + owner don't require Screen Recording permission. Uses
+    /// `.optionOnScreenOnly` on purpose: we only attach when Settings is actually in
+    /// front of the user, never to an off-Space/minimized window.
+    public static func systemSettingsFrame() -> CGRect? {
+        let options = CGWindowListOption(arrayLiteral: .optionOnScreenOnly, .excludeDesktopElements)
+        guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return nil }
+        let primaryHeight = NSScreen.screens.first { $0.frame.origin == .zero }?.frame.height
+            ?? NSScreen.main?.frame.height ?? 0
+        for window in list {
+            let owner = (window[kCGWindowOwnerName as String] as? String) ?? ""
+            guard owner == "System Settings" || owner == "System Preferences",
+                  let bounds = window[kCGWindowBounds as String] as? [String: Any] else { continue }
+            let x = bounds["X"] as? CGFloat ?? 0
+            let y = bounds["Y"] as? CGFloat ?? 0
+            let w = bounds["Width"] as? CGFloat ?? 0
+            let h = bounds["Height"] as? CGFloat ?? 0
+            guard w > 200, h > 200 else { continue } // skip the tiny helper/menu windows
+            return CGRect(x: x, y: primaryHeight - y - h, width: w, height: h)
+        }
+        return nil
     }
 }
 
-/// The draggable view: Clippy's app icon, a one-line instruction, and a "→". Starting
-/// a drag puts the `.app` file URL on the pasteboard so the privacy list accepts it.
-final class AppDragPill: NSView, NSDraggingSource {
+private extension CGRect {
+    var area: CGFloat { isNull ? 0 : width * height }
+}
+
+/// The draggable Clippy pill, drawn in the Win95 / Office-97 style: pale-yellow tooltip
+/// face, hard black frame + raised bevel, MS Sans Serif text, and a big → drag cue.
+final class RetroDragPill: NSView, NSDraggingSource {
     private let appURL: URL
+    override var isFlipped: Bool { true } // RetroBezel assumes a flipped coordinate space
 
     init(appURL: URL, prompt: String) {
         self.appURL = appURL
         super.init(frame: .zero)
-        wantsLayer = true
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        layer?.cornerRadius = 16
-        layer?.cornerCurve = .continuous
-        layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.cgColor
 
         let icon = NSImageView()
         icon.image = NSWorkspace.shared.icon(forFile: appURL.path)
         icon.translatesAutoresizingMaskIntoConstraints = false
 
         let label = NSTextField(wrappingLabelWithString: prompt)
-        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.font = RetroFont.ui(13)
+        label.textColor = RetroPalette.text
         label.isBordered = false
         label.drawsBackground = false
         label.translatesAutoresizingMaskIntoConstraints = false
 
+        let arrow = NSTextField(labelWithString: "→")
+        arrow.font = .systemFont(ofSize: 30, weight: .bold)
+        arrow.textColor = RetroPalette.text
+        arrow.isBordered = false
+        arrow.drawsBackground = false
+        arrow.translatesAutoresizingMaskIntoConstraints = false
+
         addSubview(icon)
         addSubview(label)
+        addSubview(arrow)
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 52),
             icon.heightAnchor.constraint(equalToConstant: 52),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
-            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            arrow.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 8),
+            arrow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            arrow.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
     required init?(coder: NSCoder) { nil }
 
+    override func draw(_ dirtyRect: NSRect) {
+        RetroPalette.infoBackground.setFill() // INFOBK pale yellow — the Office tooltip color
+        bounds.fill()
+        RetroBezel.draw(.raised, in: bounds)
+        RetroPalette.frame.setStroke()
+        let outline = NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 0.5))
+        outline.lineWidth = 1
+        outline.stroke()
+    }
+
     override func mouseDown(with event: NSEvent) {
         let item = NSDraggingItem(pasteboardWriter: appURL as NSURL)
         let icon = NSWorkspace.shared.icon(forFile: appURL.path)
-        item.setDraggingFrame(bounds.insetBy(dx: bounds.width / 2 - 26, dy: bounds.height / 2 - 26), contents: icon)
+        item.setDraggingFrame(CGRect(x: 16, y: bounds.midY - 26, width: 52, height: 52), contents: icon)
         beginDraggingSession(with: [item], event: event, source: self)
     }
 
