@@ -3,10 +3,10 @@ import AppKit
 /// Clippy's one and only bubble. It shows exactly one thing at a time:
 ///   • a single message line (greeting or the latest reply), or
 ///   • the input field (when you double-click Clippy).
-/// While Clippy is thinking, the bubble is hidden entirely — the character's
-/// own Thinking animation carries it, like the original assistant. Double-click
-/// Clippy to open the input; click away and it disappears. Type face is Microsoft Sans
-/// Serif (the modern name for the MS Sans Serif the original balloon used).
+/// While Clippy is thinking, the bubble shows the current backend phase instead
+/// of leaving the user with anonymous dots. Double-click Clippy to open the input;
+/// click away and it disappears. Type face is Microsoft Sans Serif (the modern
+/// name for the MS Sans Serif the original balloon used).
 public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private final class KeyPanel: NSPanel {
         override var canBecomeKey: Bool { true }
@@ -162,6 +162,10 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         scheduleAutoHide(autoHide)
     }
 
+    public func showMessageForReading(_ text: String) {
+        showMessage(text, autoHide: Self.readingAutoHideDelay(for: text))
+    }
+
     /// Double-click Clippy: show only the input, focused. Click-away dismisses it.
     public func openInput() {
         stopThinking()
@@ -185,13 +189,22 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     }
 
     /// Reply arrived — show just the reply.
-    public func showReply(_ text: String) {
+    public func showReply(_ text: String, autoHide: TimeInterval? = nil) {
         stopThinking()
         messageText = text
         mode = .message
         relayout()
         attachToAnchorWindow()
         window.orderFrontRegardless()
+        scheduleAutoHide(autoHide)
+    }
+
+    public func showReplyForReading(_ text: String) {
+        showReply(text, autoHide: Self.readingAutoHideDelay(for: text))
+    }
+
+    public func showStatus(_ text: String) {
+        showReply(text)
     }
 
     public func hide() {
@@ -207,13 +220,15 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     private var thinkingTimer: Timer?
     private var thinkingStep = 0
-    private let thinkingFrames = ["•", "•  •", "•  •  •"]
+    private var thinkingStatus = "Thinking"
+    private let thinkingSuffixes = ["", ".", "..", "..."]
 
-    /// Animated dots bubble while Clippy is thinking — shown alongside the
-    /// character's head-scratch animation so there's a visible "working" cue.
-    public func showThinking() {
+    /// Animated status bubble while Clippy is thinking — shown alongside the
+    /// character's head-scratch animation so there is a visible working cue.
+    public func showThinking(_ status: String = "Thinking") {
         cancelAutoHide()
         thinkingStep = 0
+        thinkingStatus = status
         renderThinkingFrame()
         attachToAnchorWindow()
         window.orderFrontRegardless()
@@ -223,8 +238,17 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         }
     }
 
+    public func updateThinking(_ status: String) {
+        guard thinkingTimer != nil else {
+            showThinking(status)
+            return
+        }
+        thinkingStatus = status
+        renderThinkingFrame()
+    }
+
     private func renderThinkingFrame() {
-        messageText = thinkingFrames[thinkingStep % thinkingFrames.count]
+        messageText = thinkingStatus + thinkingSuffixes[thinkingStep % thinkingSuffixes.count]
         mode = .message
         relayout()
         thinkingStep += 1
@@ -368,6 +392,14 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private func cancelAutoHide() {
         autoHideTimer?.invalidate()
         autoHideTimer = nil
+    }
+
+    public static func readingAutoHideDelay(for text: String) -> TimeInterval {
+        let wordsPerMinute = 200.0
+        let wordCount = max(1, text.split(whereSeparator: \.isWhitespace).count)
+        let sentencePauses = Double(text.filter { ".!?".contains($0) }.count) * 0.25
+        let readTime = Double(wordCount) / wordsPerMinute * 60.0
+        return min(24.0, max(3.5, readTime + sentencePauses + 1.5))
     }
 
     // MARK: - Click-away dismissal

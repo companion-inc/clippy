@@ -37,6 +37,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var currentBrainTask: Task<Void, Never>?
     private var lastShot: ScreenPerception.Screenshot?
     private var overlayDismiss: DispatchWorkItem?
+    private var turnProgressItems: [DispatchWorkItem] = []
+    private var turnHasStreamingText = false
     private var ttsSpokenChars = 0   // how much of the streaming reply has been queued to TTS
     private var commandTimer: Timer?
     private var activeActivityState: AgentActivityState = .idle
@@ -99,7 +101,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         clippy.play(clippy.spec.greetingAnimationName) { [weak self] _, _ in
             self?.scheduleNextIdle()
         }
-        bubble.showMessage(clippy.spec.greetingText, autoHide: 6)
+        bubble.showMessageForReading(clippy.spec.greetingText)
         scheduleDebugSnapshots()
     }
 
@@ -159,7 +161,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         deepgramSTT?.onPartialTranscript = { [weak self] text in
             guard let self, !self.isTurnRunning else { return }
             if let frame = self.clippy?.frame { self.chatBubble?.setAnchor(frame) }
-            self.chatBubble?.showReply(text)
+            self.chatBubble?.showStatus(text)
         }
         deepgramTTS = DeepgramTTS(voiceModel: selectedVoice.id)
         if deepgramSTT == nil { speech = SpeechCapture() } // Apple on-device fallback
@@ -208,7 +210,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         pendingIdle?.cancel()
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
-        chatBubble?.showReply("Listening…")
+        chatBubble?.showStatus("Listening…")
         log("ptt: listening (deepgram=\(usingDeepgram))")
     }
 
@@ -256,15 +258,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         guard !isTurnRunning else {
             syncBubbleAnchorToClippy()
-            chatBubble.showReply("(One sec — still working on your last message.)")
+            chatBubble.showReplyForReading("(One sec — still working on your last message.)")
             return
         }
         guard let conversation else {
             syncBubbleAnchorToClippy()
-            chatBubble.showReply("(My local brain isn't installed.)")
+            chatBubble.showReplyForReading("(My local brain isn't installed.)")
             return
         }
         isTurnRunning = true
+        turnHasStreamingText = false
+        cancelTurnProgressUpdates()
         pendingIdle?.cancel()
         log("user: \(text)")
 
@@ -284,7 +288,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         syncBubbleAnchorToClippy()
         chatBubble.recordUserLine(text)
-        chatBubble.showThinking() // animated dots bubble + the head-scratch animation
+        chatBubble.showThinking(shot == nil ? "Starting the brain" : "Sending the screen")
+        scheduleTurnProgressUpdates(wantsScreen: wantsScreen, attachedScreenshot: shot != nil)
         playActivityState(.thinking)
         // Tell the brain how this turn arrives and leaves: spoken-and-transcribed input
         // (read past STT typos) and/or spoken output (write for the ear).
@@ -302,6 +307,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 if Task.isCancelled { break }
                 await MainActor.run {
                     switch chunk {
+                    case .status(let status):
+                        self?.showTurnProgress(status)
                     case .partial(let partial):
                         self?.showStreamingReply(partial)
                         self?.speakStreaming(partial, final: false)
@@ -311,6 +318,34 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    private func scheduleTurnProgressUpdates(wantsScreen: Bool, attachedScreenshot: Bool) {
+        let screenStatus = attachedScreenshot ? "Reading the screen" : "Waiting for first words"
+        let phases: [(TimeInterval, String)] = [
+            (1.0, wantsScreen ? screenStatus : "Waiting for first words"),
+            (3.0, "Still thinking"),
+            (6.0, "Still waiting on the model"),
+            (10.0, "Still working"),
+        ]
+        for (delay, status) in phases {
+            let work = DispatchWorkItem { [weak self] in
+                self?.showTurnProgress(status)
+            }
+            turnProgressItems.append(work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        }
+    }
+
+    private func showTurnProgress(_ status: String) {
+        guard isTurnRunning, !turnHasStreamingText else { return }
+        syncBubbleAnchorToClippy()
+        chatBubble?.updateThinking(status)
+    }
+
+    private func cancelTurnProgressUpdates() {
+        turnProgressItems.forEach { $0.cancel() }
+        turnProgressItems.removeAll()
     }
 
     private func captureCleanTurnScreenshot() -> ScreenPerception.Screenshot? {
@@ -381,6 +416,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         currentBrainTask?.cancel()
         currentBrainTask = nil
         deepgramTTS?.stop()
+        cancelTurnProgressUpdates()
+        turnHasStreamingText = false
         isTurnRunning = false
     }
 
@@ -397,10 +434,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func showStreamingReply(_ text: String) {
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
         let display = GroundingParser.stripForStreaming(text)
-        if !display.isEmpty { chatBubble?.showReply(display) }
+        if !display.isEmpty {
+            turnHasStreamingText = true
+            cancelTurnProgressUpdates()
+            chatBubble?.showReply(display)
+        }
     }
 
     private func receiveReply(_ turn: AgentTurn) {
+        cancelTurnProgressUpdates()
+        currentBrainTask = nil
+        turnHasStreamingText = false
         isTurnRunning = false
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
         let parsed = GroundingParser.parse(turn.text)
@@ -410,7 +454,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if spoken.isEmpty {
             chatBubble?.hide()
         } else {
-            chatBubble?.showReply(spoken)
+            chatBubble?.showReplyForReading(spoken)
         }
         // Flush any sentence not yet spoken. Streamed replies already spoke most of it
         // sentence-by-sentence; any non-streaming fallback speaks the whole reply here.
@@ -754,7 +798,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         setUpBrain()
         log("model selected: \(id)")
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
-        chatBubble?.showReply("Switched to \(model.displayName).")
+        chatBubble?.showReplyForReading("Switched to \(model.displayName).")
     }
 
     @objc private func quitClippy() {
@@ -828,7 +872,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 applyStateCommand(String(command.dropFirst(6)))
             } else if command.hasPrefix("ground:") {
                 let parsed = GroundingParser.parse(String(command.dropFirst(7)))
-                chatBubble?.showReply(parsed.spokenText.isEmpty ? "(pointing)" : parsed.spokenText)
+                chatBubble?.showReplyForReading(parsed.spokenText.isEmpty ? "(pointing)" : parsed.spokenText)
                 presentGrounding(parsed.tags)
             } else if command == "clearground" {
                 overlay?.clear()

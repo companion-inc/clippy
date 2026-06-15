@@ -292,12 +292,26 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     )
 
     var iterator = conversation.stream("stream me").makeAsyncIterator()
-    let first = await iterator.next()
-
-    guard case .partial("EARLY ") = first else {
-        Issue.record("Expected Codex app-server agentMessage delta to arrive before the completed item.")
-        return
+    var statuses: [String] = []
+    var firstPartial: String?
+    streamLoop: while let chunk = await iterator.next() {
+        switch chunk {
+        case .status(let status):
+            statuses.append(status)
+        case .partial(let text):
+            firstPartial = text
+            break streamLoop
+        case .final:
+            Issue.record("Expected Codex app-server agentMessage delta to arrive before the completed item.")
+            return
+        }
     }
+
+    #expect(statuses.contains("Starting Codex"))
+    #expect(statuses.contains("Opening the Clippy thread"))
+    #expect(statuses.contains("Sending the turn"))
+    #expect(statuses.contains("Waiting for Codex"))
+    #expect(firstPartial == "EARLY ")
 }
 
 @Test func codexConversationStreamCancellationTerminatesTheChildProcess() async throws {
@@ -459,6 +473,19 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(fill.redComponent > 0.99)
     #expect(fill.greenComponent > 0.99)
     #expect(fill.blueComponent < fill.redComponent)
+}
+
+@Test func bubbleAutoHideDurationScalesWithReadingTime() {
+    let short = ClippyBubbleController.readingAutoHideDelay(for: "Need a hand?")
+    let medium = ClippyBubbleController.readingAutoHideDelay(
+        for: Array(repeating: "word", count: 40).joined(separator: " "))
+    let veryLong = ClippyBubbleController.readingAutoHideDelay(
+        for: Array(repeating: "word", count: 200).joined(separator: " "))
+
+    #expect(short == 3.5)
+    #expect(medium > short)
+    #expect(medium < veryLong)
+    #expect(veryLong == 24.0)
 }
 
 @Test func annotationPaletteUsesSingleYellowStrokeUnlessBackgroundIsLight() {

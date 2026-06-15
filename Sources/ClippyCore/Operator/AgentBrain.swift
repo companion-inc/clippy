@@ -15,6 +15,7 @@ public struct AgentTurn: Sendable {
 
 /// One streamed chunk from a brain turn.
 public enum AgentStreamChunk: Sendable {
+    case status(String)
     case partial(String)
     case final(AgentTurn)
 }

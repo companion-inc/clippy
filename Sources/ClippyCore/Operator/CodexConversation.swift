@@ -64,6 +64,8 @@ public actor CodexConversation: AgentBrain {
         var partial = ""
         for await chunk in stream(message) {
             switch chunk {
+            case .status:
+                break
             case .partial(let text):
                 partial = text
             case .final(let turn):
@@ -98,7 +100,11 @@ public actor CodexConversation: AgentBrain {
         var finalError: String?
 
         do {
+            let hasRunningServer = appServer?.process.isRunning == true
+            continuation.yield(.status(hasRunningServer ? "Reusing Codex" : "Starting Codex"))
             let connection = try ensureAppServer(process: box)
+            let hasOpenThread = threadID?.isEmpty == false && connection.process.isRunning
+            continuation.yield(.status(hasOpenThread ? "Using the open thread" : "Opening the Clippy thread"))
             let activeThreadID = try ensureThread(on: connection)
             box.set(connection.process)
             defer {
@@ -109,6 +115,7 @@ public actor CodexConversation: AgentBrain {
                 }
             }
 
+            continuation.yield(.status("Sending the turn"))
             let turnRequestID = try sendRequest(
                 "turn/start",
                 params: [
@@ -145,6 +152,7 @@ public actor CodexConversation: AgentBrain {
                         throw AppServerError(error)
                     }
                     activeTurnID = Self.turnID(fromTurnStartResponse: object) ?? activeTurnID
+                    continuation.yield(.status("Waiting for Codex"))
                     continue
                 }
 
