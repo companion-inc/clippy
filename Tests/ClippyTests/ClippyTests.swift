@@ -33,6 +33,54 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(next?.id == second.id)
 }
 
+@Test func voiceContextNoteReflectsSpokenInputAndSpokenOutput() {
+    // Plain typed, bubble-only turn — no voice note at all.
+    #expect(ClippyAgentInstructions.voiceContextNote(inputMode: .text, speaking: false) == nil)
+
+    // Typed but replies are spoken — only the write-for-the-ear half.
+    let spokenOut = ClippyAgentInstructions.voiceContextNote(inputMode: .text, speaking: true)
+    #expect(spokenOut != nil)
+    #expect(spokenOut?.contains("read aloud") == true)
+    #expect(spokenOut?.contains("SPOKE this") == false)
+
+    // Spoken input, silent replies — only the read-past-transcription-typos half.
+    let spokenIn = ClippyAgentInstructions.voiceContextNote(inputMode: .voice, speaking: false)
+    #expect(spokenIn != nil)
+    #expect(spokenIn?.contains("SPOKE this") == true)
+    #expect(spokenIn?.contains("transcribed") == true)
+    #expect(spokenIn?.contains("read aloud") == false)
+
+    // Full voice turn — both halves present.
+    let both = ClippyAgentInstructions.voiceContextNote(inputMode: .voice, speaking: true)
+    #expect(both?.contains("SPOKE this") == true)
+    #expect(both?.contains("read aloud") == true)
+}
+
+@Test func brainMessageOrdersScreenshotThenVoiceThenText() {
+    let msg = ClippyAgentInstructions.brainMessage(
+        text: "whats on my screen",
+        screenshotPath: "/tmp/shot.png",
+        screenshotPixelWidth: 3456,
+        screenshotPixelHeight: 2234,
+        inputMode: .voice,
+        speaking: true)
+    // Screenshot note first, voice note second, the user's words last.
+    let shotIdx = msg.range(of: "Current screenshot")!.lowerBound
+    let voiceIdx = msg.range(of: "Voice mode")!.lowerBound
+    let textIdx = msg.range(of: "whats on my screen")!.lowerBound
+    #expect(shotIdx < voiceIdx)
+    #expect(voiceIdx < textIdx)
+    #expect(msg.contains("3456x2234 px"))
+
+    // A typed, silent turn carries the screenshot + text but no voice note.
+    let quiet = ClippyAgentInstructions.brainMessage(
+        text: "hello", screenshotPath: "/tmp/s.png",
+        screenshotPixelWidth: 10, screenshotPixelHeight: 20,
+        inputMode: .text, speaking: false)
+    #expect(quiet.contains("Voice mode") == false)
+    #expect(quiet.contains("hello"))
+}
+
 @Test func codexConversationResumesTheSameThreadAcrossTurns() async throws {
     let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-codex-log-\(UUID().uuidString).txt")
     let scriptURL = try writeExecutableScript(

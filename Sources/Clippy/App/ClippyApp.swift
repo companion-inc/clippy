@@ -227,7 +227,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             chatBubble?.hide()
             return
         }
-        sendMessage(transcript)
+        sendMessage(transcript, inputMode: .voice)
     }
 
     private func toggleChat() {
@@ -247,7 +247,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         chatBubble.openInput()
     }
 
-    private func sendMessage(_ text: String) {
+    private func sendMessage(_ text: String, inputMode: AssistantInputMode = .text) {
         guard let chatBubble else {
             return
         }
@@ -272,7 +272,16 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         // whether to look. We keep the shot to map its coordinates back to the screen.
         let shot = ScreenPerception.captureToFile()
         lastShot = shot
-        let brainMessage = Self.augmentWithScreenshot(text, shot)
+        // Tell the brain how this turn arrives and leaves: spoken-and-transcribed input
+        // (read past STT typos) and/or spoken output (write for the ear).
+        let speaking = ttsEnabled && deepgramTTS != nil
+        let brainMessage = ClippyAgentInstructions.brainMessage(
+            text: text,
+            screenshotPath: shot?.path,
+            screenshotPixelWidth: Int(shot?.pixelSize.width ?? 0),
+            screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
+            inputMode: inputMode,
+            speaking: speaking)
         ttsSpokenChars = 0
         currentBrainTask = Task { [weak self] in
             for await chunk in brain.stream(brainMessage) {
@@ -338,20 +347,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         scheduleNextIdle()
     }
 
-    /// Prepend a note telling the model a fresh screenshot is on disk, so it can
-    /// `Read` it to see the screen and point in that image's pixel space.
-    private static func augmentWithScreenshot(_ text: String, _ shot: ScreenPerception.Screenshot?) -> String {
-        guard let shot else { return text }
-        let w = Int(shot.pixelSize.width), h = Int(shot.pixelSize.height)
-        return """
-        [Current screenshot of the user's screen: \(shot.path) (\(w)x\(h) px). \
-        Read it with your Read tool when you need to see the screen to point at, find, \
-        or describe something. Any [POINT]/[TARGET]/[HOVER]/[HIGHLIGHT]/[SHAPE] coordinates \
-        you emit are pixels in THAT image (top-left origin).]
-
-        \(text)
-        """
-    }
 
     /// Live partial text while the reply streams in. Tags (even half-typed) are
     /// stripped before display so a bracket never flashes in the bubble.

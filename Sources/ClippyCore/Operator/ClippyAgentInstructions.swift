@@ -75,4 +75,52 @@ Style — sound confident and active, prefer doing over describing when the requ
 commentary to brief milestones, and if blocked say exactly what tool, permission, or capability
 is missing.
 """
+
+    /// Build the per-turn message for the brain: a fresh-screenshot note, an optional
+    /// voice-context note, then the user's text. Voice in/out can change turn to turn, so
+    /// this context is attached per message rather than baked into the static prompt above.
+    public static func brainMessage(
+        text: String,
+        screenshotPath: String?,
+        screenshotPixelWidth: Int,
+        screenshotPixelHeight: Int,
+        inputMode: AssistantInputMode,
+        speaking: Bool
+    ) -> String {
+        var blocks: [String] = []
+        if let path = screenshotPath {
+            blocks.append("""
+            [Current screenshot of the user's screen: \(path) (\(screenshotPixelWidth)x\(screenshotPixelHeight) px). \
+            Read it with your Read tool when you need to see the screen to point at, find, \
+            or describe something. Any [POINT]/[TARGET]/[HOVER]/[HIGHLIGHT]/[SHAPE] coordinates \
+            you emit are pixels in THAT image (top-left origin).]
+            """)
+        }
+        if let voice = voiceContextNote(inputMode: inputMode, speaking: speaking) {
+            blocks.append(voice)
+        }
+        blocks.append(text)
+        return blocks.joined(separator: "\n\n")
+    }
+
+    /// A per-turn note telling the model how this turn arrives and leaves. Spoken input was
+    /// transcribed (read for intent past speech-to-text slips); spoken output is read aloud
+    /// (write for the ear). Returns nil for a plain typed, bubble-only turn.
+    public static func voiceContextNote(inputMode: AssistantInputMode, speaking: Bool) -> String? {
+        var parts: [String] = []
+        if inputMode == .voice {
+            parts.append("The user SPOKE this and it was transcribed by speech-to-text, so "
+                + "expect slips — homophones, wrong word boundaries, dropped small words, missing "
+                + "punctuation or capitals. Read for what they MEANT, not the literal characters; "
+                + "if a word looks wrong, infer it from context instead of answering the typo.")
+        }
+        if speaking {
+            parts.append("Your reply is read aloud by text-to-speech, so write for the ear: one or "
+                + "two short, natural, spoken-sounding sentences. No markdown, bullet lists, code "
+                + "blocks, file paths, or URLs — they sound wrong spoken. Trailing "
+                + "[ACT]/[POINT]/[TARGET] tags are fine; they're stripped before speaking.")
+        }
+        guard !parts.isEmpty else { return nil }
+        return "[Voice mode — " + parts.joined(separator: " ") + "]"
+    }
 }
