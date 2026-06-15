@@ -28,6 +28,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         return id.flatMap(ClippyVoice.by(id:)) ?? .default
     }()
     private var isTurnRunning = false
+    private var currentBrainTask: Task<Void, Never>?
     private var commandTimer: Timer?
     private var activeActivityState: AgentActivityState = .idle
 
@@ -170,9 +171,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func beginVoiceTurn() {
-        guard sttEnabled, !isTurnRunning, conversation != nil else {
+        guard sttEnabled, conversation != nil else {
             return
         }
+        // Barge-in (the Clippy behavior): starting to talk interrupts whatever
+        // Clippy is currently saying or still generating, instead of being blocked.
+        interruptSpeechAndResponse()
         usingDeepgram = false
         if let deepgram = deepgramSTT {
             do {
@@ -254,8 +258,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         playActivityState(.thinking)
 
         let brain = conversation
-        Task { [weak self] in
+        currentBrainTask = Task { [weak self] in
             for await chunk in brain.stream(text) {
+                if Task.isCancelled { break }
                 await MainActor.run {
                     switch chunk {
                     case .partial(let partial):
@@ -266,6 +271,23 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    /// Stop any in-flight reply and spoken audio so a new utterance — or an
+    /// explicit "Stop Talking" — takes over cleanly. Cancelling the consuming task
+    /// also tears down the brain's subprocess via the stream's onTermination.
+    private func interruptSpeechAndResponse() {
+        currentBrainTask?.cancel()
+        currentBrainTask = nil
+        deepgramTTS?.stop()
+        isTurnRunning = false
+    }
+
+    @objc private func stopTalking() {
+        interruptSpeechAndResponse()
+        overlay?.clear()
+        chatBubble?.hide()
+        scheduleNextIdle()
     }
 
     /// Live partial text while the reply streams in.
@@ -410,6 +432,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         )
         chat.target = self
         menu.addItem(chat)
+
+        // Only offer "Stop Talking" while there is something to stop.
+        if isTurnRunning || (deepgramTTS?.isSpeaking ?? false) {
+            let stop = NSMenuItem(title: "Stop Talking", action: #selector(stopTalking), keyEquivalent: "")
+            stop.target = self
+            menu.addItem(stop)
+        }
 
         let animate = NSMenuItem(title: "Animate!", action: #selector(animateNow), keyEquivalent: "")
         animate.target = self

@@ -1,5 +1,23 @@
 import Foundation
 
+/// A thread-safe holder for the running CLI subprocess. It lives outside the actor
+/// so a barge-in can terminate the process directly — the actor itself is blocked
+/// inside `process.waitUntilExit()` while a turn streams, so anything that has to
+/// hop onto the actor (like an actor-isolated method) can't preempt it.
+final class ProcessBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+    func set(_ process: Process?) {
+        lock.lock(); defer { lock.unlock() }
+        self.process = process
+    }
+    func terminate() {
+        lock.lock(); defer { lock.unlock() }
+        if let process, process.isRunning { process.terminate() }
+        process = nil
+    }
+}
+
 /// Clippy's brain, running locally through the user's installed CLI. The first
 /// turn opens a session; every later turn resumes it, so the local CLI holds the
 /// full back-and-forth history, runs the agent loop, and executes tools on this Mac.
@@ -148,11 +166,21 @@ public actor LocalCLIConversation: AgentBrain {
 
     public nonisolated func stream(_ message: String) -> AsyncStream<AgentStreamChunk> {
         AsyncStream { continuation in
-            Task { await self.runStreaming(message, continuation: continuation) }
+            let box = ProcessBox()
+            let work = Task { await self.runStreaming(message, continuation: continuation, process: box) }
+            // If the consumer cancels (barge-in: the user starts a new utterance),
+            // tear down the work task and kill the underlying CLI subprocess directly
+            // through the box, so it doesn't keep running and contend on the resumed
+            // session. Going through the actor wouldn't work — it's blocked in
+            // waitUntilExit() for the duration of the turn.
+            continuation.onTermination = { @Sendable _ in
+                work.cancel()
+                box.terminate()
+            }
         }
     }
 
-    private func runStreaming(_ message: String, continuation: AsyncStream<AgentStreamChunk>.Continuation) async {
+    private func runStreaming(_ message: String, continuation: AsyncStream<AgentStreamChunk>.Continuation, process box: ProcessBox) async {
         var arguments = [
             "-p", message,
             "--output-format", "stream-json",
@@ -199,6 +227,7 @@ public actor LocalCLIConversation: AgentBrain {
             return
         }
         hasStarted = true
+        box.set(process)
 
         var accumulated = ""
         var resultText: String?
@@ -207,6 +236,7 @@ public actor LocalCLIConversation: AgentBrain {
 
         do {
             for try await line in outPipe.fileHandleForReading.bytes.lines {
+                if Task.isCancelled { break }
                 guard let data = line.data(using: .utf8),
                       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let type = object["type"] as? String else { continue }
@@ -229,6 +259,7 @@ public actor LocalCLIConversation: AgentBrain {
         }
         _ = try? errPipe.fileHandleForReading.readToEnd()
         process.waitUntilExit()
+        box.set(nil)
 
         let finalText = (resultText?.isEmpty == false ? resultText! : accumulated)
             .trimmingCharacters(in: .whitespacesAndNewlines)

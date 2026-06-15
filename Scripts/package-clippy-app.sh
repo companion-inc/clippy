@@ -32,7 +32,7 @@ cat > "$app_dir/Contents/Info.plist" <<'PLIST'
   <key>CFBundleIconFile</key>
   <string>Clippy</string>
   <key>CFBundleIdentifier</key>
-  <string>local.clippy.desktop</string>
+  <string>ai.companion.clippy</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>

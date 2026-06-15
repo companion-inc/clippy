@@ -8,6 +8,13 @@ public final class DeepgramTTS {
     public var voiceModel: String
     private let session: URLSession
     private var player: AVAudioPlayer?
+    private var task: URLSessionDataTask?
+
+    /// True while audio is playing or a speak request is still in flight — used to
+    /// decide whether to offer "Stop Talking".
+    public var isSpeaking: Bool {
+        (player?.isPlaying ?? false) || task != nil
+    }
 
     /// Returns nil if there is no Deepgram key configured.
     public init?(voiceModel: String = ClippyVoice.default.id) {
@@ -33,19 +40,26 @@ public final class DeepgramTTS {
         request.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
         request.httpBody = try? JSONSerialization.data(withJSONObject: ["text": trimmed])
 
-        session.dataTask(with: request) { [weak self] data, response, _ in
+        // Only one utterance at a time: stop whatever is playing/in flight first.
+        stop()
+        let task = session.dataTask(with: request) { [weak self] data, response, _ in
             guard let self,
                   let data,
                   let http = response as? HTTPURLResponse,
                   (200...299).contains(http.statusCode) else { return }
             DispatchQueue.main.async {
+                self.task = nil
                 self.player = try? AVAudioPlayer(data: data)
                 self.player?.play()
             }
-        }.resume()
+        }
+        self.task = task
+        task.resume()
     }
 
     public func stop() {
+        task?.cancel()
+        task = nil
         player?.stop()
         player = nil
     }
