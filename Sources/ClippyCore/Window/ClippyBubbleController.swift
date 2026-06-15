@@ -32,12 +32,14 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private enum Mode { case message, input }
 
     private func uiFont(_ size: CGFloat, bold: Bool = false) -> NSFont {
-        ClippyBalloonStyle.font(size, bold: bold, theme: theme.balloon)
+        // Clippy's bubble uses the system font, not the retro MS Sans Serif.
+        .systemFont(ofSize: size, weight: bold ? .semibold : .regular)
     }
 
     public let window: NSPanel
     private let theme: MascotTheme
-    private let balloonLayer: CAShapeLayer
+    private let balloonLayer: CALayer
+    private let shadowMargin: CGFloat = 16   // transparent window padding so the drop shadow isn't clipped
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
     private let inputScrollView = NSScrollView()
     private let inputTextView = InputTextView(frame: .zero)
@@ -52,7 +54,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     public init(theme: MascotTheme = .clippy) {
         self.theme = theme
-        self.balloonLayer = ClippyBalloonStyle.makeShapeLayer(theme: theme.balloon)
+        self.balloonLayer = ClippyBalloonStyle.makeLayer(theme: theme.balloon)
         self.inputPlaceholderLabel = NSTextField(labelWithString: theme.askPlaceholder)
         self.window = KeyPanel(
             contentRect: CGRect(x: 0, y: 0, width: theme.balloon.minWidth, height: 70),
@@ -66,7 +68,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         root.wantsLayer = true
         root.layer?.addSublayer(balloonLayer)
 
-        messageLabel.font = uiFont(12)
+        messageLabel.font = uiFont(13)
         messageLabel.textColor = theme.balloon.textColor
         messageLabel.maximumNumberOfLines = 0
         root.addSubview(messageLabel)
@@ -221,7 +223,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     private func relayout() {
         let contentWidth = measuredContentWidth()
-        let windowWidth = contentWidth + theme.balloon.pad * 2
+        let windowWidth = contentWidth + theme.balloon.pad * 2 + shadowMargin * 2
 
         messageLabel.isHidden = mode != .message
         inputScrollView.isHidden = mode != .input
@@ -235,16 +237,22 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             contentHeight = measuredLabelHeight(messageText.isEmpty ? "…" : messageText, width: contentWidth)
         }
 
-        let windowHeight = theme.balloon.tailHeight + theme.balloon.pad + contentHeight + theme.balloon.pad
+        let bubbleHeight = contentHeight + theme.balloon.pad * 2
+        let windowHeight = bubbleHeight + shadowMargin * 2
         window.setContentSize(CGSize(width: windowWidth, height: windowHeight))
-        balloonLayer.frame = CGRect(origin: .zero, size: CGSize(width: windowWidth, height: windowHeight))
-        balloonLayer.path = ClippyBalloonStyle.path(
-            size: CGSize(width: windowWidth, height: windowHeight),
-            theme: theme.balloon
+        balloonLayer.frame = CGRect(
+            x: shadowMargin,
+            y: shadowMargin,
+            width: windowWidth - shadowMargin * 2,
+            height: bubbleHeight
         )
 
-        let contentY = theme.balloon.tailHeight + theme.balloon.pad
-        let contentRect = CGRect(x: theme.balloon.pad, y: contentY, width: contentWidth, height: contentHeight)
+        let contentRect = CGRect(
+            x: shadowMargin + theme.balloon.pad,
+            y: shadowMargin + theme.balloon.pad,
+            width: contentWidth,
+            height: contentHeight
+        )
 
         switch mode {
         case .input:
