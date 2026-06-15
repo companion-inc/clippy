@@ -81,9 +81,12 @@ public final class PermissionDragController {
         var x = settings.midX - size.width / 2
         var y = settings.minY - size.height - 12 // just below the bottom edge
 
-        let screen = NSScreen.screens.max {
-            $0.frame.intersection(settings).area < $1.frame.intersection(settings).area
-        }?.visibleFrame ?? NSScreen.main?.visibleFrame ?? settings
+        // Pick the display Settings actually lives on by its center point (deterministic
+        // on multi-monitor setups; an intersection-area pick can flip to the wrong screen
+        // on a transient frame and fling the pill into a corner).
+        let center = CGPoint(x: settings.midX, y: settings.midY)
+        let screen = (NSScreen.screens.first { $0.frame.contains(center) }
+            ?? NSScreen.main)?.visibleFrame ?? settings
         x = min(max(x, screen.minX + 8), screen.maxX - size.width - 8)
         y = min(max(y, screen.minY + 8), screen.maxY - size.height - 8)
         return NSPoint(x: x, y: y)
@@ -113,12 +116,9 @@ public final class PermissionDragController {
     }
 }
 
-private extension CGRect {
-    var area: CGFloat { isNull ? 0 : width * height }
-}
-
-/// The draggable Clippy pill, drawn in the Win95 / Office-97 style: pale-yellow tooltip
-/// face, hard black frame + raised bevel, MS Sans Serif text, and a big → drag cue.
+/// The draggable Clippy pill: the app's own icon + a one-line instruction, drawn in
+/// the Win95 / Office-97 style (pale-yellow tooltip face, hard black frame + raised
+/// bevel, MS Sans Serif). You drag the whole tile straight into the privacy list.
 final class RetroDragPill: NSView, NSDraggingSource {
     private let appURL: URL
     override var isFlipped: Bool { true } // RetroBezel assumes a flipped coordinate space
@@ -127,8 +127,13 @@ final class RetroDragPill: NSView, NSDraggingSource {
         self.appURL = appURL
         super.init(frame: .zero)
 
+        // Codex drags the app FILE using the app's OWN icon (app.getFileIcon). Mirror
+        // that: load the bundle's real .icns directly so it's always Clippy's icon —
+        // NSWorkspace.icon(forFile:) can serve a stale/generic tile for a freshly built
+        // app LaunchServices hasn't indexed yet (that's how a placeholder slipped in).
         let icon = NSImageView()
-        icon.image = NSWorkspace.shared.icon(forFile: appURL.path)
+        icon.image = Self.appIcon(for: appURL)
+        icon.imageScaling = .scaleProportionallyUpOrDown
         icon.translatesAutoresizingMaskIntoConstraints = false
 
         let label = NSTextField(wrappingLabelWithString: prompt)
@@ -138,30 +143,35 @@ final class RetroDragPill: NSView, NSDraggingSource {
         label.drawsBackground = false
         label.translatesAutoresizingMaskIntoConstraints = false
 
-        let arrow = NSTextField(labelWithString: "→")
-        arrow.font = .systemFont(ofSize: 30, weight: .bold)
-        arrow.textColor = RetroPalette.text
-        arrow.isBordered = false
-        arrow.drawsBackground = false
-        arrow.translatesAutoresizingMaskIntoConstraints = false
-
+        // No arrow — Codex doesn't use one; you just drag the app tile into the list.
         addSubview(icon)
         addSubview(label)
-        addSubview(arrow)
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 16),
             icon.centerYAnchor.constraint(equalTo: centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 52),
             icon.heightAnchor.constraint(equalToConstant: 52),
-            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 12),
+            label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 14),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
-            arrow.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: 8),
-            arrow.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
-            arrow.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
     }
 
     required init?(coder: NSCoder) { nil }
+
+    /// The app's own icon, read straight from its bundle (CFBundleIconFile → .icns),
+    /// falling back to LaunchServices. Matches Codex's `app.getFileIcon(appPath)`.
+    private static func appIcon(for appURL: URL) -> NSImage {
+        if let bundle = Bundle(url: appURL),
+           let iconName = bundle.object(forInfoDictionaryKey: "CFBundleIconFile") as? String {
+            let base = iconName.hasSuffix(".icns") ? String(iconName.dropLast(5)) : iconName
+            if let url = bundle.url(forResource: base, withExtension: "icns"),
+               let img = NSImage(contentsOf: url) {
+                return img
+            }
+        }
+        return NSWorkspace.shared.icon(forFile: appURL.path)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         RetroPalette.infoBackground.setFill() // INFOBK pale yellow — the Office tooltip color
