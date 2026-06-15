@@ -14,7 +14,9 @@ public actor CodexConversation: AgentBrain {
     public init(
         binaryPath: String,
         model: String = "gpt-5.5",
-        effort: String = "minimal",
+        // "low" is the floor that works: `minimal` 400s because GPT-5.5's default
+        // image_gen/web_search tools can't be used with minimal reasoning effort.
+        effort: String = "low",
         workingDirectory: String? = nil,
         systemPrompt: String? = ClippyAgentInstructions.systemPrompt
     ) {
@@ -60,6 +62,7 @@ public actor CodexConversation: AgentBrain {
             process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
         }
         process.environment = ProcessInfo.processInfo.environment
+        process.standardInput = FileHandle.nullDevice // codex waits on stdin EOF otherwise
 
         let outPipe = Pipe()
         let errPipe = Pipe()
@@ -112,6 +115,7 @@ public actor CodexConversation: AgentBrain {
             process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
         }
         process.environment = ProcessInfo.processInfo.environment
+        process.standardInput = FileHandle.nullDevice // codex waits on stdin EOF otherwise
 
         let outPipe = Pipe()
         let errPipe = Pipe()
@@ -162,6 +166,9 @@ public actor CodexConversation: AgentBrain {
         arguments.append(contentsOf: [
             "-m", model,
             "-c", "model_reasoning_effort=\(effort)",
+            // Clear the user's configured MCP servers — they need auth and otherwise
+            // throw "Auth(AuthorizationRequired)" and can stall the run (Clippy does this too).
+            "-c", "mcp_servers={}",
             "--dangerously-bypass-approvals-and-sandbox",
             "--skip-git-repo-check",
             "-o", outputFile,

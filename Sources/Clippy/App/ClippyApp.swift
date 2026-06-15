@@ -297,19 +297,25 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         guard ttsEnabled, let tts = deepgramTTS else { return }
         let ns = text as NSString
         if ttsSpokenChars > ns.length { ttsSpokenChars = ns.length }
-        guard ttsSpokenChars < ns.length else { return }
-        let tail = NSRange(location: ttsSpokenChars, length: ns.length - ttsSpokenChars)
-        let end: Int
-        if final {
-            end = ns.length
-        } else {
-            let stop = ns.rangeOfCharacter(from: CharacterSet(charactersIn: ".!?\n"), options: .backwards, range: tail)
-            guard stop.location != NSNotFound else { return }
-            end = stop.location + stop.length
+        let terminators = CharacterSet(charactersIn: ".!?\n")
+        // Enqueue each complete sentence in the unspoken tail, one chunk at a time, so
+        // even a reply that arrives all at once (Codex) is spoken sentence by sentence.
+        while ttsSpokenChars < ns.length {
+            let tail = NSRange(location: ttsSpokenChars, length: ns.length - ttsSpokenChars)
+            let stop = ns.rangeOfCharacter(from: terminators, options: [], range: tail)
+            if stop.location == NSNotFound { break }
+            let end = stop.location + stop.length
+            enqueueSpoken(ns.substring(with: NSRange(location: ttsSpokenChars, length: end - ttsSpokenChars)), tts)
+            ttsSpokenChars = end
         }
-        guard end > ttsSpokenChars else { return }
-        let chunk = ns.substring(with: NSRange(location: ttsSpokenChars, length: end - ttsSpokenChars))
-        ttsSpokenChars = end
+        // On the final chunk, speak any trailing sentence that has no terminator.
+        if final, ttsSpokenChars < ns.length {
+            enqueueSpoken(ns.substring(from: ttsSpokenChars), tts)
+            ttsSpokenChars = ns.length
+        }
+    }
+
+    private func enqueueSpoken(_ chunk: String, _ tts: DeepgramTTS) {
         let clean = GroundingParser.strip(chunk)
         if !clean.isEmpty { tts.enqueue(clean) }
     }
