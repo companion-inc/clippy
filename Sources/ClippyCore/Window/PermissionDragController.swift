@@ -23,7 +23,9 @@ public final class PermissionDragController {
         window.backgroundColor = .clear
         window.hasShadow = true
         window.level = .floating
-        window.isMovableByWindowBackground = true
+        // NOT movable-by-background: that would steal the mouse-drag and move the
+        // window instead of starting the file drag into System Settings.
+        window.isMovableByWindowBackground = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.contentView = pill
     }
