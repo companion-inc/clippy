@@ -36,6 +36,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var currentBrainTask: Task<Void, Never>?
     private var lastShot: ScreenPerception.Screenshot?
     private var overlayDismiss: DispatchWorkItem?
+    private var ttsSpokenChars = 0   // how much of the streaming reply has been queued to TTS
     private var commandTimer: Timer?
     private var activeActivityState: AgentActivityState = .idle
 
@@ -271,6 +272,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let shot = ScreenPerception.captureToFile()
         lastShot = shot
         let brainMessage = Self.augmentWithScreenshot(text, shot)
+        ttsSpokenChars = 0
         currentBrainTask = Task { [weak self] in
             for await chunk in brain.stream(brainMessage) {
                 if Task.isCancelled { break }
@@ -278,12 +280,38 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                     switch chunk {
                     case .partial(let partial):
                         self?.showStreamingReply(partial)
+                        self?.speakStreaming(partial, final: false)
                     case .final(let turn):
                         self?.receiveReply(turn)
                     }
                 }
             }
         }
+    }
+
+    /// Speak the reply as it streams: enqueue each newly-completed sentence (tags
+    /// stripped) so Clippy talks before the whole reply lands. `final` flushes the
+    /// trailing partial sentence. Non-streaming brains (Codex) only hit `final`, which
+    /// then speaks the whole reply at once.
+    private func speakStreaming(_ text: String, final: Bool) {
+        guard ttsEnabled, let tts = deepgramTTS else { return }
+        let ns = text as NSString
+        if ttsSpokenChars > ns.length { ttsSpokenChars = ns.length }
+        guard ttsSpokenChars < ns.length else { return }
+        let tail = NSRange(location: ttsSpokenChars, length: ns.length - ttsSpokenChars)
+        let end: Int
+        if final {
+            end = ns.length
+        } else {
+            let stop = ns.rangeOfCharacter(from: CharacterSet(charactersIn: ".!?\n"), options: .backwards, range: tail)
+            guard stop.location != NSNotFound else { return }
+            end = stop.location + stop.length
+        }
+        guard end > ttsSpokenChars else { return }
+        let chunk = ns.substring(with: NSRange(location: ttsSpokenChars, length: end - ttsSpokenChars))
+        ttsSpokenChars = end
+        let clean = GroundingParser.strip(chunk)
+        if !clean.isEmpty { tts.enqueue(clean) }
     }
 
     /// Stop any in-flight reply and spoken audio so a new utterance — or an
@@ -337,8 +365,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             chatBubble?.hide()
         } else {
             chatBubble?.showReply(spoken)
-            if ttsEnabled, !turn.isError { deepgramTTS?.speak(spoken) }
         }
+        // Flush any sentence not yet spoken. Streamed replies already spoke most of it
+        // sentence-by-sentence; non-streaming brains (Codex) speak the whole reply here.
+        if !turn.isError { speakStreaming(turn.text, final: true) }
         log("clippy: \(turn.text.prefix(120))")
 
         if !turn.isError, !parsed.tags.isEmpty {
