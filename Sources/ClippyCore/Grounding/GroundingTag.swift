@@ -92,6 +92,16 @@ public enum GroundingParser {
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Like `strip`, but also hides a tag that is still being typed while the reply
+    /// streams in — so a half-emitted `[POIN…` never flashes in the bubble before it
+    /// closes. Drops a trailing, unclosed `[Tag…` (open bracket + optional tag name +
+    /// optional partial `:args`, with no `]` yet), then strips any complete tags.
+    public static func stripForStreaming(_ text: String) -> String {
+        let withoutInProgress = text.replacingOccurrences(
+            of: #"\s*\[[A-Za-z]*(?::[^\]]*)?$"#, with: "", options: .regularExpression)
+        return strip(withoutInProgress)
+    }
+
     /// Extract directives in the order they appear in `text`.
     public static func tags(in text: String) -> [GroundingTag] {
         let ns = text as NSString

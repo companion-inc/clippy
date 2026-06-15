@@ -295,19 +295,27 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         scheduleNextIdle()
     }
 
-    /// Live partial text while the reply streams in.
+    /// Live partial text while the reply streams in. Tags (even half-typed) are
+    /// stripped before display so a bracket never flashes in the bubble.
     private func showStreamingReply(_ text: String) {
         if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
-        chatBubble?.showReply(text)
+        let display = GroundingParser.stripForStreaming(text)
+        if !display.isEmpty { chatBubble?.showReply(display) }
     }
 
     private func receiveReply(_ turn: AgentTurn) {
         isTurnRunning = false
         if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
         let parsed = GroundingParser.parse(turn.text)
-        let spoken = parsed.spokenText.isEmpty ? turn.text : parsed.spokenText
-        chatBubble?.showReply(spoken)
-        if ttsEnabled, !turn.isError { deepgramTTS?.speak(spoken) }
+        // Errors show their message as-is; otherwise show only the stripped speech.
+        // A tag-only reply (no spoken text) shows nothing — never the raw brackets.
+        let spoken = turn.isError ? turn.text : parsed.spokenText
+        if spoken.isEmpty {
+            chatBubble?.hide()
+        } else {
+            chatBubble?.showReply(spoken)
+            if ttsEnabled, !turn.isError { deepgramTTS?.speak(spoken) }
+        }
         log("clippy: \(turn.text.prefix(120))")
 
         if !turn.isError, !parsed.tags.isEmpty {

@@ -15,6 +15,19 @@ import Testing
     #expect(parsed.spokenText == "All set.")
 }
 
+@Test func streamingStripHidesTagsAndPartialTagsSoNoBracketFlashes() {
+    // Complete tag removed.
+    #expect(GroundingParser.stripForStreaming("Look up there [POINT:600,40:menu bar]") == "Look up there")
+    // Half-typed tag hidden as it streams in (the bug: it used to flash).
+    #expect(GroundingParser.stripForStreaming("Look up there [POIN") == "Look up there")
+    #expect(GroundingParser.stripForStreaming("Look up there [POINT:600,40") == "Look up there")
+    #expect(GroundingParser.stripForStreaming("Look up there [") == "Look up there")
+    // A complete tag plus a half-typed one after it.
+    #expect(GroundingParser.stripForStreaming("Hi [ACT:Wave] and [HOV") == "Hi and")
+    // A non-tag bracket is left alone (not every "[" is a tag).
+    #expect(GroundingParser.stripForStreaming("the array[0") == "the array[0")
+}
+
 @Test func parsesShapeWithScreenSuffix() {
     let parsed = GroundingParser.parse("Drag it across. [SHAPE:arrow:10,20;30,40:drag:screen2]")
     #expect(parsed.tags.count == 1)
