@@ -1,91 +1,143 @@
 import AVFoundation
 import Foundation
 
-/// Clippy's spoken replies via Deepgram Aura-2. Streaming-capable: `enqueue` text
-/// chunks (sentences) as the reply streams in and they play back-to-back, in order,
-/// so Clippy starts talking before the whole reply is done. Implemented for Clippy's
-/// DeepgramTTSClient. Callers pass already-stripped text — tags never reach Deepgram.
-public final class DeepgramTTS: NSObject, AVAudioPlayerDelegate {
+/// Clippy's spoken replies via Deepgram Aura-2 **streaming** TTS over a WebSocket.
+/// Text is pushed in as the model produces it (`{"type":"Speak"}` + `{"type":"Flush"}`)
+/// and Deepgram streams back raw linear16 PCM, which plays through an AVAudioEngine
+/// node as it arrives — so Clippy talks in real time instead of after the whole reply.
+/// Callers pass already-stripped text, so grounding tags never reach Deepgram.
+public final class DeepgramTTS: NSObject {
     private let apiKey: String
-    public var voiceModel: String
+    public var voiceModel: String {
+        didSet { if oldValue != voiceModel { reset() } } // a new voice needs a new socket
+    }
     private let session: URLSession
-    private var player: AVAudioPlayer?
-    private var fetch: URLSessionDataTask?
-    private var queue: [String] = []
-    private var busy = false   // a chunk is being fetched or is currently playing
+    private let sampleRate = 24000
 
-    /// True while anything is queued, fetching, or playing.
-    public var isSpeaking: Bool { busy || !queue.isEmpty }
+    private var ws: URLSessionWebSocketTask?
+    private let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private let format: AVAudioFormat
+    private var engineStarted = false
+
+    private let lock = NSLock()
+    private var pendingBuffers = 0 // scheduled but not finished playing
+
+    /// True while audio is still queued or playing.
+    public var isSpeaking: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return pendingBuffers > 0
+    }
 
     /// Returns nil if there is no Deepgram key configured.
     public init?(voiceModel: String = ClippyVoice.default.id) {
-        guard let key = ClippySecrets.deepgramAPIKey else { return nil }
+        guard let key = ClippySecrets.deepgramAPIKey,
+              let fmt = AVAudioFormat(standardFormatWithSampleRate: 24000, channels: 1) else { return nil }
         self.apiKey = key
         self.voiceModel = voiceModel
-        let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 60
-        self.session = URLSession(configuration: configuration)
+        self.format = fmt
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 60
+        self.session = URLSession(configuration: config)
         super.init()
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: format)
     }
 
-    /// Queue a chunk to speak after everything already queued (streaming path).
+    /// Push a chunk to speak as it streams in. Opens the socket lazily.
     public func enqueue(_ text: String) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        queue.append(trimmed)
-        playNext()
+        openIfNeeded()
+        sendJSON(["type": "Speak", "text": trimmed])
+        sendJSON(["type": "Flush"])
     }
 
-    /// One-shot: stop whatever is playing/queued and speak just this.
-    public func speak(_ text: String) {
-        stop()
-        enqueue(text)
-    }
+    /// One-shot speak — same streaming path.
+    public func speak(_ text: String) { enqueue(text) }
 
-    /// Stop playback and clear the queue (barge-in, disable TTS).
+    /// Barge-in / disable: tell Deepgram to drop buffered audio and stop playback now.
     public func stop() {
-        fetch?.cancel(); fetch = nil
-        player?.stop(); player = nil
-        queue.removeAll()
-        busy = false
+        sendJSON(["type": "Clear"])
+        player.stop()
+        lock.lock(); pendingBuffers = 0; lock.unlock()
+        if engineStarted { player.play() } // ready for the next reply
     }
 
-    private func playNext() {
-        guard !busy, !queue.isEmpty,
-              let url = URL(string: "https://api.deepgram.com/v1/speak?model=\(voiceModel)&encoding=mp3") else { return }
-        let text = queue.removeFirst()
-        busy = true
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["text": text])
+    private func reset() {
+        ws?.cancel(with: .goingAway, reason: nil)
+        ws = nil
+        stop()
+    }
 
-        fetch = session.dataTask(with: request) { [weak self] data, response, _ in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                self.fetch = nil
-                if let data,
-                   let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
-                   let p = try? AVAudioPlayer(data: data) {
-                    p.delegate = self
-                    self.player = p
-                    p.play()
-                    // `busy` stays true until audioPlayerDidFinishPlaying advances the queue.
-                } else {
-                    self.busy = false
-                    self.playNext() // skip a failed chunk, keep the speech flowing
-                }
+    // MARK: - WebSocket
+
+    private func openIfNeeded() {
+        guard ws == nil else { return }
+        var comps = URLComponents(string: "wss://api.deepgram.com/v1/speak")!
+        comps.queryItems = [
+            URLQueryItem(name: "encoding", value: "linear16"),
+            URLQueryItem(name: "sample_rate", value: String(sampleRate)),
+            URLQueryItem(name: "model", value: voiceModel),
+        ]
+        guard let url = comps.url else { return }
+        var request = URLRequest(url: url)
+        request.setValue("Token \(apiKey)", forHTTPHeaderField: "Authorization")
+        let task = session.webSocketTask(with: request)
+        ws = task
+        task.resume()
+        startEngine()
+        receive(on: task)
+    }
+
+    private func startEngine() {
+        guard !engineStarted else { return }
+        do {
+            try engine.start()
+            player.play()
+            engineStarted = true
+        } catch {
+            engineStarted = false
+        }
+    }
+
+    private func sendJSON(_ object: [String: Any]) {
+        guard let ws,
+              let data = try? JSONSerialization.data(withJSONObject: object),
+              let text = String(data: data, encoding: .utf8) else { return }
+        ws.send(.string(text)) { _ in }
+    }
+
+    private func receive(on task: URLSessionWebSocketTask) {
+        task.receive { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case let .success(message):
+                if case let .data(pcm) = message { self.schedule(pcm: pcm) }
+                // `.string` messages are metadata/warnings — ignore.
+                self.receive(on: task) // keep listening
+            case .failure:
+                if self.ws === task { self.ws = nil } // socket closed; reopen on next enqueue
             }
         }
-        fetch?.resume()
     }
 
-    public func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        self.player = nil
-        busy = false
-        playNext()
+    private func schedule(pcm data: Data) {
+        let frames = data.count / 2
+        guard frames > 0,
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)) else { return }
+        buffer.frameLength = AVAudioFrameCount(frames)
+        // linear16 = little-endian Int16 mono -> Float32 in [-1, 1].
+        var samples = [Int16](repeating: 0, count: frames)
+        _ = samples.withUnsafeMutableBytes { data.copyBytes(to: $0, count: frames * 2) }
+        let out = buffer.floatChannelData![0]
+        for i in 0..<frames { out[i] = Float(Int16(littleEndian: samples[i])) / 32768.0 }
+
+        lock.lock(); pendingBuffers += 1; lock.unlock()
+        player.scheduleBuffer(buffer) { [weak self] in
+            guard let self else { return }
+            self.lock.lock(); self.pendingBuffers = max(0, self.pendingBuffers - 1); self.lock.unlock()
+        }
+        if engineStarted, !player.isPlaying { player.play() }
     }
 }
