@@ -1,31 +1,47 @@
-# Sidekick
+# Clippy
 
-Native macOS scaffold for Sidekick: a visible desktop assistant with a swappable
-mascot. It can listen, see the screen/camera, ask approvals, and act on the
-computer through an app-owned tool loop.
+Native macOS desktop Clippy: a visible paperclip assistant that can chat, react
+with classic Clippy animations, request approvals, and drive local computer-use
+tools through the app runtime.
 
-Start with `Docs/STATUS.md` and `Docs/Handbook/README.md`.
+There is one mascot: Clippy. The app uses the committed Clippy sprite pack under
+`Resources/Characters/Clippy` and one shared local conversation adapter.
 
 ## Build
 
 ```sh
-swift test
-swift build
+xcrun swift test
+xcrun swift build
 ```
 
-## Research Archive
+## Run
 
-The research archive lives inside this repo folder but is ignored by git:
+```sh
+xcrun swift run Clippy
+```
 
-`/Users/advaitpaliwal/Companion/Code/sidekick/Research/sources/repos`
+For a Launch Services app wrapper:
 
-## Resource Export
+```sh
+Scripts/package-clippy-app.sh
+open -n .build/debug/Clippy.app
+```
 
-The Clippy-compatible source pack is archived at:
+The running app listens for optional debug commands through `CLIPPY_CMD_FILE`:
 
-`/Users/advaitpaliwal/Companion/Code/sidekick/Research/sources/repos/pithings-clippy`
+```text
+ask:<message>
+open
+snapshot
+move:<x>,<y>
+park:lowerLeft|lowerRight|upperLeft|upperRight
+state:idle|thinking|working|notification|attention|error|sweeping|carrying|juggling|sleeping
+```
 
-Export the local pithings Clippy-compatible pack into this repo:
+## Resources
+
+The Clippy-compatible source pack is archived in the ignored research folder.
+Export it into this repo with:
 
 ```sh
 node Scripts/export-pithings-clippy.mjs
@@ -40,31 +56,5 @@ Resources/Characters/Clippy/map.png
 Resources/Characters/Clippy/manifest.json
 ```
 
-## Renderer Split
-
-- Core Animation is for the original morphing mascot fallback.
-- SpriteKit is for classic Clippy-compatible raster sprite packs.
-
-Sidekick should keep both paths. The product name is not tied to one mascot:
-Clippy-compatible packs are the current default, and future mascots should slot
-behind the same `DesktopMascot` surface.
-
-## Mascot Themes
-
-Each mascot ships with a `MascotTheme`. The app shell asks the active mascot for
-balloon styling, approval styling, chat/menu copy, greeting/reply/error
-animations, and agent-state animation bindings. Clippy owns the MS Agent-style
-yellow bubble and Clippy animation names. Claude Code and Codex ship as native
-pixel sidekicks with their own themes.
-
-Startup selection:
-
-```sh
-SIDEKICK_MASCOT=clippy swift run Sidekick
-SIDEKICK_MASCOT=claude-code swift run Sidekick
-SIDEKICK_MASCOT=codex swift run Sidekick
-```
-
-The running app also accepts `mascot:clippy`, `mascot:claude-code`, and
-`mascot:codex` over `SIDEKICK_CMD_FILE`, and the right-click Sidekick menu can
-switch the active mascot.
+Start with `Docs/STATUS.md` and `Docs/Handbook/README.md` for the current
+implementation contract.
