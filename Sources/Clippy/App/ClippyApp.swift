@@ -634,14 +634,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     @objc private func grantAccessibility() {
         _ = AccessibilityPermission.requestIfNeeded(prompt: true)
-        openPrivacyPane("Privacy_Accessibility")
-        showPermissionDragPill("Drag Clippy into the Accessibility list")
+        showPermissionDialog(permissionName: "Accessibility", anchor: "Privacy_Accessibility")
     }
 
     @objc private func grantScreenRecording() {
         _ = ScreenPerception.requestPermission()
-        openPrivacyPane("Privacy_ScreenCapture")
-        showPermissionDragPill("Drag Clippy into the Screen Recording list")
+        showPermissionDialog(permissionName: "Screen Recording", anchor: "Privacy_ScreenCapture")
     }
 
     @objc private func grantMicrophone() {
@@ -655,11 +653,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Float the draggable Clippy pill so the user can drag the app straight into the
-    /// privacy list that just opened in System Settings.
-    private func showPermissionDragPill(_ prompt: String) {
+    /// Show the Codex-style permission dialog: a draggable Clippy tile + an
+    /// "Open System Settings" button, so the user can drag Clippy into the privacy list.
+    private func showPermissionDialog(permissionName: String, anchor: String) {
         permissionDrag?.hide()
-        let controller = PermissionDragController(appURL: Bundle.main.bundleURL, prompt: prompt)
+        let controller = PermissionDragController(
+            appURL: Bundle.main.bundleURL, permissionName: permissionName, settingsAnchor: anchor)
         permissionDrag = controller
         controller.show()
     }
