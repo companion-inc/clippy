@@ -285,7 +285,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(notification.repeatsUntilStateChange == false)
 
     #expect(theme.animation(for: .idle) == nil)
-    #expect(theme.balloon.tailHeight == 14)
+    #expect(theme.balloon.tailHeight == 13)
     let fill = try #require(theme.balloon.fillColor.usingColorSpace(.deviceRGB))
     #expect(fill.redComponent > 0.99)
     #expect(fill.greenComponent > 0.99)
