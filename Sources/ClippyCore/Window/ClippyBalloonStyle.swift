@@ -18,8 +18,9 @@ public enum ClippyBalloonStyle {
         layer.fillColor = theme.fillColor.cgColor
         layer.strokeColor = theme.strokeColor.cgColor
         layer.lineWidth = theme.borderWidth
-        layer.allowsEdgeAntialiasing = false
-        layer.contentsScale = 1
+        // Render crisp at the display's native resolution — the old 1x / no-antialias
+        // setup left the rounded corners and tail jagged and blurry on Retina.
+        layer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
         return layer
     }
 
