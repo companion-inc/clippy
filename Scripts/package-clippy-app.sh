@@ -63,4 +63,23 @@ cat > "$app_dir/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
+# Code signing. A STABLE signing identity is what makes macOS keep TCC grants
+# (Screen Recording, Microphone, Accessibility) across rebuilds. Ad-hoc signatures
+# key on the cdhash, which changes every build, so the OS forgets the grant and
+# re-prompts forever. Signing with the Developer ID (stable, keyed to the Team ID)
+# fixes that: grant once, it sticks. Override with CODESIGN_IDENTITY=… if needed;
+# set CODESIGN_IDENTITY=- to fall back to ad-hoc.
+codesign_identity="${CODESIGN_IDENTITY:-Developer ID Application: Companion, Inc. (5LYD7HDS6X)}"
+if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$codesign_identity" || [ "$codesign_identity" = "-" ]; then
+  # Sign inside-out: nested helper first, then the bundle seals everything. No
+  # hardened runtime on purpose — it's not needed for TCC persistence and would
+  # require pinning every device entitlement exactly right or the app crashes.
+  codesign --force --timestamp=none --sign "$codesign_identity" "$app_dir/Contents/MacOS/ClippyMCP"
+  codesign --force --timestamp=none --sign "$codesign_identity" "$app_dir"
+  codesign --verify --strict "$app_dir"
+  echo "signed with: $codesign_identity"
+else
+  echo "WARNING: signing identity not found ('$codesign_identity') — leaving ad-hoc; TCC grants will NOT persist across rebuilds." >&2
+fi
+
 echo "$app_dir"
