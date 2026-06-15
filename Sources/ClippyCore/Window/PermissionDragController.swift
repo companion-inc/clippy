@@ -11,6 +11,7 @@ public final class PermissionDragController {
     private let pill: AppDragPill
     private var followTimer: Timer?
     private var hideWork: DispatchWorkItem?
+    private var targetScreen: NSScreen?
 
     public init(appURL: URL, prompt: String) {
         pill = AppDragPill(appURL: appURL, prompt: prompt)
@@ -33,6 +34,8 @@ public final class PermissionDragController {
     /// Show the pill and keep it pinned beside the System Settings window. Follows it
     /// (a 0.4s timer) so it stays put even if the user moves Settings around.
     public func show(autoHideAfter seconds: TimeInterval = 90) {
+        // Pin to the display under the cursor when triggered (like Codex's getDisplayNearestPoint).
+        targetScreen = NSScreen.screens.first { $0.frame.contains(NSEvent.mouseLocation) } ?? NSScreen.main
         reposition()
         window.orderFrontRegardless()
         followTimer?.invalidate()
@@ -51,44 +54,17 @@ public final class PermissionDragController {
         window.orderOut(nil)
     }
 
-    /// Pin to the left of System Settings (where it won't cover the list), vertically
-    /// near the top where the Accessibility/Screen Recording list lives. Falls back to
-    /// the top-center of the screen until System Settings appears.
+    /// Top-right of the target display's work area — copied from Codex's overlay
+    /// placement (x = workArea right edge − width, y a margin below the top). A fixed,
+    /// predictable spot, instead of chasing wherever System Settings happens to open.
     private func reposition() {
+        guard let visible = (targetScreen ?? NSScreen.main)?.visibleFrame else { return }
         let size = window.frame.size
-        if let settings = Self.systemSettingsFrame() {
-            var x = settings.minX - size.width - 18
-            // If there's no room on the left, sit to the right of Settings instead.
-            if x < (NSScreen.main?.visibleFrame.minX ?? 0) + 8 {
-                x = settings.maxX + 18
-            }
-            let y = settings.maxY - size.height - 64 // align near the top, by the list
-            window.setFrameOrigin(NSPoint(x: x, y: y))
-        } else if let vf = NSScreen.main?.visibleFrame {
-            window.setFrameOrigin(NSPoint(x: vf.midX - size.width / 2, y: vf.maxY - size.height - 48))
-        }
-    }
-
-    /// The System Settings (or legacy System Preferences) window in global AppKit
-    /// coordinates. Window bounds + owner don't require Screen Recording permission.
-    static func systemSettingsFrame() -> CGRect? {
-        let options = CGWindowListOption(arrayLiteral: .optionOnScreenOnly, .excludeDesktopElements)
-        guard let list = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else { return nil }
-        let primaryHeight = NSScreen.screens.first { $0.frame.origin == .zero }?.frame.height
-            ?? NSScreen.main?.frame.height ?? 0
-        for window in list {
-            let owner = (window[kCGWindowOwnerName as String] as? String) ?? ""
-            guard owner == "System Settings" || owner == "System Preferences",
-                  let bounds = window[kCGWindowBounds as String] as? [String: Any] else { continue }
-            let x = bounds["X"] as? CGFloat ?? 0
-            let y = bounds["Y"] as? CGFloat ?? 0
-            let w = bounds["Width"] as? CGFloat ?? 0
-            let h = bounds["Height"] as? CGFloat ?? 0
-            guard w > 200, h > 200 else { continue } // skip menubar/popover slivers
-            // CG (top-left origin, y-down) -> AppKit global (bottom-left origin, y-up).
-            return CGRect(x: x, y: primaryHeight - y - h, width: w, height: h)
-        }
-        return nil
+        let margin: CGFloat = 16
+        window.setFrameOrigin(NSPoint(
+            x: visible.maxX - size.width - margin,
+            y: visible.maxY - size.height - margin
+        ))
     }
 }
 
