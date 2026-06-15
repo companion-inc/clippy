@@ -3,6 +3,15 @@ import Foundation
 import Testing
 @testable import ClippyCore
 
+private func writeExecutableScript(named name: String, contents: String) throws -> URL {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    let url = dir.appendingPathComponent(name)
+    try contents.write(to: url, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    return url
+}
+
 @Test func actionQueueRunsFifoAndInterrupts() async throws {
     let queue = MascotActionQueue()
     let first = MascotAction(command: .setState(.thinking))
@@ -21,6 +30,118 @@ import Testing
 
     let next = await queue.startNext()
     #expect(next?.id == second.id)
+}
+
+@Test func codexConversationResumesTheSameThreadAcrossTurns() async throws {
+    let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-codex-log-\(UUID().uuidString).txt")
+    let scriptURL = try writeExecutableScript(
+        named: "fake-codex.zsh",
+        contents: """
+        #!/bin/zsh
+        set -eu
+        log_file='\(logURL.path)'
+        output_file=""
+        for ((i=1; i<=$#; i++)); do
+          arg="${@[i]}"
+          if [[ "$arg" == "-o" ]]; then
+            ((i++))
+            output_file="${@[i]}"
+          fi
+        done
+        print -r -- "$*" >> "$log_file"
+        print -- '{"type":"thread.started","thread_id":"THREAD-123"}'
+        if [[ -n "$output_file" ]]; then
+          print -r -- "ALPHA" > "$output_file"
+        fi
+        """
+    )
+    defer {
+        try? FileManager.default.removeItem(at: scriptURL.deletingLastPathComponent())
+        try? FileManager.default.removeItem(at: logURL)
+    }
+
+    let conversation = CodexConversation(
+        binaryPath: scriptURL.path,
+        model: "gpt-5.5",
+        effort: "minimal",
+        workingDirectory: nil,
+        systemPrompt: nil
+    )
+
+    let first = await conversation.send("first turn")
+    let second = await conversation.send("second turn")
+
+    #expect(first.text == "ALPHA")
+    #expect(second.text == "ALPHA")
+
+    let logged = try String(contentsOf: logURL, encoding: .utf8)
+    let lines = logged.split(whereSeparator: \.isNewline).map(String.init)
+    #expect(lines.count == 2)
+    #expect(lines[0].contains("exec"))
+    #expect(lines[0].contains("first turn"))
+    #expect(lines[1].contains("resume"))
+    #expect(lines[1].contains("THREAD-123"))
+    #expect(lines[1].contains("second turn"))
+}
+
+@Test func codexConversationStreamCancellationTerminatesTheChildProcess() async throws {
+    let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-codex-cancel-\(UUID().uuidString).txt")
+    let scriptURL = try writeExecutableScript(
+        named: "fake-codex-cancel.zsh",
+        contents: """
+        #!/bin/zsh
+        set -eu
+        log_file='\(logURL.path)'
+        output_file=""
+        for ((i=1; i<=$#; i++)); do
+          arg="${@[i]}"
+          if [[ "$arg" == "-o" ]]; then
+            ((i++))
+            output_file="${@[i]}"
+          fi
+        done
+        trap 'print -- "terminated" >> "$log_file"; exit 0' TERM INT
+        print -- "started" >> "$log_file"
+        print -- '{"type":"thread.started","thread_id":"THREAD-CANCEL"}'
+        sleep 30
+        if [[ -n "$output_file" ]]; then
+          print -r -- "NEVER" > "$output_file"
+        fi
+        """
+    )
+    defer {
+        try? FileManager.default.removeItem(at: scriptURL.deletingLastPathComponent())
+        try? FileManager.default.removeItem(at: logURL)
+    }
+
+    let conversation = CodexConversation(
+        binaryPath: scriptURL.path,
+        model: "gpt-5.5",
+        effort: "minimal",
+        workingDirectory: nil,
+        systemPrompt: nil
+    )
+
+    let task = Task {
+        for await _ in conversation.stream("cancel me") {
+        }
+    }
+    try await Task.sleep(nanoseconds: 300_000_000)
+    task.cancel()
+    _ = await task.result
+
+    let deadline = Date().addingTimeInterval(3)
+    var log = ""
+    while Date() < deadline {
+        log = (try? String(contentsOf: logURL, encoding: .utf8)) ?? ""
+        if log.contains("terminated") {
+            break
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+    }
+
+    #expect(log.contains("started"))
+    #expect(log.contains("terminated"))
 }
 
 @Test func rasterCharacterPackDecodesClippyAnimations() throws {

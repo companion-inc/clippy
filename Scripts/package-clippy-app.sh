@@ -71,11 +71,15 @@ PLIST
 # set CODESIGN_IDENTITY=- to fall back to ad-hoc.
 codesign_identity="${CODESIGN_IDENTITY:-Developer ID Application: Companion, Inc. (5LYD7HDS6X)}"
 if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$codesign_identity" || [ "$codesign_identity" = "-" ]; then
-  # Sign inside-out: nested helper first, then the bundle seals everything. No
-  # hardened runtime on purpose — it's not needed for TCC persistence and would
-  # require pinning every device entitlement exactly right or the app crashes.
-  codesign --force --timestamp=none --sign "$codesign_identity" "$app_dir/Contents/MacOS/ClippyMCP"
-  codesign --force --timestamp=none --sign "$codesign_identity" "$app_dir"
+  # Sign inside-out: nested helper first, then the bundle seals everything.
+  # Hardened runtime + a secure timestamp are REQUIRED for notarization; the
+  # entitlements re-grant the mic + Apple Events that hardened runtime would
+  # otherwise block. (Ad-hoc identity "-" can't timestamp, so skip it there.)
+  ts_flag="--timestamp"; [ "$codesign_identity" = "-" ] && ts_flag="--timestamp=none"
+  codesign --force $ts_flag --options runtime --sign "$codesign_identity" "$app_dir/Contents/MacOS/ClippyMCP"
+  codesign --force $ts_flag --options runtime \
+    --entitlements "$repo_root/Resources/Clippy.entitlements" \
+    --sign "$codesign_identity" "$app_dir"
   codesign --verify --strict "$app_dir"
   echo "signed with: $codesign_identity"
 else
