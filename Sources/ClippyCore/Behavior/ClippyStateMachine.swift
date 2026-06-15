@@ -1,8 +1,8 @@
 import Foundation
 
-public enum MascotRuntimeEvent: Equatable, Sendable {
-    case commandStarted(MascotCommand)
-    case commandFinished(MascotCommand, MascotRequestStatus)
+public enum ClippyRuntimeEvent: Equatable, Sendable {
+    case commandStarted(ClippyCommand)
+    case commandFinished(ClippyCommand, ClippyRequestStatus)
     case voice(VoiceEvent)
     case toolStarted(String)
     case toolFinished(String, ToolResultStatus)
@@ -10,13 +10,13 @@ public enum MascotRuntimeEvent: Equatable, Sendable {
     case approvalResolved(approved: Bool)
 }
 
-public struct MascotStateSnapshot: Equatable, Sendable {
-    public let state: MascotState
+public struct ClippyStateSnapshot: Equatable, Sendable {
+    public let state: ClippyState
     public let lastMessage: String?
     public let awaitingApproval: ApprovalRequest?
 
     public init(
-        state: MascotState,
+        state: ClippyState,
         lastMessage: String? = nil,
         awaitingApproval: ApprovalRequest? = nil
     ) {
@@ -26,19 +26,19 @@ public struct MascotStateSnapshot: Equatable, Sendable {
     }
 }
 
-public struct MascotStateMachine: Sendable {
-    private var snapshot: MascotStateSnapshot
+public struct ClippyStateMachine: Sendable {
+    private var snapshot: ClippyStateSnapshot
 
-    public init(initialState: MascotState = .hidden) {
-        self.snapshot = MascotStateSnapshot(state: initialState)
+    public init(initialState: ClippyState = .hidden) {
+        self.snapshot = ClippyStateSnapshot(state: initialState)
     }
 
-    public var current: MascotStateSnapshot {
+    public var current: ClippyStateSnapshot {
         snapshot
     }
 
     @discardableResult
-    public mutating func apply(_ event: MascotRuntimeEvent) -> MascotStateSnapshot {
+    public mutating func apply(_ event: ClippyRuntimeEvent) -> ClippyStateSnapshot {
         switch event {
         case let .commandStarted(command):
             snapshot = snapshot.replacing(state: state(for: command), message: nil, approval: snapshot.awaitingApproval)
@@ -46,7 +46,7 @@ public struct MascotStateMachine: Sendable {
             snapshot = snapshot.replacing(state: stateAfter(command: command, status: status), message: nil, approval: nil)
         case let .voice(event):
             snapshot = snapshot.replacing(
-                state: VoiceEventRouter.mascotState(for: event) ?? snapshot.state,
+                state: VoiceEventRouter.clippyState(for: event) ?? snapshot.state,
                 message: message(for: event),
                 approval: snapshot.awaitingApproval
             )
@@ -62,7 +62,7 @@ public struct MascotStateMachine: Sendable {
         return snapshot
     }
 
-    private func state(for command: MascotCommand) -> MascotState {
+    private func state(for command: ClippyCommand) -> ClippyState {
         switch command {
         case .show:
             return .showing
@@ -81,7 +81,7 @@ public struct MascotStateMachine: Sendable {
         }
     }
 
-    private func stateAfter(command: MascotCommand, status: MascotRequestStatus) -> MascotState {
+    private func stateAfter(command: ClippyCommand, status: ClippyRequestStatus) -> ClippyState {
         guard status == .complete else {
             return status == .failed ? .blocked : .idle
         }
@@ -95,7 +95,7 @@ public struct MascotStateMachine: Sendable {
         }
     }
 
-    private func state(forToolName name: String) -> MascotState {
+    private func state(forToolName name: String) -> ClippyState {
         if name.hasPrefix("observe.screen") || name.hasPrefix("observe.ui_tree") {
             return .screenVision
         }
@@ -127,12 +127,12 @@ public struct MascotStateMachine: Sendable {
     }
 }
 
-private extension MascotStateSnapshot {
+private extension ClippyStateSnapshot {
     func replacing(
-        state: MascotState,
+        state: ClippyState,
         message: String?,
         approval: ApprovalRequest?
-    ) -> MascotStateSnapshot {
-        MascotStateSnapshot(state: state, lastMessage: message, awaitingApproval: approval)
+    ) -> ClippyStateSnapshot {
+        ClippyStateSnapshot(state: state, lastMessage: message, awaitingApproval: approval)
     }
 }

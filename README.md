@@ -4,23 +4,42 @@ Native macOS desktop Clippy: a visible paperclip assistant that can chat, react
 with classic Clippy animations, request approvals, and drive local computer-use
 tools through the app runtime.
 
-There is one mascot: Clippy. The app uses the committed Clippy sprite pack under
+There is one on-screen character: Clippy. The app uses the committed Clippy sprite pack under
 `Resources/Characters/Clippy` and one shared local conversation adapter.
 
 ## Build
 
 ```sh
-xcrun swift test
-xcrun swift build
+swift test
+swift build
 ```
+
+## Download
+
+Every push to `main` runs GitHub Actions and uploads a downloadable
+`Clippy-macOS.zip` artifact from the CI run. Tagged pushes like `v0.1.0` also
+publish the same zip to GitHub Releases.
+
+The CI artifact embeds the Cua driver inside
+`Clippy.app/Contents/Helpers/ClippyComputerUseRuntime`; it does not require a
+separate Cua app install at runtime.
 
 ## Run
 
 ```sh
-xcrun swift run Clippy
+swift run Clippy
 ```
 
 For a Launch Services app wrapper:
+
+```sh
+cua_driver_path="$(Scripts/download-cua-driver.sh | tail -n 1)"
+CLIPPY_CUA_DRIVER="$PWD/$cua_driver_path" Scripts/package-clippy-app.sh
+open -n .build/debug/Clippy.app
+```
+
+If Cua is already installed locally, the package script can use that install
+directly:
 
 ```sh
 Scripts/package-clippy-app.sh

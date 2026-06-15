@@ -26,7 +26,7 @@ public extension ClippyModel {
     /// The only two brains Clippy offers (right-click → Model), both at low effort.
     static let all: [ClippyModel] = [opus48, gpt55]
 
-    /// Default driver: Opus 4.8 — the best computer-use model per the migration research.
+    /// Fallback driver when Codex is not signed in locally.
     static let `default` = opus48
 
     static func by(id: String) -> ClippyModel? {

@@ -1,6 +1,6 @@
 import AppKit
 
-public struct MascotAnimationBinding {
+public struct ClippyAnimationBinding {
     public let animationName: String
     public let repeatsUntilStateChange: Bool
 
@@ -10,7 +10,7 @@ public struct MascotAnimationBinding {
     }
 }
 
-public struct MascotBalloonTheme {
+public struct ClippyBalloonSpec {
     public let fillColor: NSColor
     public let strokeColor: NSColor
     public let textColor: NSColor
@@ -26,6 +26,10 @@ public struct MascotBalloonTheme {
     public let pad: CGFloat
     public let minInputHeight: CGFloat
     public let maxInputHeight: CGFloat
+    public let shadowOffset: CGSize
+    public let shadowColor: NSColor
+    public let messageFontSize: CGFloat
+    public let inputFontSize: CGFloat
     public let regularFontName: String
     public let boldFontName: String
 
@@ -45,6 +49,10 @@ public struct MascotBalloonTheme {
         pad: CGFloat = 11,
         minInputHeight: CGFloat = 22,
         maxInputHeight: CGFloat = 112,
+        shadowOffset: CGSize = CGSize(width: 3, height: -3),
+        shadowColor: NSColor = NSColor(calibratedRed: 0.8, green: 0.8, blue: 0.6, alpha: 1),
+        messageFontSize: CGFloat = 19,
+        inputFontSize: CGFloat = 19,
         regularFontName: String = "MS Sans Serif",
         boldFontName: String = "MS Sans Serif Bold"
     ) {
@@ -63,20 +71,33 @@ public struct MascotBalloonTheme {
         self.pad = pad
         self.minInputHeight = minInputHeight
         self.maxInputHeight = maxInputHeight
+        self.shadowOffset = shadowOffset
+        self.shadowColor = shadowColor
+        self.messageFontSize = messageFontSize
+        self.inputFontSize = inputFontSize
         self.regularFontName = regularFontName
         self.boldFontName = boldFontName
     }
 
-    public static let clippy = MascotBalloonTheme(
+    public static let current = ClippyBalloonSpec(
         fillColor: NSColor(calibratedRed: 1.0, green: 1.0, blue: 0.8, alpha: 1),
-        strokeColor: .black
+        strokeColor: .black,
+        cornerRadius: 11,
+        tailHeight: 17,
+        tailHalfWidth: 9,
+        tailTipOffset: -11,
+        minWidth: 300,
+        maxWidth: 330,
+        approvalWidth: 300,
+        pad: 13,
+        shadowOffset: .zero
     )
 }
 
-public struct MascotTheme {
+public struct ClippySpec {
     public let id: String
     public let displayName: String
-    public let balloon: MascotBalloonTheme
+    public let balloon: ClippyBalloonSpec
     public let askPlaceholder: String
     public let chatMenuTitle: String
     public let greetingText: String
@@ -85,12 +106,12 @@ public struct MascotTheme {
     public let replyAnimationName: String
     public let errorAnimationName: String
     public let fallbackGestureAnimationName: String
-    private let activityAnimations: [AgentActivityState: MascotAnimationBinding]
+    private let activityAnimations: [AgentActivityState: ClippyAnimationBinding]
 
     public init(
         id: String,
         displayName: String,
-        balloon: MascotBalloonTheme,
+        balloon: ClippyBalloonSpec,
         askPlaceholder: String,
         chatMenuTitle: String,
         greetingText: String,
@@ -99,7 +120,7 @@ public struct MascotTheme {
         replyAnimationName: String,
         errorAnimationName: String,
         fallbackGestureAnimationName: String,
-        activityAnimations: [AgentActivityState: MascotAnimationBinding]
+        activityAnimations: [AgentActivityState: ClippyAnimationBinding]
     ) {
         self.id = id
         self.displayName = displayName
@@ -115,32 +136,32 @@ public struct MascotTheme {
         self.activityAnimations = activityAnimations
     }
 
-    public func animation(for state: AgentActivityState) -> MascotAnimationBinding? {
+    public func animation(for state: AgentActivityState) -> ClippyAnimationBinding? {
         activityAnimations[state]
     }
 
-    public static let clippy = MascotTheme(
+    public static let current = ClippySpec(
         id: "clippy",
         displayName: "Clippy",
-        balloon: .clippy,
+        balloon: .current,
         askPlaceholder: "Ask Clippy…",
         chatMenuTitle: "Chat with Clippy…",
-        greetingText: "It looks like you're using a Mac. Double-click me to chat!",
+        greetingText: "Need a hand?",
         greetingAnimationName: "Greeting",
         openInputAnimationName: "GetAttention",
         replyAnimationName: "Explain",
         errorAnimationName: "Alert",
         fallbackGestureAnimationName: "Wave",
         activityAnimations: [
-            .thinking: MascotAnimationBinding(animationName: "IdleHeadScratch", repeatsUntilStateChange: true),
-            .working: MascotAnimationBinding(animationName: "Processing", repeatsUntilStateChange: true),
-            .juggling: MascotAnimationBinding(animationName: "GetArtsy", repeatsUntilStateChange: true),
-            .notification: MascotAnimationBinding(animationName: "Alert"),
-            .attention: MascotAnimationBinding(animationName: "Congratulate"),
-            .error: MascotAnimationBinding(animationName: "Alert"),
-            .sweeping: MascotAnimationBinding(animationName: "EmptyTrash"),
-            .carrying: MascotAnimationBinding(animationName: "Save"),
-            .sleeping: MascotAnimationBinding(animationName: "IdleSnooze"),
+            .thinking: ClippyAnimationBinding(animationName: "IdleHeadScratch", repeatsUntilStateChange: true),
+            .working: ClippyAnimationBinding(animationName: "Processing", repeatsUntilStateChange: true),
+            .juggling: ClippyAnimationBinding(animationName: "GetArtsy", repeatsUntilStateChange: true),
+            .notification: ClippyAnimationBinding(animationName: "Alert"),
+            .attention: ClippyAnimationBinding(animationName: "Congratulate"),
+            .error: ClippyAnimationBinding(animationName: "Alert"),
+            .sweeping: ClippyAnimationBinding(animationName: "EmptyTrash"),
+            .carrying: ClippyAnimationBinding(animationName: "Save"),
+            .sleeping: ClippyAnimationBinding(animationName: "IdleSnooze"),
         ]
     )
 }

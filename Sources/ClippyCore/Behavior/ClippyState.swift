@@ -1,6 +1,6 @@
 import Foundation
 
-public enum MascotState: String, CaseIterable, Codable, Equatable, Sendable {
+public enum ClippyState: String, CaseIterable, Codable, Equatable, Sendable {
     case hidden
     case showing
     case idle
@@ -20,7 +20,7 @@ public enum MascotState: String, CaseIterable, Codable, Equatable, Sendable {
     case error
 }
 
-public enum MascotCommand: Equatable, Sendable {
+public enum ClippyCommand: Equatable, Sendable {
     case show(animated: Bool)
     case hide(animated: Bool)
     case play(animation: String)
@@ -28,12 +28,12 @@ public enum MascotCommand: Equatable, Sendable {
     case think(text: String?)
     case gestureAt(x: Double, y: Double)
     case moveTo(x: Double, y: Double, duration: Double)
-    case setState(MascotState)
+    case setState(ClippyState)
     case stopCurrent
     case stopAll
 }
 
-public enum MascotRequestStatus: String, Equatable, Sendable {
+public enum ClippyRequestStatus: String, Equatable, Sendable {
     case queued
     case running
     case complete
@@ -41,18 +41,18 @@ public enum MascotRequestStatus: String, Equatable, Sendable {
     case interrupted
 }
 
-public struct MascotAction: Identifiable, Equatable, Sendable {
+public struct ClippyAction: Identifiable, Equatable, Sendable {
     public let id: UUID
-    public let command: MascotCommand
+    public let command: ClippyCommand
 
-    public init(id: UUID = UUID(), command: MascotCommand) {
+    public init(id: UUID = UUID(), command: ClippyCommand) {
         self.id = id
         self.command = command
     }
 }
 
-public struct MascotRequestSnapshot: Equatable, Sendable {
+public struct ClippyRequestSnapshot: Equatable, Sendable {
     public let id: UUID
-    public let command: MascotCommand
-    public let status: MascotRequestStatus
+    public let command: ClippyCommand
+    public let status: ClippyRequestStatus
 }

@@ -10,6 +10,7 @@ public actor CodexConversation: AgentBrain {
     private let effort: String
     private let workingDirectory: String?
     private let systemPrompt: String?
+    private let mcpRuntimes: [MCPServerRuntime]
     private var appServer: AppServerConnection?
     private var threadID: String?
     private var nextRequestID = 0
@@ -21,13 +22,16 @@ public actor CodexConversation: AgentBrain {
         // image_gen/web_search tools can't be used with minimal reasoning effort.
         effort: String = "low",
         workingDirectory: String? = nil,
-        systemPrompt: String? = ClippyAgentInstructions.systemPrompt
+        systemPrompt: String? = ClippyAgentInstructions.systemPrompt,
+        computerUseRuntime: MCPServerRuntime? = ComputerUseMCPConfig.defaultRuntime(),
+        annotationRuntime: MCPServerRuntime? = ClippyAnnotationMCPConfig.defaultRuntime()
     ) {
         self.binaryPath = binaryPath
         self.model = model
         self.effort = effort
         self.workingDirectory = workingDirectory
         self.systemPrompt = systemPrompt
+        self.mcpRuntimes = Self.uniqueRuntimes([computerUseRuntime, annotationRuntime].compactMap { $0 })
     }
 
     deinit {
@@ -236,14 +240,17 @@ public actor CodexConversation: AgentBrain {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binaryPath)
-        process.arguments = [
+        var arguments = [
             "app-server",
             "--stdio",
             "--disable", "apps",
             "-c", "model=\"\(model)\"",
             "-c", "model_reasoning_effort=\"\(effort)\"",
-            "-c", "mcp_servers={}",
         ]
+        for override in ComputerUseMCPConfig.codexConfigOverrides(for: mcpRuntimes) {
+            arguments.append(contentsOf: ["-c", override])
+        }
+        process.arguments = arguments
         if let workingDirectory {
             process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
         }
@@ -311,7 +318,7 @@ public actor CodexConversation: AgentBrain {
                 "approvalsReviewer": NSNull(),
                 "sandbox": "danger-full-access",
                 "config": [
-                    "mcp_servers": [:],
+                    "mcp_servers": ComputerUseMCPConfig.codexThreadConfig(for: mcpRuntimes),
                     "model_reasoning_effort": effort,
                     "features": ["apps": false],
                 ],
@@ -364,6 +371,13 @@ public actor CodexConversation: AgentBrain {
     private func jsonValue(_ value: String?) -> Any {
         guard let value, !value.isEmpty else { return NSNull() }
         return value
+    }
+
+    private static func uniqueRuntimes(_ runtimes: [MCPServerRuntime]) -> [MCPServerRuntime] {
+        var seen: Set<String> = []
+        return runtimes.filter { runtime in
+            seen.insert(runtime.serverName).inserted
+        }
     }
 
     private static func decodeJSONObject(_ line: String) -> [String: Any]? {
@@ -443,7 +457,7 @@ private final class AppServerConnection {
                 buffer.removeSubrange(buffer.startIndex...newline)
                 return String(data: line, encoding: .utf8)
             }
-            let chunk = output.readData(ofLength: 1)
+            let chunk = output.availableData
             guard !chunk.isEmpty else {
                 if buffer.isEmpty { return nil }
                 let remainder = buffer

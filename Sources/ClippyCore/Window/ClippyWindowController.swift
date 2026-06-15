@@ -1,13 +1,29 @@
 import AppKit
 import QuartzCore
 
-public final class MascotWindowController {
+public final class ClippyWindowController {
+    private final class FrameObserver: NSObject, NSWindowDelegate {
+        var onFrameChanged: (() -> Void)?
+
+        func windowDidMove(_ notification: Notification) {
+            onFrameChanged?()
+        }
+
+        func windowDidResize(_ notification: Notification) {
+            onFrameChanged?()
+        }
+    }
+
     public let window: NSWindow
-    private let contentView: MascotHitView
+    private let contentView: ClippyHitView
+    private let frameObserver = FrameObserver()
 
     public var frame: CGRect {
         window.frame
     }
+
+    /// Fired whenever AppKit reports Clippy's window frame has changed.
+    public var onFrameChanged: ((CGRect) -> Void)?
 
     /// Context menu for right-clicking the character.
     public var contextMenuProvider: (() -> NSMenu?)? {
@@ -34,18 +50,19 @@ public final class MascotWindowController {
             backing: .buffered,
             defer: false
         )
-        self.contentView = MascotHitView(frame: CGRect(origin: .zero, size: size), visibleHitTest: visibleHitTest)
+        self.contentView = ClippyHitView(frame: CGRect(origin: .zero, size: size), visibleHitTest: visibleHitTest)
 
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
-        window.level = WindowLevelPolicy.mascotLevel
+        window.level = WindowLevelPolicy.clippyLevel
         window.ignoresMouseEvents = false
         window.isMovableByWindowBackground = true
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
         contentView.layer?.addSublayer(rendererLayer)
         window.contentView = contentView
+        bindFrameObserver()
     }
 
     public init(
@@ -61,12 +78,12 @@ public final class MascotWindowController {
             backing: .buffered,
             defer: false
         )
-        self.contentView = MascotHitView(frame: CGRect(origin: .zero, size: size), visibleHitTest: visibleHitTest)
+        self.contentView = ClippyHitView(frame: CGRect(origin: .zero, size: size), visibleHitTest: visibleHitTest)
 
         window.isOpaque = false
         window.backgroundColor = .clear
         window.hasShadow = false
-        window.level = WindowLevelPolicy.mascotLevel
+        window.level = WindowLevelPolicy.clippyLevel
         window.ignoresMouseEvents = false
         window.isMovableByWindowBackground = true
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
@@ -75,6 +92,7 @@ public final class MascotWindowController {
         rendererView.autoresizingMask = [.width, .height]
         contentView.addSubview(rendererView)
         window.contentView = contentView
+        bindFrameObserver()
     }
 
     public func show() {
@@ -85,12 +103,35 @@ public final class MascotWindowController {
         window.orderOut(nil)
     }
 
-    public func move(to origin: CGPoint, animated: Bool) {
+    public func move(to origin: CGPoint, animated: Bool, completion: (() -> Void)? = nil) {
         let frame = CGRect(origin: origin, size: window.frame.size)
+        let finish = { [weak self] in
+            guard let self else {
+                completion?()
+                return
+            }
+            self.onFrameChanged?(self.window.frame)
+            completion?()
+        }
         if animated {
-            window.animator().setFrame(frame, display: true)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                window.animator().setFrame(frame, display: true)
+            } completionHandler: {
+                finish()
+            }
         } else {
             window.setFrame(frame, display: true)
+            finish()
         }
+    }
+
+    private func bindFrameObserver() {
+        frameObserver.onFrameChanged = { [weak self] in
+            guard let self else { return }
+            self.onFrameChanged?(self.window.frame)
+        }
+        window.delegate = frameObserver
     }
 }

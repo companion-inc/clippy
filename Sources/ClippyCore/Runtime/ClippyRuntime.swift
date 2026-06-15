@@ -1,31 +1,31 @@
 import Foundation
 
 public actor ClippyRuntime {
-    private let actionQueue: MascotActionQueue
+    private let actionQueue: ClippyActionQueue
     private let toolRouter: ToolRouter
-    private var stateMachine: MascotStateMachine
+    private var stateMachine: ClippyStateMachine
 
     public init(
-        actionQueue: MascotActionQueue = MascotActionQueue(),
+        actionQueue: ClippyActionQueue = ClippyActionQueue(),
         toolRouter: ToolRouter = ToolRouter(),
-        initialState: MascotState = .hidden
+        initialState: ClippyState = .hidden
     ) {
         self.actionQueue = actionQueue
         self.toolRouter = toolRouter
-        self.stateMachine = MascotStateMachine(initialState: initialState)
+        self.stateMachine = ClippyStateMachine(initialState: initialState)
     }
 
-    public var snapshot: MascotStateSnapshot {
+    public var snapshot: ClippyStateSnapshot {
         stateMachine.current
     }
 
     @discardableResult
-    public func enqueue(_ command: MascotCommand) async -> MascotRequestSnapshot {
-        await actionQueue.enqueue(MascotAction(command: command))
+    public func enqueue(_ command: ClippyCommand) async -> ClippyRequestSnapshot {
+        await actionQueue.enqueue(ClippyAction(command: command))
     }
 
     @discardableResult
-    public func startNextAction() async -> MascotRequestSnapshot? {
+    public func startNextAction() async -> ClippyRequestSnapshot? {
         guard let started = await actionQueue.startNext() else {
             return nil
         }
@@ -34,7 +34,7 @@ public actor ClippyRuntime {
     }
 
     @discardableResult
-    public func finishCurrentAction(status: MascotRequestStatus = .complete) async -> MascotRequestSnapshot? {
+    public func finishCurrentAction(status: ClippyRequestStatus = .complete) async -> ClippyRequestSnapshot? {
         guard let finished = await actionQueue.finishCurrent(status: status) else {
             return nil
         }
@@ -43,7 +43,7 @@ public actor ClippyRuntime {
     }
 
     @discardableResult
-    public func handleVoiceEvent(_ event: VoiceEvent) -> MascotStateSnapshot {
+    public func handleVoiceEvent(_ event: VoiceEvent) -> ClippyStateSnapshot {
         stateMachine.apply(.voice(event))
     }
 

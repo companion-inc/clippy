@@ -12,7 +12,7 @@ public enum AgentActivityState: String, CaseIterable, Codable, Equatable, Sendab
     case juggling
     case sleeping
 
-    public var mascotState: MascotState {
+    public var clippyState: ClippyState {
         switch self {
         case .idle, .sleeping:
             return .idle

@@ -16,6 +16,7 @@ public final class ClippyAnimator {
     }
 
     public private(set) var currentAnimationName: String?
+    public var isAnimationRunning: Bool { currentAnimation != nil }
 
     /// When set, frame sound ids play through this bank, matching the
     /// original's per-frame sound triggers.
@@ -89,14 +90,18 @@ public final class ClippyAnimator {
         if let sound = currentFrame?.sound {
             soundBank?.play(sound)
         }
+
+        if frameChanged, atLastFrame, !(usesExitBranching && !isExiting) {
+            currentAnimation = nil
+            pendingStep = nil
+            notifyEnd(.exited, oneShot: true)
+            return
+        }
+
         scheduleStep(afterMilliseconds: currentFrame?.duration ?? 100)
 
-        if frameChanged, atLastFrame {
-            if usesExitBranching, !isExiting {
-                notifyEnd(.waiting, oneShot: false)
-            } else {
-                notifyEnd(.exited, oneShot: true)
-            }
+        if frameChanged, atLastFrame, usesExitBranching, !isExiting {
+            notifyEnd(.waiting, oneShot: false)
         }
     }
 

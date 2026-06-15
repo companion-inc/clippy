@@ -9,16 +9,16 @@ public final class ApprovalPanelController: NSObject {
     }
 
     private final class PixelChoiceButton: NSButton {
-        init(frame frameRect: NSRect, theme: MascotBalloonTheme) {
+        init(frame frameRect: NSRect, spec: ClippyBalloonSpec) {
             super.init(frame: frameRect)
             isBordered = false
             wantsLayer = true
-            layer?.backgroundColor = theme.fillColor.cgColor
-            layer?.borderColor = theme.strokeColor.cgColor
-            layer?.borderWidth = theme.borderWidth
+            layer?.backgroundColor = spec.fillColor.cgColor
+            layer?.borderColor = spec.strokeColor.cgColor
+            layer?.borderWidth = spec.borderWidth
             layer?.cornerRadius = 0
-            font = ClippyBalloonStyle.font(12, theme: theme)
-            contentTintColor = theme.textColor
+            font = ClippyBalloonStyle.font(12, spec: spec)
+            contentTintColor = spec.textColor
         }
 
         @available(*, unavailable)
@@ -31,7 +31,7 @@ public final class ApprovalPanelController: NSObject {
     private static let buttonWidth: CGFloat = 78
 
     public let window: NSPanel
-    private let theme: MascotTheme
+    private let spec: ClippySpec
     private let rootView = NSView(frame: .zero)
     private let balloonLayer: CAShapeLayer
     private let label = NSTextField(wrappingLabelWithString: "")
@@ -39,13 +39,13 @@ public final class ApprovalPanelController: NSObject {
     private let approve: PixelChoiceButton
     private var onDecision: ((Bool) -> Void)?
 
-    public init(theme: MascotTheme = .clippy) {
-        self.theme = theme
-        self.balloonLayer = ClippyBalloonStyle.makeShapeLayer(theme: theme.balloon)
-        self.deny = PixelChoiceButton(frame: .zero, theme: theme.balloon)
-        self.approve = PixelChoiceButton(frame: .zero, theme: theme.balloon)
+    public init(spec: ClippySpec = .current) {
+        self.spec = spec
+        self.balloonLayer = ClippyBalloonStyle.makeShapeLayer(spec: spec.balloon)
+        self.deny = PixelChoiceButton(frame: .zero, spec: spec.balloon)
+        self.approve = PixelChoiceButton(frame: .zero, spec: spec.balloon)
         self.window = KeyPanel(
-            contentRect: CGRect(origin: .zero, size: CGSize(width: theme.balloon.approvalWidth, height: 120)),
+            contentRect: CGRect(origin: .zero, size: CGSize(width: spec.balloon.approvalWidth, height: 120)),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -56,7 +56,7 @@ public final class ApprovalPanelController: NSObject {
         rootView.layer?.addSublayer(balloonLayer)
 
         label.font = uiFont(12)
-        label.textColor = theme.balloon.textColor
+        label.textColor = spec.balloon.textColor
         label.maximumNumberOfLines = 0
         rootView.addSubview(label)
 
@@ -82,12 +82,12 @@ public final class ApprovalPanelController: NSObject {
     }
 
     private func uiFont(_ size: CGFloat, bold: Bool = false) -> NSFont {
-        ClippyBalloonStyle.font(size, bold: bold, theme: theme.balloon)
+        ClippyBalloonStyle.font(size, bold: bold, spec: spec.balloon)
     }
 
     public func show(
         request: ApprovalRequest,
-        anchoredTo mascotFrame: CGRect,
+        anchoredTo clippyFrame: CGRect,
         onDecision: @escaping (Bool) -> Void
     ) {
         self.onDecision = onDecision
@@ -102,8 +102,8 @@ public final class ApprovalPanelController: NSObject {
 
         let size = window.frame.size
         let origin = CGPoint(
-            x: mascotFrame.midX - size.width / 2,
-            y: mascotFrame.maxY + 8
+            x: clippyFrame.midX - size.width / 2,
+            y: clippyFrame.maxY + 8
         )
         window.setFrameOrigin(origin)
         NSApp.activate(ignoringOtherApps: true)
@@ -111,22 +111,22 @@ public final class ApprovalPanelController: NSObject {
     }
 
     private func relayout() {
-        let width = theme.balloon.approvalWidth
-        let pad = theme.balloon.pad
+        let width = spec.balloon.approvalWidth
+        let pad = spec.balloon.pad
         let contentWidth = width - pad * 2
         let labelHeight = measuredLabelHeight(label.stringValue, width: contentWidth)
         let contentHeight = labelHeight + 10 + Self.buttonHeight
-        let height = theme.balloon.tailHeight + pad + contentHeight + pad
+        let height = spec.balloon.tailHeight + pad + contentHeight + pad
 
         window.setContentSize(CGSize(width: width, height: height))
         rootView.frame = CGRect(origin: .zero, size: CGSize(width: width, height: height))
         balloonLayer.frame = rootView.bounds
-        balloonLayer.path = ClippyBalloonStyle.path(size: rootView.bounds.size, theme: theme.balloon)
+        balloonLayer.path = ClippyBalloonStyle.path(size: rootView.bounds.size, spec: spec.balloon)
 
-        let labelY = theme.balloon.tailHeight + pad + Self.buttonHeight + 10
+        let labelY = spec.balloon.tailHeight + pad + Self.buttonHeight + 10
         label.frame = CGRect(x: pad, y: labelY, width: contentWidth, height: labelHeight)
 
-        let buttonY = theme.balloon.tailHeight + pad
+        let buttonY = spec.balloon.tailHeight + pad
         deny.frame = CGRect(x: pad, y: buttonY, width: Self.buttonWidth, height: Self.buttonHeight)
         approve.frame = CGRect(
             x: width - pad - Self.buttonWidth,

@@ -12,7 +12,8 @@ public enum ScreenPerception {
     }
 
     public static func captureMainDisplayJPEG(maxDimension: Int = 1600, compression: CGFloat = 0.82) throws -> Data {
-        guard let image = CGDisplayCreateImage(CGMainDisplayID()) else {
+        guard let target = mainScreenForCapture(),
+              let image = CGDisplayCreateImage(target.displayID) else {
             throw ScreenPerceptionError.captureFailed
         }
         let scaled = try scale(image: image, maxDimension: maxDimension)
@@ -28,13 +29,28 @@ public enum ScreenPerception {
     public struct Screenshot: Sendable {
         public let path: String
         public let pixelSize: CGSize
+        public let screenFrame: CGRect
+        public let screenIndex: Int
+
+        public init(path: String, pixelSize: CGSize, screenFrame: CGRect, screenIndex: Int) {
+            self.path = path
+            self.pixelSize = pixelSize
+            self.screenFrame = screenFrame
+            self.screenIndex = screenIndex
+        }
     }
 
-    /// Capture the main display to a JPEG on disk (overwriting the previous one) and
-    /// return its path + pixel size. This is how Clippy gets *eyes*: the model `Read`s
-    /// this file to see the screen, then points in its pixel space.
-    public static func captureToFile(maxDimension: Int = 1600, compression: CGFloat = 0.7) -> Screenshot? {
-        guard let image = CGDisplayCreateImage(CGMainDisplayID()),
+    /// Capture one display to a JPEG on disk (overwriting the previous one) and
+    /// return its path + pixel size. This is how Clippy gets *eyes*: the model
+    /// `Read`s this file to see the same screen Clippy is on, then points in its
+    /// pixel space.
+    public static func captureToFile(
+        screen requestedScreen: NSScreen? = nil,
+        maxDimension: Int = 1600,
+        compression: CGFloat = 0.7
+    ) -> Screenshot? {
+        guard let target = captureTarget(for: requestedScreen) ?? mainScreenForCapture() else { return nil }
+        guard let image = CGDisplayCreateImage(target.displayID),
               let scaled = try? scale(image: image, maxDimension: maxDimension) else { return nil }
         let rep = NSBitmapImageRep(cgImage: scaled)
         guard let data = rep.representation(using: .jpeg, properties: [.compressionFactor: compression]) else { return nil }
@@ -43,7 +59,80 @@ public enum ScreenPerception {
         let url = base.appendingPathComponent("Clippy/screen.jpg")
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         guard (try? data.write(to: url)) != nil else { return nil }
-        return Screenshot(path: url.path, pixelSize: CGSize(width: scaled.width, height: scaled.height))
+        return Screenshot(
+            path: url.path,
+            pixelSize: CGSize(width: scaled.width, height: scaled.height),
+            screenFrame: target.screen.frame,
+            screenIndex: target.index
+        )
+    }
+
+    /// Pick the screen Clippy should consider itself on. Use intersection area
+    /// first so a partially-dragged window belongs to the display it mostly occupies.
+    public static func screen(containing frame: CGRect, screens: [NSScreen] = NSScreen.screens) -> NSScreen? {
+        let frames = screens.map(\.frame)
+        guard let index = bestScreenIndex(for: frame, screenFrames: frames),
+              screens.indices.contains(index) else { return nil }
+        return screens[index]
+    }
+
+    public static func bestScreenIndex(for frame: CGRect, screenFrames: [CGRect]) -> Int? {
+        guard !screenFrames.isEmpty else { return nil }
+
+        let areas = screenFrames.enumerated().map { index, screenFrame -> (index: Int, area: CGFloat) in
+            let intersection = frame.intersection(screenFrame)
+            guard !intersection.isNull else { return (index, 0) }
+            return (index, max(0, intersection.width) * max(0, intersection.height))
+        }
+        if let best = areas.max(by: { $0.area < $1.area }), best.area > 0 {
+            return best.index
+        }
+
+        let center = CGPoint(x: frame.midX, y: frame.midY)
+        if let containing = screenFrames.firstIndex(where: { $0.contains(center) }) {
+            return containing
+        }
+
+        return screenFrames.enumerated().min { lhs, rhs in
+            distanceSquared(from: center, to: lhs.element) < distanceSquared(from: center, to: rhs.element)
+        }?.offset
+    }
+
+    private static func distanceSquared(from point: CGPoint, to rect: CGRect) -> CGFloat {
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let dx = point.x - center.x
+        let dy = point.y - center.y
+        return dx * dx + dy * dy
+    }
+
+    private static func captureTarget(for requestedScreen: NSScreen?) -> (screen: NSScreen, index: Int, displayID: CGDirectDisplayID)? {
+        guard let requestedScreen else { return nil }
+        guard let requestedDisplayID = displayID(for: requestedScreen) else { return nil }
+        let index = NSScreen.screens.firstIndex { screen in
+            displayID(for: screen) == requestedDisplayID
+        } ?? NSScreen.screens.firstIndex { $0 === requestedScreen } ?? 0
+        return (requestedScreen, index, requestedDisplayID)
+    }
+
+    private static func mainScreenForCapture() -> (screen: NSScreen, index: Int, displayID: CGDirectDisplayID)? {
+        let mainDisplayID = CGMainDisplayID()
+        for (index, screen) in NSScreen.screens.enumerated() {
+            if Self.displayID(for: screen) == mainDisplayID {
+                return (screen, index, mainDisplayID)
+            }
+        }
+        if let main = NSScreen.main {
+            let index = NSScreen.screens.firstIndex { $0 === main } ?? 0
+            return captureTarget(for: main) ?? Self.displayID(for: main).map { (main, index, $0) }
+        }
+        guard let first = NSScreen.screens.first,
+              let firstDisplayID = displayID(for: first) else { return nil }
+        return (first, 0, firstDisplayID)
+    }
+
+    private static func displayID(for screen: NSScreen) -> CGDirectDisplayID? {
+        let key = NSDeviceDescriptionKey("NSScreenNumber")
+        return (screen.deviceDescription[key] as? NSNumber)?.uint32Value
     }
 
     private static func scale(image: CGImage, maxDimension: Int) throws -> CGImage {

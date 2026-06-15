@@ -6,7 +6,7 @@ import ClippyCore
 final class ClippyApp: NSObject, NSApplicationDelegate {
     private static let characterScale: CGFloat = 2
 
-    private var mascot: (any DesktopMascot)?
+    private var clippy: Clippy?
     private var pendingIdle: DispatchWorkItem?
 
     private var chatBubble: ClippyBubbleController?
@@ -58,45 +58,48 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         RetroFont.registerBundledFonts()
-        startMascot(Self.makeMascot())
+        startClippy(Self.makeClippy())
         overlay = AnnotationOverlayWindow()
         setUpBrain()
         setUpVoice()
         startCommandChannel()
     }
 
-    // MARK: - Mascot setup
+    // MARK: - Clippy setup
 
-    private static func makeMascot() -> any DesktopMascot {
+    private static func makeClippy() -> Clippy {
         do {
-            return try ClippyMascot(packRoot: clippyResourceRoot(), scale: characterScale)
+            return try Clippy(packRoot: clippyResourceRoot(), scale: characterScale)
         } catch {
             fatalError("Clippy resources failed to load: \(error)")
         }
     }
 
-    private func startMascot(_ mascot: any DesktopMascot) {
-        let bubble = ClippyBubbleController(theme: mascot.theme)
+    private func startClippy(_ clippy: Clippy) {
+        let bubble = ClippyBubbleController(spec: clippy.spec)
 
-        self.mascot = mascot
+        self.clippy = clippy
         self.chatBubble = bubble
 
-        bubble.setAnchor(mascot.frame)
-        bubble.setAnchorWindow(mascot.windowController.window)
+        bubble.setAnchor(clippy.frame)
+        bubble.setAnchorWindow(clippy.windowController.window)
         bubble.configure { [weak self] text in
             self?.sendMessage(text)
         }
-        mascot.windowController.contextMenuProvider = { [weak self] in
+        clippy.windowController.onFrameChanged = { [weak self] frame in
+            self?.chatBubble?.setAnchor(frame, repositionVisible: false)
+        }
+        clippy.windowController.contextMenuProvider = { [weak self] in
             self?.makeContextMenu()
         }
-        mascot.windowController.onCharacterClick = { [weak self] in
+        clippy.windowController.onCharacterClick = { [weak self] in
             self?.toggleChat()
         }
-        mascot.show()
-        mascot.play(mascot.theme.greetingAnimationName) { [weak self] _, _ in
+        clippy.show()
+        clippy.play(clippy.spec.greetingAnimationName) { [weak self] _, _ in
             self?.scheduleNextIdle()
         }
-        bubble.showMessage(mascot.theme.greetingText, autoHide: 6)
+        bubble.showMessage(clippy.spec.greetingText, autoHide: 6)
         scheduleDebugSnapshots()
     }
 
@@ -111,14 +114,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func playRandomIdle() {
-        guard let mascot, !isTurnRunning else {
+        guard let clippy, !isTurnRunning else {
             return
         }
-        let name = mascot.idleAnimationNames.randomElement() ?? "RestPose"
-        mascot.play(name) { [weak self, weak mascot] _, endState in
+        let name = clippy.idleAnimationNames.randomElement() ?? "RestPose"
+        clippy.play(name) { [weak self, weak clippy] _, endState in
             switch endState {
             case .waiting:
-                mascot?.exitCurrentAnimation()
+                clippy?.exitCurrentAnimation()
             case .exited:
                 self?.scheduleNextIdle()
             }
@@ -155,7 +158,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         deepgramSTT = DeepgramVoiceCapture()   // nil if no Deepgram key
         deepgramSTT?.onPartialTranscript = { [weak self] text in
             guard let self, !self.isTurnRunning else { return }
-            if let frame = self.mascot?.frame { self.chatBubble?.setAnchor(frame) }
+            if let frame = self.clippy?.frame { self.chatBubble?.setAnchor(frame) }
             self.chatBubble?.showReply(text)
         }
         deepgramTTS = DeepgramTTS(voiceModel: selectedVoice.id)
@@ -204,7 +207,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             }
         }
         pendingIdle?.cancel()
-        if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
+        if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
         chatBubble?.showReply("Listening…")
         log("ptt: listening (deepgram=\(usingDeepgram))")
     }
@@ -231,17 +234,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func toggleChat() {
-        guard let mascot, let chatBubble else {
+        guard let clippy, let chatBubble else {
             return
         }
-        chatBubble.setAnchor(mascot.frame)
+        chatBubble.setAnchor(clippy.frame)
         if chatBubble.isInputMode {
             chatBubble.hide()
             return
         }
-        mascot.play(mascot.theme.openInputAnimationName) { [weak mascot] _, state in
+        clippy.play(clippy.spec.openInputAnimationName) { [weak clippy] _, state in
             if state == .waiting {
-                mascot?.exitCurrentAnimation()
+                clippy?.exitCurrentAnimation()
             }
         }
         chatBubble.openInput()
@@ -252,26 +255,37 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             return
         }
         guard !isTurnRunning else {
+            syncBubbleAnchorToClippy()
             chatBubble.showReply("(One sec — still working on your last message.)")
             return
         }
         guard let conversation else {
+            syncBubbleAnchorToClippy()
             chatBubble.showReply("(My local brain isn't installed.)")
             return
         }
         isTurnRunning = true
         pendingIdle?.cancel()
-        chatBubble.recordUserLine(text)
-        chatBubble.showThinking() // animated dots bubble + the head-scratch animation
         log("user: \(text)")
-        playActivityState(.thinking)
 
         let brain = conversation
-        // Give Clippy eyes: capture the screen so the model can Read it and point
-        // accurately. The path + pixel size go in the message; the model decides
-        // whether to look. We keep the shot to map its coordinates back to the screen.
-        let shot = ScreenPerception.captureToFile()
+        // Give Clippy eyes only for screen-dependent turns. Sending a screenshot
+        // through the app-server on every plain chat turn makes simple replies
+        // slower for no user-visible gain.
+        let wantsScreen = ClippyAgentInstructions.shouldAttachScreenshot(text: text, inputMode: inputMode)
+        let shot = wantsScreen ? captureCleanTurnScreenshot() : nil
         lastShot = shot
+        if let shot {
+            log("screen-capture: index=\(shot.screenIndex) frame=\(shot.screenFrame) pixels=\(Int(shot.pixelSize.width))x\(Int(shot.pixelSize.height))")
+        } else if wantsScreen {
+            log("screen-capture: unavailable")
+        } else {
+            log("screen-capture: skipped")
+        }
+        syncBubbleAnchorToClippy()
+        chatBubble.recordUserLine(text)
+        chatBubble.showThinking() // animated dots bubble + the head-scratch animation
+        playActivityState(.thinking)
         // Tell the brain how this turn arrives and leaves: spoken-and-transcribed input
         // (read past STT typos) and/or spoken output (write for the ear).
         let speaking = ttsEnabled && deepgramTTS != nil
@@ -296,6 +310,36 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                     }
                 }
             }
+        }
+    }
+
+    private func captureCleanTurnScreenshot() -> ScreenPerception.Screenshot? {
+        let targetScreen = screenForClippy()
+        let clippyWindow = clippy?.windowController.window
+        let bubbleWindow = chatBubble?.window
+        let clippyWasVisible = clippyWindow?.isVisible == true
+        let bubbleWasVisible = bubbleWindow?.isVisible == true
+
+        overlay?.clear()
+        bubbleWindow?.orderOut(nil)
+        clippyWindow?.orderOut(nil)
+        // Let WindowServer process the order-out before CGDisplayCreateImage.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.06))
+
+        let shot = ScreenPerception.captureToFile(screen: targetScreen)
+
+        if clippyWasVisible {
+            clippyWindow?.orderFrontRegardless()
+        }
+        if bubbleWasVisible {
+            bubbleWindow?.orderFrontRegardless()
+        }
+        return shot
+    }
+
+    private func syncBubbleAnchorToClippy() {
+        if let frame = clippy?.frame {
+            chatBubble?.setAnchor(frame)
         }
     }
 
@@ -351,14 +395,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     /// Live partial text while the reply streams in. Tags (even half-typed) are
     /// stripped before display so a bracket never flashes in the bubble.
     private func showStreamingReply(_ text: String) {
-        if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
+        if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
         let display = GroundingParser.stripForStreaming(text)
         if !display.isEmpty { chatBubble?.showReply(display) }
     }
 
     private func receiveReply(_ turn: AgentTurn) {
         isTurnRunning = false
-        if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
+        if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
         let parsed = GroundingParser.parse(turn.text)
         // Errors show their message as-is; otherwise show only the stripped speech.
         // A tag-only reply (no spoken text) shows nothing — never the raw brackets.
@@ -381,12 +425,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         playActivityState(turn.isError ? .error : .attention)
 
         let animationName = turn.isError
-            ? (mascot?.theme.errorAnimationName ?? "Alert")
-            : (mascot?.theme.replyAnimationName ?? "Explain")
-        mascot?.play(animationName) { [weak self, weak mascot] _, state in
+            ? (clippy?.spec.errorAnimationName ?? "Alert")
+            : (clippy?.spec.replyAnimationName ?? "Explain")
+        clippy?.play(animationName) { [weak self, weak clippy] _, state in
             switch state {
             case .waiting:
-                mascot?.exitCurrentAnimation()
+                clippy?.exitCurrentAnimation()
             case .exited:
                 self?.scheduleNextIdle()
             }
@@ -396,14 +440,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     /// Render parsed grounding directives: draw the marks, and move Clippy beside the
     /// first anchored target so it points at it with the matching body gesture.
     private func presentGrounding(_ rawTags: [GroundingTag]) {
-        guard let mascot, let screen = NSScreen.main else {
+        guard let clippy else {
             return
         }
+        let fallbackScreen = screenForClippy() ?? NSScreen.main ?? NSScreen.screens.first
+        let screen = screenForLastShot() ?? fallbackScreen
+        guard let screen else { return }
         // The model emitted coordinates in the screenshot's pixel space; map them onto
         // the actual screen so the ring and Clippy's body land in the right place.
         let tags: [GroundingTag]
         if let shot = lastShot {
-            tags = rawTags.map { $0.inScreenSpace(imageSize: shot.pixelSize, display: screen.frame) }
+            tags = rawTags.map { $0.inScreenSpace(imageSize: shot.pixelSize, display: shot.screenFrame) }
         } else {
             tags = rawTags
         }
@@ -419,12 +466,18 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if let anchor = tags.first(where: { $0.anchor != nil })?.anchor {
             // Point at a target with Clippy's body.
             pendingIdle?.cancel()
-            let size = mascot.frame.size
-            let origin = GroundingDirector.parkOrigin(beside: anchor, mascotSize: size, in: screen.visibleFrame)
-            mascot.move(to: origin, animated: true)
-            let center = CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
-            playOnce(GroundingDirector.gesture(from: center, to: anchor).rawValue)
-            chatBubble?.setAnchor(mascot.frame)
+            let size = clippy.frame.size
+            let origin = GroundingDirector.parkOrigin(beside: anchor, clippySize: size, in: screen.visibleFrame)
+            let finalFrame = CGRect(origin: origin, size: size)
+            clippy.windowController.move(to: origin, animated: true) { [weak self, weak clippy] in
+                if let frame = clippy?.frame {
+                    self?.chatBubble?.setAnchor(frame)
+                } else {
+                    self?.chatBubble?.setAnchor(finalFrame)
+                }
+            }
+            let center = CGPoint(x: finalFrame.midX, y: finalFrame.midY)
+            playOnce(GroundingDirector.pointingAnimationName(from: center, to: anchor))
         } else if let animation = firstActAnimation(in: tags) {
             // Emote: Clippy performs the animation it asked for, in place.
             pendingIdle?.cancel()
@@ -442,15 +495,38 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         return nil
     }
 
+    private func screenForLastShot() -> NSScreen? {
+        guard let shot = lastShot else { return nil }
+        if NSScreen.screens.indices.contains(shot.screenIndex) {
+            let indexed = NSScreen.screens[shot.screenIndex]
+            if indexed.frame == shot.screenFrame {
+                return indexed
+            }
+        }
+        if let matched = NSScreen.screens.first(where: { $0.frame == shot.screenFrame }) {
+            return matched
+        }
+        guard NSScreen.screens.indices.contains(shot.screenIndex) else { return nil }
+        return NSScreen.screens[shot.screenIndex]
+    }
+
+    private func screenForClippy() -> NSScreen? {
+        guard let clippy else { return NSScreen.main ?? NSScreen.screens.first }
+        return ScreenPerception.screen(containing: clippy.frame)
+            ?? clippy.windowController.window.screen
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+    }
+
     /// Plays `name` once, holding-then-exiting branched animations and returning to
     /// idle when it ends. Returns false if `name` isn't in the character pack.
     @discardableResult
     private func playOnce(_ name: String) -> Bool {
-        guard let mascot else { return false }
-        return mascot.play(name) { [weak self, weak mascot] _, state in
+        guard let clippy else { return false }
+        return clippy.play(name) { [weak self, weak clippy] _, state in
             switch state {
             case .waiting:
-                mascot?.exitCurrentAnimation()
+                clippy?.exitCurrentAnimation()
             case .exited:
                 self?.scheduleNextIdle()
             }
@@ -464,7 +540,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             scheduleNextIdle()
             return
         }
-        guard let binding = mascot?.theme.animation(for: state) else {
+        guard let binding = clippy?.spec.animation(for: state) else {
             scheduleNextIdle()
             return
         }
@@ -476,10 +552,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func playTransient(_ name: String) {
-        mascot?.play(name) { [weak self, weak mascot] _, state in
+        clippy?.play(name) { [weak self, weak clippy] _, state in
             switch state {
             case .waiting:
-                mascot?.exitCurrentAnimation()
+                clippy?.exitCurrentAnimation()
             case .exited:
                 self?.scheduleNextIdle()
             }
@@ -488,13 +564,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     /// Plays an animation and keeps replaying it while that activity state remains visible.
     private func playLooping(_ name: String, while activityState: AgentActivityState) {
-        mascot?.play(name) { [weak self] _, endState in
+        clippy?.play(name) { [weak self] _, endState in
             guard let self else {
                 return
             }
             switch endState {
             case .waiting:
-                self.mascot?.exitCurrentAnimation()
+                self.clippy?.exitCurrentAnimation()
             case .exited:
                 if self.activeActivityState == activityState {
                     self.playLooping(name, while: activityState)
@@ -509,7 +585,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
 
         let chat = NSMenuItem(
-            title: mascot?.theme.chatMenuTitle ?? MascotTheme.clippy.chatMenuTitle,
+            title: clippy?.spec.chatMenuTitle ?? ClippySpec.current.chatMenuTitle,
             action: #selector(chatClicked),
             keyEquivalent: ""
         )
@@ -529,7 +605,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
         let mute = NSMenuItem(title: "Mute Sounds", action: #selector(toggleMute), keyEquivalent: "")
         mute.target = self
-        mute.state = (mascot?.isMuted ?? false) ? .on : .off
+        mute.state = (clippy?.isMuted ?? false) ? .on : .off
         menu.addItem(mute)
 
         let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
@@ -598,14 +674,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     @objc private func animateNow() {
         pendingIdle?.cancel()
-        guard let mascot else {
+        guard let clippy else {
             return
         }
-        let name = mascot.gestureAnimationNames.randomElement() ?? mascot.theme.fallbackGestureAnimationName
-        mascot.play(name) { [weak self, weak mascot] _, endState in
+        let name = clippy.gestureAnimationNames.randomElement() ?? clippy.spec.fallbackGestureAnimationName
+        clippy.play(name) { [weak self, weak clippy] _, endState in
             switch endState {
             case .waiting:
-                mascot?.exitCurrentAnimation()
+                clippy?.exitCurrentAnimation()
             case .exited:
                 self?.scheduleNextIdle()
             }
@@ -613,7 +689,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     @objc private func toggleMute() {
-        mascot?.isMuted.toggle()
+        clippy?.isMuted.toggle()
     }
 
     @objc private func toggleSTT() {
@@ -677,7 +753,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(id, forKey: "ClippySelectedModelID")
         setUpBrain()
         log("model selected: \(id)")
-        if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
+        if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
         chatBubble?.showReply("Switched to \(model.displayName).")
     }
 
@@ -739,15 +815,15 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             if command.hasPrefix("ask:") {
                 sendMessage(String(command.dropFirst(4)))
             } else if command == "open" {
-                if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
+                if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
                 chatBubble?.openInput()
             } else if command == "snapshot" {
                 writeSnapshot(index: 99, directory: snapshotDirectory ?? "/tmp")
                 writeChatSnapshot(directory: snapshotDirectory ?? "/tmp")
             } else if command.hasPrefix("move:") {
-                moveMascot(command: String(command.dropFirst(5)))
+                moveClippy(command: String(command.dropFirst(5)))
             } else if command.hasPrefix("park:") {
-                parkMascot(command: String(command.dropFirst(5)))
+                parkClippy(command: String(command.dropFirst(5)))
             } else if command.hasPrefix("state:") {
                 applyStateCommand(String(command.dropFirst(6)))
             } else if command.hasPrefix("ground:") {
@@ -770,24 +846,39 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         playActivityState(state)
     }
 
-    private func moveMascot(command: String) {
+    private func moveClippy(command: String) {
         let parts = command.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
         guard parts.count == 2 else {
             return
         }
-        mascot?.move(to: CGPoint(x: parts[0], y: parts[1]), animated: true)
-        if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
+        clippy?.windowController.move(to: CGPoint(x: parts[0], y: parts[1]), animated: true) { [weak self] in
+            if let frame = self?.clippy?.frame { self?.chatBubble?.setAnchor(frame) }
+        }
     }
 
-    private func parkMascot(command: String) {
+    private func parkClippy(command: String) {
         guard
-            let edge = MascotParkEdge(rawValue: command),
-            let visibleFrame = NSScreen.main?.visibleFrame
+            let edge = ClippyParkEdge(rawValue: command),
+            let visibleFrame = screenForClippy()?.visibleFrame
         else {
             return
         }
-        mascot?.park(in: visibleFrame, edge: edge)
-        if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
+        let size = clippy?.windowController.frame.size ?? CGSize(width: 160, height: 160)
+        let margin: CGFloat = 24
+        let origin: CGPoint
+        switch edge {
+        case .lowerLeft:
+            origin = CGPoint(x: visibleFrame.minX + margin, y: visibleFrame.minY + margin)
+        case .lowerRight:
+            origin = CGPoint(x: visibleFrame.maxX - size.width - margin, y: visibleFrame.minY + margin)
+        case .upperLeft:
+            origin = CGPoint(x: visibleFrame.minX + margin, y: visibleFrame.maxY - size.height - margin)
+        case .upperRight:
+            origin = CGPoint(x: visibleFrame.maxX - size.width - margin, y: visibleFrame.maxY - size.height - margin)
+        }
+        clippy?.windowController.move(to: origin, animated: true) { [weak self] in
+            if let frame = self?.clippy?.frame { self?.chatBubble?.setAnchor(frame) }
+        }
     }
 
     private var snapshotDirectory: String? {
@@ -819,7 +910,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func writeSnapshot(index: Int, directory: String) {
-        guard let data = mascot?.snapshotPNGData() else {
+        guard let data = clippy?.snapshotPNGData() else {
             return
         }
         let url = URL(fileURLWithPath: directory).appending(path: "frame-\(index).png")

@@ -11,7 +11,7 @@ public enum VoiceEvent: Equatable, Sendable {
 }
 
 public enum VoiceEventRouter {
-    public static func mascotState(for event: VoiceEvent) -> MascotState? {
+    public static func clippyState(for event: VoiceEvent) -> ClippyState? {
         switch event {
         case .wakeAccepted:
             return .listening

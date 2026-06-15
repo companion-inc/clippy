@@ -31,7 +31,7 @@ public struct CharacterPack: Codable, Equatable, Sendable {
     public let renderMode: CharacterRenderMode
     public let bubbleAnchor: CharacterPoint
     public let dragAnchor: CharacterPoint
-    public let defaultAnimationByState: [MascotState: String]
+    public let defaultAnimationByState: [ClippyState: String]
 
     public init(
         id: String,
@@ -40,7 +40,7 @@ public struct CharacterPack: Codable, Equatable, Sendable {
         renderMode: CharacterRenderMode,
         bubbleAnchor: CharacterPoint,
         dragAnchor: CharacterPoint,
-        defaultAnimationByState: [MascotState: String] = [:]
+        defaultAnimationByState: [ClippyState: String] = [:]
     ) {
         self.id = id
         self.displayName = displayName

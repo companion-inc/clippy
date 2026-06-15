@@ -2,10 +2,10 @@ import AppKit
 
 /// Clippy's one and only bubble. It shows exactly one thing at a time:
 ///   • a single message line (greeting or the latest reply), or
-///   • the input field (when you double-click the mascot).
+///   • the input field (when you double-click Clippy).
 /// While Clippy is thinking, the bubble is hidden entirely — the character's
 /// own Thinking animation carries it, like the original assistant. Double-click
-/// the mascot to open the input; click away and it disappears. Type face is Microsoft Sans
+/// Clippy to open the input; click away and it disappears. Type face is Microsoft Sans
 /// Serif (the modern name for the MS Sans Serif the original balloon used).
 public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindowDelegate {
     private final class KeyPanel: NSPanel {
@@ -32,16 +32,16 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private enum Mode { case message, input }
 
     private func uiFont(_ size: CGFloat, bold: Bool = false) -> NSFont {
-        ClippyBalloonStyle.font(size, bold: bold, theme: theme.balloon)
+        ClippyBalloonStyle.font(size, bold: bold, spec: spec.balloon)
     }
 
     public let window: NSPanel
-    private let theme: MascotTheme
+    private let spec: ClippySpec
     private let balloonLayer: CAShapeLayer
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
     private let inputScrollView = NSScrollView()
     private let inputTextView = InputTextView(frame: .zero)
-    private let inputPlaceholderLabel: NSTextField
+    private let inputPlaceholderView = NSTextView(frame: .zero)
 
     private var mode: Mode = .message
     private var messageText = ""
@@ -50,12 +50,11 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private weak var anchorWindow: NSWindow?
     private var autoHideTimer: Timer?
 
-    public init(theme: MascotTheme = .clippy) {
-        self.theme = theme
-        self.balloonLayer = ClippyBalloonStyle.makeShapeLayer(theme: theme.balloon)
-        self.inputPlaceholderLabel = NSTextField(labelWithString: theme.askPlaceholder)
+    public init(spec: ClippySpec = .current) {
+        self.spec = spec
+        self.balloonLayer = ClippyBalloonStyle.makeShapeLayer(spec: spec.balloon)
         self.window = KeyPanel(
-            contentRect: CGRect(x: 0, y: 0, width: theme.balloon.minWidth, height: 70),
+            contentRect: CGRect(x: 0, y: 0, width: spec.balloon.minWidth, height: 70),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
@@ -66,25 +65,22 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         root.wantsLayer = true
         root.layer?.addSublayer(balloonLayer)
 
-        messageLabel.font = uiFont(12)
-        messageLabel.textColor = theme.balloon.textColor
+        messageLabel.font = uiFont(spec.balloon.messageFontSize)
+        messageLabel.textColor = spec.balloon.textColor
         messageLabel.maximumNumberOfLines = 0
         root.addSubview(messageLabel)
 
-        inputTextView.font = uiFont(13)
-        inputTextView.textColor = theme.balloon.textColor
-        inputTextView.drawsBackground = false
-        inputTextView.isRichText = false
-        inputTextView.isAutomaticQuoteSubstitutionEnabled = false
-        inputTextView.isAutomaticDashSubstitutionEnabled = false
-        inputTextView.isHorizontallyResizable = false
-        inputTextView.isVerticallyResizable = true
-        inputTextView.textContainerInset = NSSize(width: 0, height: 1)
-        inputTextView.textContainer?.lineFragmentPadding = 0
-        inputTextView.textContainer?.widthTracksTextView = true
+        configureInputTextView(inputTextView, textColor: spec.balloon.textColor)
         inputTextView.delegate = self
         inputTextView.onSubmit = { [weak self] in self?.submitInput() }
         inputTextView.onCancel = { [weak self] in self?.hide() }
+
+        configureInputTextView(inputPlaceholderView, textColor: spec.balloon.mutedTextColor)
+        inputPlaceholderView.string = spec.askPlaceholder
+        inputPlaceholderView.isEditable = false
+        inputPlaceholderView.isSelectable = false
+        inputPlaceholderView.isHidden = true
+        root.addSubview(inputPlaceholderView)
 
         inputScrollView.drawsBackground = false
         inputScrollView.borderType = .noBorder
@@ -93,11 +89,6 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         inputScrollView.documentView = inputTextView
         inputScrollView.isHidden = true
         root.addSubview(inputScrollView)
-
-        inputPlaceholderLabel.font = uiFont(13)
-        inputPlaceholderLabel.textColor = theme.balloon.mutedTextColor
-        inputPlaceholderLabel.isHidden = true
-        root.addSubview(inputPlaceholderLabel)
 
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -110,23 +101,48 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         window.contentView = root
     }
 
+    private func configureInputTextView(_ textView: NSTextView, textColor: NSColor) {
+        textView.font = uiFont(spec.balloon.inputFontSize)
+        textView.textColor = textColor
+        textView.drawsBackground = false
+        textView.isRichText = false
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.textContainerInset = NSSize(width: 0, height: 1)
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+    }
+
     public var isVisible: Bool { window.isVisible }
     public var isInputMode: Bool { mode == .input && window.isVisible }
 
-    public func setAnchor(_ frame: CGRect) {
+    public func setAnchor(_ frame: CGRect, repositionVisible: Bool = true) {
         anchorFrame = frame
-        if window.isVisible { positionWindow() }
+        if repositionVisible, window.isVisible {
+            positionWindow()
+        }
     }
 
-    /// Glue the bubble to the mascot window so they move together as one unit and
-    /// stay on the same Space/display (instead of the bubble following the active screen).
     public func setAnchorWindow(_ window: NSWindow?) {
+        if let parent = self.window.parent, parent !== window {
+            parent.removeChildWindow(self.window)
+        }
         anchorWindow = window
+        if self.window.isVisible { attachToAnchorWindow() }
     }
 
     private func attachToAnchorWindow() {
-        guard let anchorWindow, window.parent !== anchorWindow else { return }
-        anchorWindow.addChildWindow(window, ordered: .above)
+        guard let anchorWindow else {
+            return
+        }
+        if let parent = window.parent, parent !== anchorWindow {
+            parent.removeChildWindow(window)
+        }
+        if window.parent !== anchorWindow {
+            anchorWindow.addChildWindow(window, ordered: .above)
+        }
     }
 
     public func configure(onSend: @escaping (String) -> Void) {
@@ -146,7 +162,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         scheduleAutoHide(autoHide)
     }
 
-    /// Double-click the mascot: show only the input, focused. Click-away dismisses it.
+    /// Double-click Clippy: show only the input, focused. Click-away dismisses it.
     public func openInput() {
         stopThinking()
         cancelAutoHide()
@@ -181,7 +197,9 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     public func hide() {
         stopThinking()
         cancelAutoHide()
-        anchorWindow?.removeChildWindow(window)
+        if let anchorWindow, window.parent === anchorWindow {
+            anchorWindow.removeChildWindow(window)
+        }
         window.orderOut(nil)
     }
 
@@ -221,11 +239,11 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     private func relayout() {
         let contentWidth = measuredContentWidth()
-        let windowWidth = contentWidth + theme.balloon.pad * 2
+        let shapeWidth = contentWidth + spec.balloon.pad * 2
 
         messageLabel.isHidden = mode != .message
         inputScrollView.isHidden = mode != .input
-        inputPlaceholderLabel.isHidden = mode != .input || !inputTextView.string.isEmpty
+        inputPlaceholderView.isHidden = mode != .input || !inputTextView.string.isEmpty
 
         var contentHeight: CGFloat = 0
         switch mode {
@@ -235,30 +253,34 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             contentHeight = measuredLabelHeight(messageText.isEmpty ? "…" : messageText, width: contentWidth)
         }
 
-        let windowHeight = theme.balloon.tailHeight + theme.balloon.pad + contentHeight + theme.balloon.pad
+        let shapeHeight = spec.balloon.tailHeight + spec.balloon.pad + contentHeight + spec.balloon.pad
+        let windowWidth = shapeWidth
+        let windowHeight = shapeHeight
+        let shapeOrigin = CGPoint.zero
+        let shapeSize = CGSize(width: shapeWidth, height: shapeHeight)
         window.setContentSize(CGSize(width: windowWidth, height: windowHeight))
-        balloonLayer.frame = CGRect(origin: .zero, size: CGSize(width: windowWidth, height: windowHeight))
-        balloonLayer.path = ClippyBalloonStyle.path(
-            size: CGSize(width: windowWidth, height: windowHeight),
-            theme: theme.balloon
-        )
+        balloonLayer.frame = CGRect(origin: shapeOrigin, size: shapeSize)
+        balloonLayer.path = ClippyBalloonStyle.path(size: shapeSize, spec: spec.balloon)
 
-        let contentY = theme.balloon.tailHeight + theme.balloon.pad
-        let contentRect = CGRect(x: theme.balloon.pad, y: contentY, width: contentWidth, height: contentHeight)
+        let contentY = shapeOrigin.y + spec.balloon.tailHeight + spec.balloon.pad
+        let contentRect = CGRect(
+            x: shapeOrigin.x + spec.balloon.pad,
+            y: contentY,
+            width: contentWidth,
+            height: contentHeight
+        )
 
         switch mode {
         case .input:
+            inputPlaceholderView.frame = contentRect
+            inputPlaceholderView.minSize = NSSize(width: 0, height: contentHeight)
+            inputPlaceholderView.maxSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
+            inputPlaceholderView.textContainer?.containerSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
             inputScrollView.frame = contentRect
             inputTextView.minSize = NSSize(width: 0, height: contentHeight)
             inputTextView.maxSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
             inputTextView.frame = CGRect(origin: .zero, size: contentRect.size)
             inputTextView.textContainer?.containerSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
-            inputPlaceholderLabel.frame = CGRect(
-                x: contentRect.minX,
-                y: contentRect.minY + 1,
-                width: contentRect.width,
-                height: 18
-            )
         case .message:
             messageLabel.frame = contentRect
             messageLabel.stringValue = messageText
@@ -268,9 +290,22 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     }
 
     private func positionWindow() {
+        let parentBeforePositioning = window.parent
+        parentBeforePositioning?.removeChildWindow(window)
+        defer {
+            if window.isVisible {
+                attachToAnchorWindow()
+            }
+        }
+
         let size = window.frame.size
-        var x = anchorFrame.midX - size.width / 2
-        var y = anchorFrame.maxY + 4
+        let shapeOriginX: CGFloat = 0
+        let shapeOriginY: CGFloat = 0
+        let shapeWidth = size.width
+        let tailTipX = shapeOriginX + shapeWidth / 2 + spec.balloon.tailTipOffset
+        let tailTipY = shapeOriginY + 0.5
+        var x = anchorFrame.midX - tailTipX
+        var y = anchorFrame.maxY + 4 - tailTipY
         let anchorCenter = CGPoint(x: anchorFrame.midX, y: anchorFrame.midY)
         let screen = NSScreen.screens.first { $0.frame.contains(anchorCenter) } ?? NSScreen.main
         if let visible = screen?.visibleFrame {
@@ -286,24 +321,24 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         let fontSize: CGFloat
         switch mode {
         case .input:
-            text = inputTextView.string.isEmpty ? inputPlaceholderLabel.stringValue : inputTextView.string
-            fontSize = 13
+            text = inputTextView.string.isEmpty ? inputPlaceholderView.string : inputTextView.string
+            fontSize = spec.balloon.inputFontSize
         case .message:
             text = messageText.isEmpty ? "…" : messageText
-            fontSize = 12
+            fontSize = spec.balloon.messageFontSize
         }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         let longest = lines.map { String($0) }.max { $0.count < $1.count } ?? text
         let attributed = NSAttributedString(string: longest, attributes: [.font: uiFont(fontSize)])
         let width = ceil(attributed.size().width) + 4
         return min(
-            theme.balloon.maxWidth - theme.balloon.pad * 2,
-            max(theme.balloon.minWidth - theme.balloon.pad * 2, width)
+            spec.balloon.maxWidth - spec.balloon.pad * 2,
+            max(spec.balloon.minWidth - spec.balloon.pad * 2, width)
         )
     }
 
     private func measuredLabelHeight(_ text: String, width: CGFloat) -> CGFloat {
-        let attributed = NSAttributedString(string: text, attributes: [.font: uiFont(12)])
+        let attributed = NSAttributedString(string: text, attributes: [.font: uiFont(spec.balloon.messageFontSize)])
         let rect = attributed.boundingRect(
             with: NSSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
@@ -312,14 +347,14 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     }
 
     private func measuredInputHeight(width: CGFloat) -> CGFloat {
-        let text = inputTextView.string.isEmpty ? inputPlaceholderLabel.stringValue : inputTextView.string
-        let attributed = NSAttributedString(string: text, attributes: [.font: uiFont(13)])
+        let text = inputTextView.string.isEmpty ? inputPlaceholderView.string : inputTextView.string
+        let attributed = NSAttributedString(string: text, attributes: [.font: uiFont(spec.balloon.inputFontSize)])
         let rect = attributed.boundingRect(
             with: NSSize(width: width, height: .greatestFiniteMagnitude),
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
-        let height = max(theme.balloon.minInputHeight, ceil(rect.height) + 3)
-        return min(height, theme.balloon.maxInputHeight)
+        let height = max(spec.balloon.minInputHeight, ceil(rect.height) + 3)
+        return min(height, spec.balloon.maxInputHeight)
     }
 
     private func scheduleAutoHide(_ delay: TimeInterval?) {

@@ -14,9 +14,9 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 }
 
 @Test func actionQueueRunsFifoAndInterrupts() async throws {
-    let queue = MascotActionQueue()
-    let first = MascotAction(command: .setState(.thinking))
-    let second = MascotAction(command: .setState(.done))
+    let queue = ClippyActionQueue()
+    let first = ClippyAction(command: .setState(.thinking))
+    let second = ClippyAction(command: .setState(.done))
 
     await queue.enqueue(first)
     await queue.enqueue(second)
@@ -79,6 +79,15 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         inputMode: .text, speaking: false)
     #expect(quiet.contains("Voice mode") == false)
     #expect(quiet.contains("hello"))
+    #expect(quiet.contains("not normalized"))
+}
+
+@Test func screenshotPolicySkipsPlainChatAndCapturesScreenTurns() {
+    #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "Say exactly: perf ok.", inputMode: .text) == false)
+    #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "what's on my screen", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "highlight this button", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "fix that", inputMode: .voice))
+    #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "summarize the docs", inputMode: .voice) == false)
 }
 
 @Test func codexConversationResumesTheSameThreadAcrossTurns() async throws {
@@ -142,6 +151,106 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(logged.contains(#""threadId":"THREAD-123""#))
     #expect(logged.contains("first turn"))
     #expect(logged.contains("second turn"))
+}
+
+@Test func computerUseMCPConfigPrefersExplicitCuaDriver() throws {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-cua-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let cua = tempDir.appendingPathComponent("cua-driver")
+    FileManager.default.createFile(atPath: cua.path, contents: Data("#!/bin/sh\n".utf8))
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cua.path)
+
+    let runtime = ComputerUseMCPConfig.defaultRuntime(environment: ["CLIPPY_CUA_DRIVER": cua.path])
+    #expect(runtime?.serverName == "cua-driver")
+    #expect(runtime?.command == cua.path)
+    #expect(runtime?.args == ["mcp", "--no-daemon-relaunch", "--no-overlay"])
+    #expect(runtime?.enabledTools.contains("drag") == true)
+    #expect(runtime?.enabledTools.contains("zoom") == true)
+    #expect(runtime?.enabledTools.contains("screenshot") == false)
+    #expect(ComputerUseMCPConfig.clippyEnabledTools.contains("screenshot"))
+    #expect(ComputerUseMCPConfig.clippyEnabledTools.contains("drag") == false)
+
+    let overrides = ComputerUseMCPConfig.codexConfigOverrides(for: [try #require(runtime)])
+    #expect(overrides.contains { $0.contains("mcp_servers.cua-driver.command") && $0.contains(cua.path) })
+    #expect(overrides.contains { $0.contains("mcp_servers.cua-driver.enabled_tools") && $0.contains("get_window_state") })
+}
+
+@Test func computerUseMCPConfigPrefersBundledHelperOverExternalInstall() throws {
+    let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-bundled-cua-\(UUID().uuidString)", isDirectory: true)
+    let macOSDir = tempDir.appendingPathComponent("Contents/MacOS", isDirectory: true)
+    let helpersDir = tempDir.appendingPathComponent("Contents/Helpers", isDirectory: true)
+    try FileManager.default.createDirectory(at: macOSDir, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: helpersDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    let helper = helpersDir.appendingPathComponent(ComputerUseMCPConfig.bundledHelperName)
+    FileManager.default.createFile(atPath: helper.path, contents: Data("#!/bin/sh\n".utf8))
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+
+    let runtime = ComputerUseMCPConfig.defaultRuntime(
+        environment: [:],
+        executableDirectory: macOSDir.path,
+        workingDirectory: tempDir.path
+    )
+
+    #expect(runtime?.serverName == "cua-driver")
+    #expect(runtime?.command == helper.path)
+    #expect(runtime?.args == ["mcp", "--no-daemon-relaunch", "--no-overlay"])
+}
+
+@Test func codexConversationWiresCuaAndAnnotationMCPServers() async throws {
+    let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-codex-mcp-\(UUID().uuidString).txt")
+    let scriptURL = try writeExecutableScript(
+        named: "fake-codex-mcp.zsh",
+        contents: """
+        #!/bin/zsh
+        set -eu
+        log_file='\(logURL.path)'
+        print -r -- "$0 $*" >> "$log_file"
+        request_id() {
+          print -r -- "$1" | sed -n 's/.*"id":\\([0-9][0-9]*\\).*/\\1/p'
+        }
+        while IFS= read -r line; do
+          print -r -- "$line" >> "$log_file"
+          id="$(request_id "$line")"
+          if [[ "$line" == *'"method":"initialize"'* ]]; then
+            print -r -- '{"id":'${id}',"result":{}}'
+          elif [[ "$line" == *'thread/start'* || "$line" == *'thread\\/start'* ]]; then
+            print -r -- '{"id":'${id}',"result":{"thread":{"id":"THREAD-MCP"}}}'
+          elif [[ "$line" == *'turn/start'* || "$line" == *'turn\\/start'* ]]; then
+            print -r -- '{"id":'${id}',"result":{"turn":{"id":"TURN-MCP","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":0,"completedAt":null,"durationMs":null}}}'
+            print -r -- '{"method":"item/agentMessage/delta","params":{"threadId":"THREAD-MCP","turnId":"TURN-MCP","itemId":"ITEM-MCP","delta":"OK"}}'
+            print -r -- '{"method":"item/completed","params":{"threadId":"THREAD-MCP","turnId":"TURN-MCP","completedAtMs":0,"item":{"type":"agentMessage","id":"ITEM-MCP","text":"OK","phase":null,"memoryCitation":null}}}'
+            print -r -- '{"method":"turn/completed","params":{"threadId":"THREAD-MCP","turn":{"id":"TURN-MCP","items":[],"itemsView":"full","status":"completed","error":null,"startedAt":0,"completedAt":0,"durationMs":1}}}'
+          fi
+        done
+        """
+    )
+    defer {
+        try? FileManager.default.removeItem(at: scriptURL.deletingLastPathComponent())
+        try? FileManager.default.removeItem(at: logURL)
+    }
+
+    let conversation = CodexConversation(
+        binaryPath: scriptURL.path,
+        model: "gpt-5.5",
+        effort: "minimal",
+        workingDirectory: nil,
+        systemPrompt: nil,
+        computerUseRuntime: MCPServerRuntime(serverName: "cua-driver", command: "/tmp/cua-driver", args: ["mcp"], enabledTools: ["click"]),
+        annotationRuntime: MCPServerRuntime(serverName: "clippy-annotation", command: "/tmp/ClippyMCP", enabledTools: ["annotate"])
+    )
+
+    let turn = await conversation.send("use tools")
+    #expect(turn.text == "OK")
+
+    let logged = try String(contentsOf: logURL, encoding: .utf8)
+    #expect(logged.contains("mcp_servers.cua-driver.command"))
+    #expect(logged.contains("mcp_servers.clippy-annotation.command"))
+    #expect(logged.contains(#""cua-driver""#))
+    #expect(logged.contains(#""clippy-annotation""#))
+    #expect(logged.contains(#""enabled_tools":["click"]"#))
+    #expect(logged.contains(#""enabled_tools":["annotate"]"#))
 }
 
 @Test func codexConversationStreamYieldsAgentMessageBeforeTurnExit() async throws {
@@ -313,31 +422,51 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(FileManager.default.fileExists(atPath: root.appending(path: "map.png").path))
 }
 
-@Test func clippyThemeOwnsBubbleCopyAndActivityAnimations() throws {
-    let theme = MascotTheme.clippy
+@Test func clippySpecOwnsBubbleCopyAndActivityAnimations() throws {
+    let spec = ClippySpec.current
 
-    #expect(theme.id == "clippy")
-    #expect(theme.displayName == "Clippy")
-    #expect(theme.askPlaceholder == "Ask Clippy…")
-    #expect(theme.chatMenuTitle == "Chat with Clippy…")
-    #expect(theme.greetingAnimationName == "Greeting")
-    #expect(theme.openInputAnimationName == "GetAttention")
-    #expect(theme.replyAnimationName == "Explain")
+    #expect(spec.id == "clippy")
+    #expect(spec.displayName == "Clippy")
+    #expect(spec.askPlaceholder == "Ask Clippy…")
+    #expect(spec.chatMenuTitle == "Chat with Clippy…")
+    #expect(spec.greetingText == "Need a hand?")
+    #expect(!spec.greetingText.contains("Mac"))
+    #expect(!spec.greetingText.contains("Double-click"))
+    #expect(spec.greetingAnimationName == "Greeting")
+    #expect(spec.openInputAnimationName == "GetAttention")
+    #expect(spec.replyAnimationName == "Explain")
 
-    let thinking = try #require(theme.animation(for: .thinking))
+    let thinking = try #require(spec.animation(for: .thinking))
     #expect(thinking.animationName == "IdleHeadScratch")
     #expect(thinking.repeatsUntilStateChange)
 
-    let notification = try #require(theme.animation(for: .notification))
+    let notification = try #require(spec.animation(for: .notification))
     #expect(notification.animationName == "Alert")
     #expect(notification.repeatsUntilStateChange == false)
 
-    #expect(theme.animation(for: .idle) == nil)
-    #expect(theme.balloon.tailHeight == 13)
-    let fill = try #require(theme.balloon.fillColor.usingColorSpace(.deviceRGB))
+    #expect(spec.animation(for: .idle) == nil)
+    #expect(spec.balloon.tailHeight == 17)
+    #expect(spec.balloon.cornerRadius == 11)
+    #expect(spec.balloon.minWidth == 300)
+    #expect(spec.balloon.shadowOffset == .zero)
+    #expect(spec.balloon.maxWidth == 330)
+    #expect(spec.balloon.messageFontSize == 19)
+    #expect(spec.balloon.inputFontSize == 19)
+    let balloonLayer = ClippyBalloonStyle.makeShapeLayer(spec: spec.balloon)
+    #expect(balloonLayer.allowsEdgeAntialiasing)
+    #expect(balloonLayer.lineJoin == .round)
+    let fill = try #require(spec.balloon.fillColor.usingColorSpace(.deviceRGB))
     #expect(fill.redComponent > 0.99)
     #expect(fill.greenComponent > 0.99)
     #expect(fill.blueComponent < fill.redComponent)
+}
+
+@Test func annotationPaletteUsesSingleYellowStrokeUnlessBackgroundIsLight() {
+    #expect(AnnotationPalette.backingTone(luminance: 0.12, fallbackAppearance: .init(named: .darkAqua)!) == nil)
+    #expect(AnnotationPalette.backingTone(luminance: 0.55, fallbackAppearance: .init(named: .darkAqua)!) == nil)
+    #expect(AnnotationPalette.backingTone(luminance: 0.82, fallbackAppearance: .init(named: .darkAqua)!) == .dark)
+    #expect(AnnotationPalette.backingTone(luminance: nil, fallbackAppearance: .init(named: .darkAqua)!) == nil)
+    #expect(AnnotationPalette.backingTone(luminance: nil, fallbackAppearance: .init(named: .aqua)!) == .dark)
 }
 
 @Test func clippySpriteSheetProducesVisibleRestPoseTexture() throws {
@@ -350,6 +479,37 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(frames.textures.count == 1)
     #expect(texture.size().width > 0)
     #expect(texture.size().height > 0)
+}
+
+@Test @MainActor func clippyAnimatorStopsAfterOneShotAnimationExits() throws {
+    let root = clippyResourceRoot()
+    let sheet = try ClippySpriteSheet(packRoot: root)
+    let renderer = SpriteKitRasterCharacterRenderer(size: sheet.frameSize)
+    let animator = ClippyAnimator(sheet: sheet, renderer: renderer)
+    var ended = false
+
+    #expect(animator.play("RestPose") { _, state in
+        ended = state == .exited
+    })
+
+    #expect(ended)
+    #expect(animator.isAnimationRunning == false)
+}
+
+@Test @MainActor func clippyWindowMoveReportsFrameChanges() {
+    let controller = ClippyWindowController(
+        rendererView: NSView(frame: CGRect(origin: .zero, size: CGSize(width: 24, height: 24))),
+        size: CGSize(width: 24, height: 24)
+    ) { _ in true }
+    var reportedFrame: CGRect?
+    controller.onFrameChanged = { frame in
+        reportedFrame = frame
+    }
+
+    controller.move(to: CGPoint(x: 120, y: 140), animated: false)
+
+    #expect(reportedFrame?.origin == CGPoint(x: 120, y: 140))
+    #expect(reportedFrame?.size == CGSize(width: 24, height: 24))
 }
 
 @Test func approvalPolicyProtectsSensitiveTools() throws {
@@ -396,8 +556,8 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     }
 }
 
-@Test func voiceEventsDriveMascotState() throws {
-    var machine = MascotStateMachine(initialState: .idle)
+@Test func voiceEventsDriveClippyState() throws {
+    var machine = ClippyStateMachine(initialState: .idle)
 
     #expect(machine.apply(.voice(.wakeAccepted)).state == .listening)
     #expect(machine.apply(.voice(.transcriptInterim("open notes"))).state == .hearing)

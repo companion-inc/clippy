@@ -7,11 +7,30 @@ build_dir="$repo_root/.build/$configuration"
 app_dir="$build_dir/Clippy.app"
 
 cd "$repo_root"
-xcrun swift build ${configuration:+--configuration "$configuration"}
+swift build ${configuration:+--configuration "$configuration"}
 
 rm -rf "$app_dir"
-mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Resources/Characters"
+mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Helpers" "$app_dir/Contents/Resources/Characters"
 cp "$build_dir/Clippy" "$app_dir/Contents/MacOS/Clippy"
+cp "$build_dir/ClippyMCP" "$app_dir/Contents/MacOS/ClippyMCP"
+cua_driver_source="${CLIPPY_CUA_DRIVER:-}"
+if [ -z "$cua_driver_source" ]; then
+  for candidate in \
+    "$HOME/.local/bin/cua-driver" \
+    "/Applications/CuaDriver.app/Contents/MacOS/cua-driver"
+  do
+    if [ -x "$candidate" ]; then
+      cua_driver_source="$candidate"
+      break
+    fi
+  done
+fi
+if [ -z "$cua_driver_source" ] || [ ! -x "$cua_driver_source" ]; then
+  echo "ERROR: cua-driver is required for product computer use. Install it or set CLIPPY_CUA_DRIVER=/path/to/cua-driver." >&2
+  exit 1
+fi
+cp "$cua_driver_source" "$app_dir/Contents/Helpers/ClippyComputerUseRuntime"
+chmod 755 "$app_dir/Contents/Helpers/ClippyComputerUseRuntime"
 cp -R "$repo_root/Resources/Characters/Clippy" "$app_dir/Contents/Resources/Characters/Clippy"
 cp "$repo_root/Resources/Clippy.icns" "$app_dir/Contents/Resources/Clippy.icns"
 mkdir -p "$app_dir/Contents/Resources/Fonts"
@@ -75,6 +94,10 @@ if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$codesign_id
   # entitlements re-grant the mic + Apple Events that hardened runtime would
   # otherwise block. (Ad-hoc identity "-" can't timestamp, so skip it there.)
   ts_flag="--timestamp"; [ "$codesign_identity" = "-" ] && ts_flag="--timestamp=none"
+  codesign --force $ts_flag --options runtime --sign "$codesign_identity" "$app_dir/Contents/MacOS/ClippyMCP"
+  codesign --force $ts_flag --options runtime \
+    --identifier ai.companion.clippy \
+    --sign "$codesign_identity" "$app_dir/Contents/Helpers/ClippyComputerUseRuntime"
   codesign --force $ts_flag --options runtime \
     --entitlements "$repo_root/Resources/Clippy.entitlements" \
     --sign "$codesign_identity" "$app_dir"

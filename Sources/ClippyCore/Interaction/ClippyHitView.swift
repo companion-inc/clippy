@@ -1,6 +1,6 @@
 import AppKit
 
-public final class MascotHitView: NSView {
+public final class ClippyHitView: NSView {
     /// Supplies the context menu shown on right-click, like the original
     /// assistant's Animate!/Options menu.
     public var menuProvider: (() -> NSMenu?)?

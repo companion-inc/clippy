@@ -23,11 +23,11 @@ public enum BrainDiscovery {
     }
 
     /// The brain to use when the user hasn't picked one yet: whichever subscription
-    /// is present. If both are signed in, prefer Opus 4.8 (the stronger driver); if
-    /// neither, fall back to Opus so the UI can report "brain not installed".
+    /// is present. If both are signed in, prefer Codex because Clippy wires Cua and
+    /// its annotation MCP server through the Codex app-server path.
     public static func defaultModel() -> ClippyModel {
-        if claudeSignedIn() { return .opus48 }
         if codexSignedIn() { return .gpt55 }
+        if claudeSignedIn() { return .opus48 }
         return .opus48
     }
 

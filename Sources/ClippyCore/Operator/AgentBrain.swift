@@ -19,8 +19,8 @@ public enum AgentStreamChunk: Sendable {
     case final(AgentTurn)
 }
 
-/// A local conversation brain the app can chat through. Mascot selection is a
-/// shell/theme choice; it must not fork the chat backend or conversation.
+/// A local conversation brain Clippy can chat through. Clippy is the only product shell;
+/// this protocol must not grow selectable characters or per-character backends.
 public protocol AgentBrain: Actor {
     func send(_ message: String) async -> AgentTurn
     /// Streams the reply as it is generated. The default yields just the final

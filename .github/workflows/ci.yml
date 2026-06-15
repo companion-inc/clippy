@@ -1,0 +1,141 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clippy-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CUA_DRIVER_VERSION: "0.5.3"
+  APPLE_CODESIGN_IDENTITY: "Developer ID Application: Companion, Inc. (5LYD7HDS6X)"
+
+jobs:
+  test:
+    name: Test
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Swift version
+        run: swift --version
+
+      - name: Run tests
+        run: swift test
+
+  package-macos:
+    name: Package macOS app
+    runs-on: macos-26
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Cua driver
+        run: |
+          cua_driver_path="$(Scripts/download-cua-driver.sh .build/cua-driver-release | tail -n 1)"
+          echo "CLIPPY_CUA_DRIVER=$PWD/$cua_driver_path" >> "$GITHUB_ENV"
+
+      - name: Configure signing
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_APPLICATION_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_APPLICATION_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.BUILD_KEYCHAIN_PASSWORD }}
+        run: |
+          if [ -n "$CERTIFICATE_BASE64" ] && [ -n "$CERTIFICATE_PASSWORD" ] && [ -n "$KEYCHAIN_PASSWORD" ]; then
+            certificate_path="$RUNNER_TEMP/developer-id-application.p12"
+            keychain_path="$RUNNER_TEMP/clippy-signing.keychain-db"
+
+            printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
+            security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+            security set-keychain-settings -lut 21600 "$keychain_path"
+            security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
+            security import "$certificate_path" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain_path"
+            security list-keychains -d user -s "$keychain_path" $(security list-keychains -d user | tr -d '"')
+            security set-key-partition-list -S apple-tool:,apple: -s -k "$KEYCHAIN_PASSWORD" "$keychain_path"
+            echo "CODESIGN_IDENTITY=$APPLE_CODESIGN_IDENTITY" >> "$GITHUB_ENV"
+          else
+            echo "CODESIGN_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "Using ad-hoc signing because Developer ID signing secrets are not configured."
+          fi
+
+      - name: Package app
+        run: Scripts/package-clippy-app.sh release
+
+      - name: Verify package
+        run: |
+          test -x .build/release/Clippy.app/Contents/MacOS/Clippy
+          test -x .build/release/Clippy.app/Contents/MacOS/ClippyMCP
+          test -x .build/release/Clippy.app/Contents/Helpers/ClippyComputerUseRuntime
+          codesign --verify --strict .build/release/Clippy.app
+          .build/release/Clippy.app/Contents/Helpers/ClippyComputerUseRuntime --version
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' .build/release/Clippy.app/Contents/Info.plist
+
+      - name: Archive app
+        run: |
+          ditto -c -k --keepParent .build/release/Clippy.app Clippy-macOS.zip
+
+      - name: Notarize and staple when secrets are present
+        env:
+          APPLE_ID: ${{ secrets.APPLE_NOTARY_APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_NOTARY_TEAM_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_NOTARY_APP_SPECIFIC_PASSWORD }}
+        run: |
+          if [ "$CODESIGN_IDENTITY" != "-" ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
+            xcrun notarytool submit Clippy-macOS.zip \
+              --apple-id "$APPLE_ID" \
+              --team-id "$APPLE_TEAM_ID" \
+              --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+              --wait
+            xcrun stapler staple .build/release/Clippy.app
+            rm -f Clippy-macOS.zip
+            ditto -c -k --keepParent .build/release/Clippy.app Clippy-macOS.zip
+            printf 'notarized: yes\n' > Clippy-macOS.notarization.txt
+          else
+            printf 'notarized: no; configure Developer ID and Apple notary secrets for Gatekeeper-clean downloads\n' > Clippy-macOS.notarization.txt
+          fi
+
+      - name: Write checksum
+        run: shasum -a 256 Clippy-macOS.zip > Clippy-macOS.zip.sha256
+
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clippy-macOS-${{ github.sha }}
+          path: |
+            Clippy-macOS.zip
+            Clippy-macOS.zip.sha256
+            Clippy-macOS.notarization.txt
+          retention-days: 30
+
+  release:
+    name: Publish tagged release
+    runs-on: ubuntu-latest
+    needs: package-macos
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - name: Download packaged app artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Clippy-macOS-${{ github.sha }}
+          path: dist
+
+      - name: Publish GitHub release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "Clippy macOS build."
+          gh release upload "$GITHUB_REF_NAME" Clippy-macOS.zip Clippy-macOS.zip.sha256 Clippy-macOS.notarization.txt --clobber
