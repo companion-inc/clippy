@@ -20,8 +20,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var ttsEnabled = UserDefaults.standard.object(forKey: "ClippyTTSEnabled") as? Bool ?? true
     private var conversation: (any AgentBrain)?
     private var selectedModel: ClippyModel = {
-        let id = UserDefaults.standard.string(forKey: "ClippySelectedModelID")
-        return id.flatMap(ClippyModel.by(id:)) ?? .default
+        // Honor an explicit prior choice; otherwise detect which subscription
+        // (Claude vs GPT) the user is signed into locally and default to that.
+        if let id = UserDefaults.standard.string(forKey: "ClippySelectedModelID"),
+           let saved = ClippyModel.by(id: id) {
+            return saved
+        }
+        return BrainDiscovery.defaultModel()
     }()
     private var selectedVoice: ClippyVoice = {
         let id = UserDefaults.standard.string(forKey: "ClippyVoiceID")

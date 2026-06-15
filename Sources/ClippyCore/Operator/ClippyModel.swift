@@ -20,13 +20,11 @@ public struct ClippyModel: Equatable, Sendable, Identifiable {
 }
 
 public extension ClippyModel {
-    static let opus48 = ClippyModel(id: "claude-opus-4-8", displayName: "Claude Opus 4.8", backend: .claude)
-    static let gpt55 = ClippyModel(id: "gpt-5.5", displayName: "GPT-5.5 (Codex)", backend: .codex)
-    static let sonnet46 = ClippyModel(id: "claude-sonnet-4-6", displayName: "Claude Sonnet 4.6", backend: .claude)
-    static let haiku45 = ClippyModel(id: "claude-haiku-4-5-20251001", displayName: "Claude Haiku 4.5", backend: .claude)
+    static let opus48 = ClippyModel(id: "claude-opus-4-8", displayName: "Opus 4.8", backend: .claude)
+    static let gpt55 = ClippyModel(id: "gpt-5.5", displayName: "GPT 5.5", backend: .codex)
 
-    /// Offered in the Model picker (right-click → Model).
-    static let all: [ClippyModel] = [opus48, gpt55, sonnet46, haiku45]
+    /// The only two brains Clippy offers (right-click → Model), both at low effort.
+    static let all: [ClippyModel] = [opus48, gpt55]
 
     /// Default driver: Opus 4.8 — the best computer-use model per the migration research.
     static let `default` = opus48
