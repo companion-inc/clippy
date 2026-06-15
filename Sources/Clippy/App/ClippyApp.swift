@@ -11,6 +11,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private var chatBubble: ClippyBubbleController?
     private var overlay: AnnotationOverlayWindow?
+    private var permissionDrag: PermissionDragController?
     private var ptt: PushToTalkMonitor?
     private var speech: SpeechCapture?
     private var deepgramSTT: DeepgramVoiceCapture?
@@ -261,7 +262,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         isTurnRunning = true
         pendingIdle?.cancel()
         chatBubble.recordUserLine(text)
-        chatBubble.hide() // thinking is shown by the character, not text
+        chatBubble.showThinking() // animated dots bubble + the head-scratch animation
         log("user: \(text)")
         playActivityState(.thinking)
 
@@ -634,11 +635,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     @objc private func grantAccessibility() {
         _ = AccessibilityPermission.requestIfNeeded(prompt: true)
         openPrivacyPane("Privacy_Accessibility")
+        showPermissionDragPill("Drag Clippy into the Accessibility list →")
     }
 
     @objc private func grantScreenRecording() {
         _ = ScreenPerception.requestPermission()
         openPrivacyPane("Privacy_ScreenCapture")
+        showPermissionDragPill("Drag Clippy into the Screen Recording list →")
     }
 
     @objc private func grantMicrophone() {
@@ -650,6 +653,15 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    /// Float the draggable Clippy pill so the user can drag the app straight into the
+    /// privacy list that just opened in System Settings.
+    private func showPermissionDragPill(_ prompt: String) {
+        permissionDrag?.hide()
+        let controller = PermissionDragController(appURL: Bundle.main.bundleURL, prompt: prompt)
+        permissionDrag = controller
+        controller.show()
     }
 
     @objc private func selectVoice(_ sender: NSMenuItem) {

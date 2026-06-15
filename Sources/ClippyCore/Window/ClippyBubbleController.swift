@@ -137,6 +137,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     /// A passive one-line message (greeting, reply). Doesn't steal focus.
     public func showMessage(_ text: String, autoHide: TimeInterval? = nil) {
+        stopThinking()
         messageText = text
         mode = .message
         relayout()
@@ -147,6 +148,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     /// Double-click the mascot: show only the input, focused. Click-away dismisses it.
     public func openInput() {
+        stopThinking()
         cancelAutoHide()
         mode = .input
         inputTextView.string = ""
@@ -168,6 +170,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     /// Reply arrived — show just the reply.
     public func showReply(_ text: String) {
+        stopThinking()
         messageText = text
         mode = .message
         relayout()
@@ -176,9 +179,42 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     }
 
     public func hide() {
+        stopThinking()
         cancelAutoHide()
         anchorWindow?.removeChildWindow(window)
         window.orderOut(nil)
+    }
+
+    // MARK: - Thinking indicator
+
+    private var thinkingTimer: Timer?
+    private var thinkingStep = 0
+    private let thinkingFrames = ["•", "•  •", "•  •  •"]
+
+    /// Animated dots bubble while Clippy is thinking — shown alongside the
+    /// character's head-scratch animation so there's a visible "working" cue.
+    public func showThinking() {
+        cancelAutoHide()
+        thinkingStep = 0
+        renderThinkingFrame()
+        attachToAnchorWindow()
+        window.orderFrontRegardless()
+        thinkingTimer?.invalidate()
+        thinkingTimer = Timer.scheduledTimer(withTimeInterval: 0.45, repeats: true) { [weak self] _ in
+            self?.renderThinkingFrame()
+        }
+    }
+
+    private func renderThinkingFrame() {
+        messageText = thinkingFrames[thinkingStep % thinkingFrames.count]
+        mode = .message
+        relayout()
+        thinkingStep += 1
+    }
+
+    private func stopThinking() {
+        thinkingTimer?.invalidate()
+        thinkingTimer = nil
     }
 
     // MARK: - Layout (one active region; bubble grows to fit)
