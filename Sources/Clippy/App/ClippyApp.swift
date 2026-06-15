@@ -10,10 +10,25 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var pendingIdle: DispatchWorkItem?
 
     private var chatBubble: ClippyBubbleController?
+    private var overlay: AnnotationOverlayWindow?
+    private var ptt: PushToTalkMonitor?
+    private var speech: SpeechCapture?
+    private var deepgramSTT: DeepgramVoiceCapture?
+    private var deepgramTTS: DeepgramTTS?
+    private var usingDeepgram = false
+    private var sttEnabled = UserDefaults.standard.object(forKey: "ClippySTTEnabled") as? Bool ?? true
+    private var ttsEnabled = UserDefaults.standard.object(forKey: "ClippyTTSEnabled") as? Bool ?? true
     private var conversation: (any AgentBrain)?
+    private var selectedModel: ClippyModel = {
+        let id = UserDefaults.standard.string(forKey: "ClippySelectedModelID")
+        return id.flatMap(ClippyModel.by(id:)) ?? .default
+    }()
+    private var selectedVoice: ClippyVoice = {
+        let id = UserDefaults.standard.string(forKey: "ClippyVoiceID")
+        return id.flatMap(ClippyVoice.by(id:)) ?? .default
+    }()
     private var isTurnRunning = false
     private var commandTimer: Timer?
-    private var dragTrackTimer: Timer?
     private var activeActivityState: AgentActivityState = .idle
 
     static func main() {
@@ -32,10 +47,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        RetroFont.registerBundledFonts()
         startMascot(Self.makeMascot())
+        overlay = AnnotationOverlayWindow()
         setUpBrain()
+        setUpVoice()
         startCommandChannel()
-        startDragTracking()
     }
 
     // MARK: - Mascot setup
@@ -55,6 +72,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         self.chatBubble = bubble
 
         bubble.setAnchor(mascot.frame)
+        bubble.setAnchorWindow(mascot.windowController.window)
         bubble.configure { [weak self] text in
             self?.sendMessage(text)
         }
@@ -101,12 +119,102 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func setUpBrain() {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        if let localCLI = LocalCLIConversation.locateBinary() {
-            conversation = LocalCLIConversation(binaryPath: localCLI, workingDirectory: home)
-            log("shared brain ready: \(localCLI)")
-        } else {
-            log("brain disabled: local CLI not found")
+        switch selectedModel.backend {
+        case .claude:
+            if let cli = LocalCLIConversation.locateBinary() {
+                conversation = LocalCLIConversation(binaryPath: cli, workingDirectory: home, model: selectedModel.id)
+                log("brain: claude \(selectedModel.id)")
+            } else {
+                conversation = nil
+                log("brain disabled: claude CLI not found")
+            }
+        case .codex:
+            if let cli = CodexConversation.locateBinary() {
+                conversation = CodexConversation(binaryPath: cli, model: selectedModel.id, workingDirectory: home)
+                log("brain: codex \(selectedModel.id)")
+            } else {
+                conversation = nil
+                log("brain disabled: codex CLI not found")
+            }
         }
+    }
+
+    // MARK: - Voice (hold Control+Option; Deepgram Nova-3 STT + Aura-2 TTS)
+
+    private func setUpVoice() {
+        deepgramSTT = DeepgramVoiceCapture()   // nil if no Deepgram key
+        deepgramSTT?.onPartialTranscript = { [weak self] text in
+            guard let self, !self.isTurnRunning else { return }
+            if let frame = self.mascot?.frame { self.chatBubble?.setAnchor(frame) }
+            self.chatBubble?.showReply(text)
+        }
+        deepgramTTS = DeepgramTTS(voiceModel: selectedVoice.id)
+        if deepgramSTT == nil { speech = SpeechCapture() } // Apple on-device fallback
+        log("voice: deepgram STT=\(deepgramSTT != nil) TTS=\(deepgramTTS != nil)")
+
+        let monitor = PushToTalkMonitor(modifiers: [.control, .option])
+        monitor.onBegin = { [weak self] in self?.beginVoiceTurn() }
+        monitor.onEnd = { [weak self] in self?.endVoiceTurn() }
+        self.ptt = monitor
+
+        // Deepgram needs only the mic; the Apple fallback also needs Speech Recognition.
+        let needsSpeechRecognition = (deepgramSTT == nil)
+        Task { [weak self] in
+            if needsSpeechRecognition {
+                _ = await SpeechCapture.requestAuthorization()
+            } else {
+                _ = await SpeechCapture.requestMicrophone()
+            }
+            await MainActor.run { self?.ptt?.start() }
+        }
+    }
+
+    private func beginVoiceTurn() {
+        guard sttEnabled, !isTurnRunning, conversation != nil else {
+            return
+        }
+        usingDeepgram = false
+        if let deepgram = deepgramSTT {
+            do {
+                try deepgram.start()
+                usingDeepgram = true
+            } catch {
+                log("deepgram start failed: \(error)")
+            }
+        }
+        if !usingDeepgram {
+            do {
+                try speech?.start()
+            } catch {
+                log("apple stt start failed: \(error)")
+                return
+            }
+        }
+        pendingIdle?.cancel()
+        if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
+        chatBubble?.showReply("Listening…")
+        log("ptt: listening (deepgram=\(usingDeepgram))")
+    }
+
+    private func endVoiceTurn() {
+        if usingDeepgram, let deepgram = deepgramSTT {
+            deepgram.finish { [weak self] transcript in self?.handleTranscript(transcript) }
+            return
+        }
+        // Apple fallback: 400ms tail so trailing words aren't clipped, then finalize.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self, let speech = self.speech else { return }
+            self.handleTranscript(speech.stop())
+        }
+    }
+
+    private func handleTranscript(_ transcript: String) {
+        log("ptt: heard \"\(transcript)\"")
+        if transcript.isEmpty {
+            chatBubble?.hide()
+            return
+        }
+        sendMessage(transcript)
     }
 
     private func toggleChat() {
@@ -145,25 +253,96 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         log("user: \(text)")
         playActivityState(.thinking)
 
+        let brain = conversation
         Task { [weak self] in
-            let turn = await conversation.send(text)
-            await MainActor.run {
-                self?.receiveReply(turn)
+            for await chunk in brain.stream(text) {
+                await MainActor.run {
+                    switch chunk {
+                    case .partial(let partial):
+                        self?.showStreamingReply(partial)
+                    case .final(let turn):
+                        self?.receiveReply(turn)
+                    }
+                }
             }
         }
+    }
+
+    /// Live partial text while the reply streams in.
+    private func showStreamingReply(_ text: String) {
+        if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
+        chatBubble?.showReply(text)
     }
 
     private func receiveReply(_ turn: AgentTurn) {
         isTurnRunning = false
         if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
-        chatBubble?.showReply(turn.text)
+        let parsed = GroundingParser.parse(turn.text)
+        let spoken = parsed.spokenText.isEmpty ? turn.text : parsed.spokenText
+        chatBubble?.showReply(spoken)
+        if ttsEnabled, !turn.isError { deepgramTTS?.speak(spoken) }
         log("clippy: \(turn.text.prefix(120))")
+
+        if !turn.isError, !parsed.tags.isEmpty {
+            presentGrounding(parsed.tags)
+            return
+        }
+        overlay?.clear()
         playActivityState(turn.isError ? .error : .attention)
 
         let animationName = turn.isError
             ? (mascot?.theme.errorAnimationName ?? "Alert")
             : (mascot?.theme.replyAnimationName ?? "Explain")
         mascot?.play(animationName) { [weak self, weak mascot] _, state in
+            switch state {
+            case .waiting:
+                mascot?.exitCurrentAnimation()
+            case .exited:
+                self?.scheduleNextIdle()
+            }
+        }
+    }
+
+    /// Render parsed grounding directives: draw the marks, and move Clippy beside the
+    /// first anchored target so it points at it with the matching body gesture.
+    private func presentGrounding(_ tags: [GroundingTag]) {
+        guard let mascot, let screen = NSScreen.main else {
+            return
+        }
+        overlay?.show(tags.compactMap(AnnotationMark.init(tag:)), on: screen)
+
+        if let anchor = tags.first(where: { $0.anchor != nil })?.anchor {
+            // Point at a target with Clippy's body.
+            pendingIdle?.cancel()
+            let size = mascot.frame.size
+            let origin = GroundingDirector.parkOrigin(beside: anchor, mascotSize: size, in: screen.visibleFrame)
+            mascot.move(to: origin, animated: true)
+            let center = CGPoint(x: origin.x + size.width / 2, y: origin.y + size.height / 2)
+            playOnce(GroundingDirector.gesture(from: center, to: anchor).rawValue)
+            chatBubble?.setAnchor(mascot.frame)
+        } else if let animation = firstActAnimation(in: tags) {
+            // Emote: Clippy performs the animation it asked for, in place.
+            pendingIdle?.cancel()
+            if playOnce(animation) == false {
+                log("unknown animation requested: \(animation)")
+                scheduleNextIdle()
+            }
+        }
+    }
+
+    private func firstActAnimation(in tags: [GroundingTag]) -> String? {
+        for tag in tags {
+            if case let .act(animation) = tag { return animation }
+        }
+        return nil
+    }
+
+    /// Plays `name` once, holding-then-exiting branched animations and returning to
+    /// idle when it ends. Returns false if `name` isn't in the character pack.
+    @discardableResult
+    private func playOnce(_ name: String) -> Bool {
+        guard let mascot else { return false }
+        return mascot.play(name) { [weak self, weak mascot] _, state in
             switch state {
             case .waiting:
                 mascot?.exitCurrentAnimation()
@@ -219,19 +398,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Keep the chat window glued to the mascot when dragged
-
-    private func startDragTracking() {
-        dragTrackTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            DispatchQueue.main.async {
-                guard let self, let frame = self.mascot?.frame else {
-                    return
-                }
-                self.chatBubble?.setAnchor(frame)
-            }
-        }
-    }
-
     // MARK: - Context menu (right-click on the character)
 
     private func makeContextMenu() -> NSMenu {
@@ -253,6 +419,57 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         mute.target = self
         mute.state = (mascot?.isMuted ?? false) ? .on : .off
         menu.addItem(mute)
+
+        let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
+        let modelMenu = NSMenu()
+        for model in ClippyModel.all {
+            let item = NSMenuItem(title: model.displayName, action: #selector(selectModel(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = model.id
+            item.state = (model.id == selectedModel.id) ? .on : .off
+            modelMenu.addItem(item)
+        }
+        modelItem.submenu = modelMenu
+        menu.addItem(modelItem)
+
+        let sttItem = NSMenuItem(title: "Voice input (hold ⌃⌥)", action: #selector(toggleSTT), keyEquivalent: "")
+        sttItem.target = self
+        sttItem.state = sttEnabled ? .on : .off
+        menu.addItem(sttItem)
+
+        let ttsItem = NSMenuItem(title: "Speak replies", action: #selector(toggleTTS), keyEquivalent: "")
+        ttsItem.target = self
+        ttsItem.state = ttsEnabled ? .on : .off
+        menu.addItem(ttsItem)
+
+        let voiceItem = NSMenuItem(title: "Voice", action: nil, keyEquivalent: "")
+        let voiceMenu = NSMenu()
+        for voice in ClippyVoice.all {
+            let item = NSMenuItem(title: voice.displayName, action: #selector(selectVoice(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = voice.id
+            item.state = (voice.id == selectedVoice.id) ? .on : .off
+            voiceMenu.addItem(item)
+        }
+        voiceItem.submenu = voiceMenu
+        menu.addItem(voiceItem)
+
+        let permItem = NSMenuItem(title: "Permissions", action: nil, keyEquivalent: "")
+        let permMenu = NSMenu()
+        let axItem = NSMenuItem(title: "Accessibility — voice hotkey + control", action: #selector(grantAccessibility), keyEquivalent: "")
+        axItem.target = self
+        axItem.state = AccessibilityPermission.isTrusted ? .on : .off
+        permMenu.addItem(axItem)
+        let screenItem = NSMenuItem(title: "Screen Recording — see the screen", action: #selector(grantScreenRecording), keyEquivalent: "")
+        screenItem.target = self
+        screenItem.state = ScreenPerception.hasPermission ? .on : .off
+        permMenu.addItem(screenItem)
+        let micItem = NSMenuItem(title: "Microphone — talk to Clippy", action: #selector(grantMicrophone), keyEquivalent: "")
+        micItem.target = self
+        micItem.state = MicrophonePermission.isGranted ? .on : .off
+        permMenu.addItem(micItem)
+        permItem.submenu = permMenu
+        menu.addItem(permItem)
 
         menu.addItem(.separator())
 
@@ -287,6 +504,61 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         mascot?.isMuted.toggle()
     }
 
+    @objc private func toggleSTT() {
+        sttEnabled.toggle()
+        UserDefaults.standard.set(sttEnabled, forKey: "ClippySTTEnabled")
+    }
+
+    @objc private func toggleTTS() {
+        ttsEnabled.toggle()
+        UserDefaults.standard.set(ttsEnabled, forKey: "ClippyTTSEnabled")
+        if !ttsEnabled { deepgramTTS?.stop() }
+    }
+
+    @objc private func grantAccessibility() {
+        _ = AccessibilityPermission.requestIfNeeded(prompt: true)
+        openPrivacyPane("Privacy_Accessibility")
+    }
+
+    @objc private func grantScreenRecording() {
+        _ = ScreenPerception.requestPermission()
+        openPrivacyPane("Privacy_ScreenCapture")
+    }
+
+    @objc private func grantMicrophone() {
+        Task { _ = await SpeechCapture.requestMicrophone() }
+        openPrivacyPane("Privacy_Microphone")
+    }
+
+    private func openPrivacyPane(_ anchor: String) {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    @objc private func selectVoice(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, let voice = ClippyVoice.by(id: id) else {
+            return
+        }
+        selectedVoice = voice
+        UserDefaults.standard.set(id, forKey: "ClippyVoiceID")
+        deepgramTTS?.voiceModel = id
+        log("voice: \(id)")
+        deepgramTTS?.speak("It looks like you changed my voice. How's this?")
+    }
+
+    @objc private func selectModel(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String, let model = ClippyModel.by(id: id) else {
+            return
+        }
+        selectedModel = model
+        UserDefaults.standard.set(id, forKey: "ClippySelectedModelID")
+        setUpBrain()
+        log("model selected: \(id)")
+        if let frame = mascot?.frame { chatBubble?.setAnchor(frame) }
+        chatBubble?.showReply("Switched to \(model.displayName).")
+    }
+
     @objc private func quitClippy() {
         NSApp.terminate(nil)
     }
@@ -312,15 +584,23 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     /// With CLIPPY_CMD_FILE set, polls a command file so the app can be driven
     /// headlessly: `ask:<text>`, `open`, `snapshot`, `move:`, `park:`, `state:`.
     private func startCommandChannel() {
-        guard let path = ProcessInfo.processInfo.environment["CLIPPY_CMD_FILE"] else {
-            return
-        }
+        // Always on: the local MCP server (ClippyMCP) relays the model's tool calls
+        // into this file, and debug commands use it too. Env var overrides the path.
+        let path = ProcessInfo.processInfo.environment["CLIPPY_CMD_FILE"] ?? Self.defaultCommandFilePath()
         FileManager.default.createFile(atPath: path, contents: Data())
         commandTimer = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { [weak self] _ in
             DispatchQueue.main.async {
                 self?.drainCommands(at: path)
             }
         }
+    }
+
+    private static func defaultCommandFilePath() -> String {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        let directory = base.appendingPathComponent("Clippy", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        return directory.appendingPathComponent("cmd.txt").path
     }
 
     private func drainCommands(at path: String) {
@@ -348,6 +628,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 parkMascot(command: String(command.dropFirst(5)))
             } else if command.hasPrefix("state:") {
                 applyStateCommand(String(command.dropFirst(6)))
+            } else if command.hasPrefix("ground:") {
+                let parsed = GroundingParser.parse(String(command.dropFirst(7)))
+                chatBubble?.showReply(parsed.spokenText.isEmpty ? "(pointing)" : parsed.spokenText)
+                presentGrounding(parsed.tags)
+            } else if command == "clearground" {
+                overlay?.clear()
+            } else if command.hasPrefix("act:") {
+                presentGrounding([.act(animation: String(command.dropFirst(4)).trimmingCharacters(in: .whitespaces))])
             }
         }
     }

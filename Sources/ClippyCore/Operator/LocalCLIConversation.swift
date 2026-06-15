@@ -10,6 +10,9 @@ public actor LocalCLIConversation: AgentBrain {
     private let allowedTools: [String]
     private let permissionMode: String
     private let workingDirectory: String?
+    private let systemPrompt: String?
+    private let model: String?
+    private let effort: String?
     private let sessionID = UUID().uuidString.uppercased()
     private var hasStarted = false
 
@@ -17,12 +20,18 @@ public actor LocalCLIConversation: AgentBrain {
         binaryPath: String,
         allowedTools: [String] = ["Bash", "Read", "Edit", "Write", "Glob", "Grep", "WebSearch", "WebFetch"],
         permissionMode: String = "acceptEdits",
-        workingDirectory: String? = nil
+        workingDirectory: String? = nil,
+        systemPrompt: String? = ClippyAgentInstructions.systemPrompt,
+        model: String? = ClippyModel.default.id,
+        effort: String? = "low"
     ) {
         self.binaryPath = binaryPath
         self.allowedTools = allowedTools
         self.permissionMode = permissionMode
         self.workingDirectory = workingDirectory
+        self.systemPrompt = systemPrompt
+        self.model = model
+        self.effort = effort
     }
 
     /// Best-effort discovery of the local CLI binary.
@@ -49,14 +58,46 @@ public actor LocalCLIConversation: AgentBrain {
         return (path?.isEmpty == false) ? path : nil
     }
 
+    /// Path to the bundled ClippyMCP server (sits next to the Clippy executable in both
+    /// the .app bundle and the dev build). Nil if not present.
+    static func clippyMCPBinaryPath() -> String? {
+        guard let executable = Bundle.main.executableURL else { return nil }
+        let candidate = executable.deletingLastPathComponent().appendingPathComponent("ClippyMCP")
+        return FileManager.default.isExecutableFile(atPath: candidate.path) ? candidate.path : nil
+    }
+
+    /// `--mcp-config` + `--allowedTools` args that give the model Clippy's real MCP tools
+    /// (clippy_act / clippy_point / clippy_highlight) when the server binary is present.
+    private func toolAndMCPArguments() -> [String] {
+        var result: [String] = []
+        var tools = allowedTools
+        if let path = Self.clippyMCPBinaryPath(),
+           let data = try? JSONSerialization.data(withJSONObject: ["mcpServers": ["clippy": ["command": path]]]),
+           let json = String(data: data, encoding: .utf8) {
+            result.append(contentsOf: ["--mcp-config", json])
+            tools.append(contentsOf: ["mcp__clippy__clippy_act", "mcp__clippy__clippy_point", "mcp__clippy__clippy_highlight"])
+        }
+        if !tools.isEmpty {
+            result.append(contentsOf: ["--allowedTools", tools.joined(separator: ",")])
+        }
+        return result
+    }
+
     public func send(_ message: String) async -> Turn {
         var arguments = [
             "-p", message,
             "--output-format", "json",
             "--permission-mode", permissionMode,
         ]
-        if !allowedTools.isEmpty {
-            arguments.append(contentsOf: ["--allowedTools", allowedTools.joined(separator: ",")])
+        arguments.append(contentsOf: toolAndMCPArguments())
+        if let systemPrompt, !systemPrompt.isEmpty {
+            arguments.append(contentsOf: ["--append-system-prompt", systemPrompt])
+        }
+        if let model, !model.isEmpty {
+            arguments.append(contentsOf: ["--model", model])
+        }
+        if let effort, !effort.isEmpty {
+            arguments.append(contentsOf: ["--effort", effort])
         }
         if hasStarted {
             arguments.append(contentsOf: ["--resume", sessionID])
@@ -101,5 +142,101 @@ public actor LocalCLIConversation: AgentBrain {
         let isError = (json["is_error"] as? Bool) ?? false
         let cost = json["total_cost_usd"] as? Double
         return Turn(text: result, isError: isError, costUSD: cost)
+    }
+
+    // MARK: - Streaming (stream-json + partial text deltas)
+
+    public nonisolated func stream(_ message: String) -> AsyncStream<AgentStreamChunk> {
+        AsyncStream { continuation in
+            Task { await self.runStreaming(message, continuation: continuation) }
+        }
+    }
+
+    private func runStreaming(_ message: String, continuation: AsyncStream<AgentStreamChunk>.Continuation) async {
+        var arguments = [
+            "-p", message,
+            "--output-format", "stream-json",
+            "--include-partial-messages",
+            "--verbose",
+            "--permission-mode", permissionMode,
+        ]
+        arguments.append(contentsOf: toolAndMCPArguments())
+        if let systemPrompt, !systemPrompt.isEmpty {
+            arguments.append(contentsOf: ["--append-system-prompt", systemPrompt])
+        }
+        if let model, !model.isEmpty {
+            arguments.append(contentsOf: ["--model", model])
+        }
+        if let effort, !effort.isEmpty {
+            arguments.append(contentsOf: ["--effort", effort])
+        }
+        if hasStarted {
+            arguments.append(contentsOf: ["--resume", sessionID])
+        } else {
+            arguments.append(contentsOf: ["--session-id", sessionID])
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binaryPath)
+        process.arguments = arguments
+        if let workingDirectory {
+            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+        }
+        var environment = ProcessInfo.processInfo.environment
+        environment["CLAUDE_CODE_ENTRYPOINT"] = "clippy"
+        process.environment = environment
+
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+
+        do {
+            try process.run()
+        } catch {
+            continuation.yield(.final(Turn(text: "I couldn't reach my local brain: \(error.localizedDescription)", isError: true)))
+            continuation.finish()
+            return
+        }
+        hasStarted = true
+
+        var accumulated = ""
+        var resultText: String?
+        var isError = false
+        var cost: Double?
+
+        do {
+            for try await line in outPipe.fileHandleForReading.bytes.lines {
+                guard let data = line.data(using: .utf8),
+                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let type = object["type"] as? String else { continue }
+                if type == "stream_event",
+                   let event = object["event"] as? [String: Any],
+                   (event["type"] as? String) == "content_block_delta",
+                   let delta = event["delta"] as? [String: Any],
+                   (delta["type"] as? String) == "text_delta",
+                   let text = delta["text"] as? String {
+                    accumulated += text
+                    continuation.yield(.partial(accumulated))
+                } else if type == "result" {
+                    resultText = object["result"] as? String
+                    isError = (object["is_error"] as? Bool) ?? false
+                    cost = object["total_cost_usd"] as? Double
+                }
+            }
+        } catch {
+            // Stream read failed — fall through with whatever we accumulated.
+        }
+        _ = try? errPipe.fileHandleForReading.readToEnd()
+        process.waitUntilExit()
+
+        let finalText = (resultText?.isEmpty == false ? resultText! : accumulated)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if finalText.isEmpty {
+            continuation.yield(.final(Turn(text: "My local brain returned nothing.", isError: true)))
+        } else {
+            continuation.yield(.final(Turn(text: finalText, isError: isError, costUSD: cost)))
+        }
+        continuation.finish()
     }
 }

@@ -13,8 +13,29 @@ public struct AgentTurn: Sendable {
     }
 }
 
+/// One streamed chunk from a brain turn.
+public enum AgentStreamChunk: Sendable {
+    case partial(String)
+    case final(AgentTurn)
+}
+
 /// A local conversation brain the app can chat through. Mascot selection is a
 /// shell/theme choice; it must not fork the chat backend or conversation.
 public protocol AgentBrain: Actor {
     func send(_ message: String) async -> AgentTurn
+    /// Streams the reply as it is generated. The default yields just the final
+    /// `send` result; LocalCLIConversation overrides it with real token streaming.
+    nonisolated func stream(_ message: String) -> AsyncStream<AgentStreamChunk>
+}
+
+public extension AgentBrain {
+    nonisolated func stream(_ message: String) -> AsyncStream<AgentStreamChunk> {
+        AsyncStream { continuation in
+            Task {
+                let turn = await self.send(message)
+                continuation.yield(.final(turn))
+                continuation.finish()
+            }
+        }
+    }
 }

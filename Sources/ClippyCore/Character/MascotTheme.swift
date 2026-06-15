@@ -45,8 +45,8 @@ public struct MascotBalloonTheme {
         pad: CGFloat = 11,
         minInputHeight: CGFloat = 22,
         maxInputHeight: CGFloat = 112,
-        regularFontName: String = "Microsoft Sans Serif",
-        boldFontName: String = "Microsoft Sans Serif Bold"
+        regularFontName: String = "MS Sans Serif",
+        boldFontName: String = "MS Sans Serif Bold"
     ) {
         self.fillColor = fillColor
         self.strokeColor = strokeColor
@@ -132,7 +132,7 @@ public struct MascotTheme {
         errorAnimationName: "Alert",
         fallbackGestureAnimationName: "Wave",
         activityAnimations: [
-            .thinking: MascotAnimationBinding(animationName: "Thinking", repeatsUntilStateChange: true),
+            .thinking: MascotAnimationBinding(animationName: "IdleHeadScratch", repeatsUntilStateChange: true),
             .working: MascotAnimationBinding(animationName: "Processing", repeatsUntilStateChange: true),
             .juggling: MascotAnimationBinding(animationName: "GetArtsy", repeatsUntilStateChange: true),
             .notification: MascotAnimationBinding(animationName: "Alert"),

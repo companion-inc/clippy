@@ -47,6 +47,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private var messageText = ""
     private var onSend: ((String) -> Void)?
     private var anchorFrame: CGRect = .zero
+    private weak var anchorWindow: NSWindow?
     private var autoHideTimer: Timer?
 
     public init(theme: MascotTheme = .clippy) {
@@ -117,6 +118,17 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         if window.isVisible { positionWindow() }
     }
 
+    /// Glue the bubble to the mascot window so they move together as one unit and
+    /// stay on the same Space/display (instead of the bubble following the active screen).
+    public func setAnchorWindow(_ window: NSWindow?) {
+        anchorWindow = window
+    }
+
+    private func attachToAnchorWindow() {
+        guard let anchorWindow, window.parent !== anchorWindow else { return }
+        anchorWindow.addChildWindow(window, ordered: .above)
+    }
+
     public func configure(onSend: @escaping (String) -> Void) {
         self.onSend = onSend
     }
@@ -128,6 +140,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         messageText = text
         mode = .message
         relayout()
+        attachToAnchorWindow()
         window.orderFrontRegardless()
         scheduleAutoHide(autoHide)
     }
@@ -138,6 +151,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         mode = .input
         inputTextView.string = ""
         relayout()
+        attachToAnchorWindow()
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(inputTextView)
@@ -157,11 +171,13 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         messageText = text
         mode = .message
         relayout()
+        attachToAnchorWindow()
         window.orderFrontRegardless()
     }
 
     public func hide() {
         cancelAutoHide()
+        anchorWindow?.removeChildWindow(window)
         window.orderOut(nil)
     }
 
@@ -219,7 +235,9 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         let size = window.frame.size
         var x = anchorFrame.midX - size.width / 2
         var y = anchorFrame.maxY + 4
-        if let visible = NSScreen.main?.visibleFrame {
+        let anchorCenter = CGPoint(x: anchorFrame.midX, y: anchorFrame.midY)
+        let screen = NSScreen.screens.first { $0.frame.contains(anchorCenter) } ?? NSScreen.main
+        if let visible = screen?.visibleFrame {
             x = min(max(x, visible.minX + 8), visible.maxX - size.width - 8)
             if y + size.height > visible.maxY { y = visible.maxY - size.height - 8 }
             y = max(y, visible.minY + 8)

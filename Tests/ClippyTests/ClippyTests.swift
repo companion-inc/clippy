@@ -89,7 +89,7 @@ import Testing
     #expect(theme.replyAnimationName == "Explain")
 
     let thinking = try #require(theme.animation(for: .thinking))
-    #expect(thinking.animationName == "Thinking")
+    #expect(thinking.animationName == "IdleHeadScratch")
     #expect(thinking.repeatsUntilStateChange)
 
     let notification = try #require(theme.animation(for: .notification))
