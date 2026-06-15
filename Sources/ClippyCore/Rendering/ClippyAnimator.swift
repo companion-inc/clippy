@@ -49,6 +49,7 @@ public final class ClippyAnimator {
         guard let animation = sheet.pack.animations[animationName] else {
             return false
         }
+        sheet.preloadTextures(for: [animationName])
         isExiting = false
         currentAnimation = animation
         currentAnimationName = animationName

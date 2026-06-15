@@ -508,6 +508,51 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(texture.size().height > 0)
 }
 
+@Test func clippySpriteSheetFramesReuseCachedTextures() throws {
+    let root = clippyResourceRoot()
+    let sheet = try ClippySpriteSheet(packRoot: root)
+    let animation = try #require(sheet.pack.animations["RestPose"])
+    let frame = try #require(animation.frames.first)
+    let cached = try #require(sheet.texture(for: frame))
+    let frames = try #require(sheet.frames(for: "RestPose"))
+    let first = try #require(frames.textures.first)
+
+    #expect(first === cached)
+}
+
+@Test func clippySpriteSheetPreloadsAnimationTexturesThroughTheCache() throws {
+    let root = clippyResourceRoot()
+    let sheet = try ClippySpriteSheet(packRoot: root)
+    let count = sheet.preloadTextures(for: ["Processing", "RestPose"])
+    let animation = try #require(sheet.pack.animations["Processing"])
+    let frame = try #require(animation.frames.first)
+    let cached = try #require(sheet.texture(for: frame))
+    let frames = try #require(sheet.frames(for: "Processing"))
+    let first = try #require(frames.textures.first)
+
+    #expect(count > 1)
+    #expect(first === cached)
+}
+
+@Test @MainActor func globalHotkeyMatchesOnlyExactToggleChord() {
+    #expect(GlobalHotkeyMonitor.matches(
+        keyCode: GlobalHotkeyMonitor.toggleVisibilityKeyCode,
+        modifierFlags: [.control, .option, .command]
+    ))
+    #expect(GlobalHotkeyMonitor.matches(
+        keyCode: GlobalHotkeyMonitor.toggleVisibilityKeyCode,
+        modifierFlags: [.control, .option]
+    ) == false)
+    #expect(GlobalHotkeyMonitor.matches(
+        keyCode: GlobalHotkeyMonitor.toggleVisibilityKeyCode,
+        modifierFlags: [.control, .option, .command, .shift]
+    ) == false)
+    #expect(GlobalHotkeyMonitor.matches(
+        keyCode: 9,
+        modifierFlags: [.control, .option, .command]
+    ) == false)
+}
+
 @Test @MainActor func clippyAnimatorStopsAfterOneShotAnimationExits() throws {
     let root = clippyResourceRoot()
     let sheet = try ClippySpriteSheet(packRoot: root)

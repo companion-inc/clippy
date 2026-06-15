@@ -13,6 +13,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var overlay: AnnotationOverlayWindow?
     private var permissionDrag: PermissionDragController?
     private var ptt: PushToTalkMonitor?
+    private var visibilityHotkey: GlobalHotkeyMonitor?
     private var speech: SpeechCapture?
     private var deepgramSTT: DeepgramVoiceCapture?
     private var deepgramTTS: DeepgramTTS?
@@ -42,6 +43,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var ttsSpokenChars = 0   // how much of the streaming reply has been queued to TTS
     private var commandTimer: Timer?
     private var activeActivityState: AgentActivityState = .idle
+    private var isClippyHidden = false
 
     static func main() {
         let app = NSApplication.shared
@@ -64,6 +66,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         overlay = AnnotationOverlayWindow()
         setUpBrain()
         setUpVoice()
+        setUpVisibilityHotkey()
         startCommandChannel()
     }
 
@@ -116,7 +119,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func playRandomIdle() {
-        guard let clippy, !isTurnRunning else {
+        guard let clippy, !isTurnRunning, isClippyHidden == false else {
             return
         }
         let name = clippy.idleAnimationNames.randomElement() ?? "RestPose"
@@ -159,7 +162,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func setUpVoice() {
         deepgramSTT = DeepgramVoiceCapture()   // nil if no Deepgram key
         deepgramSTT?.onPartialTranscript = { [weak self] text in
-            guard let self, !self.isTurnRunning else { return }
+            guard let self, !self.isTurnRunning, self.isClippyHidden == false else { return }
             if let frame = self.clippy?.frame { self.chatBubble?.setAnchor(frame) }
             self.chatBubble?.showStatus(text)
         }
@@ -185,7 +188,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func beginVoiceTurn() {
-        guard sttEnabled, conversation != nil else {
+        guard sttEnabled, conversation != nil, isClippyHidden == false else {
             return
         }
         // Barge-in (the Clippy behavior): starting to talk interrupts whatever
@@ -209,8 +212,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             }
         }
         pendingIdle?.cancel()
-        if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
-        chatBubble?.showStatus("Listening…")
+        if isClippyHidden == false {
+            if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
+            chatBubble?.showStatus("Listening...")
+        }
         log("ptt: listening (deepgram=\(usingDeepgram))")
     }
 
@@ -239,6 +244,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         guard let clippy, let chatBubble else {
             return
         }
+        if isClippyHidden {
+            showClippy()
+        }
         chatBubble.setAnchor(clippy.frame)
         if chatBubble.isInputMode {
             chatBubble.hide()
@@ -257,13 +265,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             return
         }
         guard !isTurnRunning else {
-            syncBubbleAnchorToClippy()
-            chatBubble.showReplyForReading("(One sec — still working on your last message.)")
+            if isClippyHidden == false {
+                syncBubbleAnchorToClippy()
+                chatBubble.showReplyForReading("(One sec - still working on your last message.)")
+            }
             return
         }
         guard let conversation else {
-            syncBubbleAnchorToClippy()
-            chatBubble.showReplyForReading("(My local brain isn't installed.)")
+            if isClippyHidden == false {
+                syncBubbleAnchorToClippy()
+                chatBubble.showReplyForReading("(My local brain isn't installed.)")
+            }
             return
         }
         isTurnRunning = true
@@ -286,9 +298,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         } else {
             log("screen-capture: skipped")
         }
-        syncBubbleAnchorToClippy()
-        chatBubble.recordUserLine(text)
-        chatBubble.showThinking(shot == nil ? "Starting the brain" : "Sending the screen")
+        if isClippyHidden == false {
+            syncBubbleAnchorToClippy()
+            chatBubble.recordUserLine(text)
+            chatBubble.showThinking(shot == nil ? "Starting the brain" : "Sending the screen")
+        }
         scheduleTurnProgressUpdates(wantsScreen: wantsScreen, attachedScreenshot: shot != nil)
         playActivityState(.thinking)
         // Tell the brain how this turn arrives and leaves: spoken-and-transcribed input
@@ -338,7 +352,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func showTurnProgress(_ status: String) {
-        guard isTurnRunning, !turnHasStreamingText else { return }
+        guard isTurnRunning, !turnHasStreamingText, isClippyHidden == false else { return }
         syncBubbleAnchorToClippy()
         chatBubble?.updateThinking(status)
     }
@@ -432,6 +446,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     /// Live partial text while the reply streams in. Tags (even half-typed) are
     /// stripped before display so a bracket never flashes in the bubble.
     private func showStreamingReply(_ text: String) {
+        guard isClippyHidden == false else { return }
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
         let display = GroundingParser.stripForStreaming(text)
         if !display.isEmpty {
@@ -446,6 +461,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         currentBrainTask = nil
         turnHasStreamingText = false
         isTurnRunning = false
+        if isClippyHidden {
+            log("clippy: \(turn.text.prefix(120))")
+            return
+        }
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
         let parsed = GroundingParser.parse(turn.text)
         // Errors show their message as-is; otherwise show only the stripped speech.
@@ -484,6 +503,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     /// Render parsed grounding directives: draw the marks, and move Clippy beside the
     /// first anchored target so it points at it with the matching body gesture.
     private func presentGrounding(_ rawTags: [GroundingTag]) {
+        guard isClippyHidden == false else {
+            return
+        }
         guard let clippy else {
             return
         }
@@ -580,6 +602,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func playActivityState(_ state: AgentActivityState) {
         activeActivityState = state
         pendingIdle?.cancel()
+        guard isClippyHidden == false else {
+            return
+        }
         guard state != .idle else {
             scheduleNextIdle()
             return
@@ -592,6 +617,56 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             playLooping(binding.animationName, while: state)
         } else {
             playTransient(binding.animationName)
+        }
+    }
+
+    // MARK: - Visibility shortcut
+
+    private func setUpVisibilityHotkey() {
+        let monitor = GlobalHotkeyMonitor()
+        monitor.onPress = { [weak self] in
+            self?.toggleClippyVisibility()
+        }
+        monitor.start()
+        visibilityHotkey = monitor
+        log("visibility hotkey: \(GlobalHotkeyMonitor.toggleVisibilityLabel)")
+    }
+
+    @objc private func toggleClippyVisibility() {
+        if isClippyHidden {
+            showClippy()
+        } else {
+            hideClippy()
+        }
+    }
+
+    private func hideClippy() {
+        guard isClippyHidden == false else { return }
+        isClippyHidden = true
+        pendingIdle?.cancel()
+        chatBubble?.hide()
+        overlay?.clear()
+        permissionDrag?.hide()
+        deepgramSTT?.cancel()
+        usingDeepgram = false
+        _ = speech?.stop()
+        deepgramTTS?.stop()
+        clippy?.windowController.hide()
+        log("clippy hidden")
+    }
+
+    private func showClippy() {
+        guard isClippyHidden else { return }
+        isClippyHidden = false
+        clippy?.show()
+        if let frame = clippy?.frame {
+            chatBubble?.setAnchor(frame)
+        }
+        log("clippy shown")
+        if isTurnRunning {
+            playActivityState(activeActivityState)
+        } else {
+            scheduleNextIdle()
         }
     }
 
@@ -646,6 +721,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let animate = NSMenuItem(title: "Animate!", action: #selector(animateNow), keyEquivalent: "")
         animate.target = self
         menu.addItem(animate)
+
+        let hide = NSMenuItem(
+            title: "Hide Clippy (\(GlobalHotkeyMonitor.toggleVisibilityLabel))",
+            action: #selector(toggleClippyVisibility),
+            keyEquivalent: ""
+        )
+        hide.target = self
+        menu.addItem(hide)
 
         let mute = NSMenuItem(title: "Mute Sounds", action: #selector(toggleMute), keyEquivalent: "")
         mute.target = self
@@ -786,6 +869,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(id, forKey: "ClippyVoiceID")
         deepgramTTS?.voiceModel = id
         log("voice: \(id)")
+        guard isClippyHidden == false else { return }
         deepgramTTS?.speak("It looks like you changed my voice. How's this?")
     }
 
@@ -797,6 +881,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(id, forKey: "ClippySelectedModelID")
         setUpBrain()
         log("model selected: \(id)")
+        guard isClippyHidden == false else { return }
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
         chatBubble?.showReplyForReading("Switched to \(model.displayName).")
     }
@@ -859,6 +944,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             if command.hasPrefix("ask:") {
                 sendMessage(String(command.dropFirst(4)))
             } else if command == "open" {
+                if isClippyHidden {
+                    showClippy()
+                }
                 if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
                 chatBubble?.openInput()
             } else if command == "snapshot" {
@@ -868,12 +956,18 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 moveClippy(command: String(command.dropFirst(5)))
             } else if command.hasPrefix("park:") {
                 parkClippy(command: String(command.dropFirst(5)))
+            } else if command == "hide" {
+                hideClippy()
+            } else if command == "show" {
+                showClippy()
             } else if command.hasPrefix("state:") {
                 applyStateCommand(String(command.dropFirst(6)))
             } else if command.hasPrefix("ground:") {
                 let parsed = GroundingParser.parse(String(command.dropFirst(7)))
-                chatBubble?.showReplyForReading(parsed.spokenText.isEmpty ? "(pointing)" : parsed.spokenText)
-                presentGrounding(parsed.tags)
+                if isClippyHidden == false {
+                    chatBubble?.showReplyForReading(parsed.spokenText.isEmpty ? "(pointing)" : parsed.spokenText)
+                    presentGrounding(parsed.tags)
+                }
             } else if command == "clearground" {
                 overlay?.clear()
             } else if command.hasPrefix("act:") {

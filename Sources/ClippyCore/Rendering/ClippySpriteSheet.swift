@@ -31,10 +31,9 @@ public final class ClippySpriteSheet {
     /// Returns the composited, chroma-keyed texture for a single frame,
     /// cached by the frame's layer coordinates.
     public func texture(for frame: RasterFrame) -> SKTexture? {
-        guard let layers = frame.images, !layers.isEmpty else {
+        guard let key = cacheKey(for: frame), let layers = frame.images else {
             return nil
         }
-        let key = layers.flatMap { $0 }.map(String.init).joined(separator: ",")
         if let cached = frameTextureCache[key] {
             return cached
         }
@@ -46,6 +45,28 @@ public final class ClippySpriteSheet {
         return texture
     }
 
+    @discardableResult
+    public func preloadTextures(for animationNames: [String]) -> Int {
+        var seen: Set<String> = []
+        var textures: [SKTexture] = []
+        for animationName in animationNames.sorted() {
+            guard let animation = pack.animations[animationName] else {
+                continue
+            }
+            for frame in animation.frames {
+                guard let key = cacheKey(for: frame), seen.insert(key).inserted, let texture = texture(for: frame) else {
+                    continue
+                }
+                texture.filteringMode = .nearest
+                textures.append(texture)
+            }
+        }
+        if !textures.isEmpty {
+            SKTexture.preload(textures) {}
+        }
+        return textures.count
+    }
+
     public func frames(for animationName: String) -> (textures: [SKTexture], durations: [TimeInterval])? {
         guard let animation = pack.animations[animationName] else {
             return nil
@@ -53,16 +74,23 @@ public final class ClippySpriteSheet {
         var textures: [SKTexture] = []
         var durations: [TimeInterval] = []
         for frame in animation.frames {
-            guard let layers = frame.images, !layers.isEmpty, let composited = composite(layers) else {
+            guard let texture = texture(for: frame) else {
                 continue
             }
-            textures.append(SKTexture(cgImage: composited))
+            textures.append(texture)
             durations.append(TimeInterval(frame.duration) / 1000)
         }
         guard !textures.isEmpty else {
             return nil
         }
         return (textures, durations)
+    }
+
+    private func cacheKey(for frame: RasterFrame) -> String? {
+        guard let layers = frame.images, !layers.isEmpty else {
+            return nil
+        }
+        return layers.flatMap { $0 }.map(String.init).joined(separator: ",")
     }
 
     private func composite(_ layers: [[Int]]) -> CGImage? {

@@ -7,7 +7,7 @@ import Foundation
 public final class ClippySoundBank {
     public var isMuted = false
 
-    private var players: [String: AVAudioPlayer] = [:]
+    private var players: [String: QueuedSoundPlayer] = [:]
 
     public var loadedSoundCount: Int {
         players.count
@@ -23,7 +23,11 @@ public final class ClippySoundBank {
             else {
                 continue
             }
-            players[id] = try? AVAudioPlayer(data: mp3)
+            guard let player = try? AVAudioPlayer(data: mp3) else {
+                continue
+            }
+            player.prepareToPlay()
+            players[id] = QueuedSoundPlayer(player: player, label: "ai.companion.clippy.sound-effects.\(id)")
         }
     }
 
@@ -33,7 +37,26 @@ public final class ClippySoundBank {
         guard !isMuted, let player = players[id] else {
             return
         }
-        player.currentTime = 0
         player.play()
+    }
+}
+
+// AVAudioPlayer is not Sendable; this wrapper confines every player mutation
+// and play call to one private serial queue.
+private final class QueuedSoundPlayer: @unchecked Sendable {
+    private let player: AVAudioPlayer
+    private let queue: DispatchQueue
+
+    init(player: AVAudioPlayer, label: String) {
+        self.player = player
+        self.queue = DispatchQueue(label: label)
+    }
+
+    func play() {
+        queue.async {
+            self.player.currentTime = 0
+            self.player.prepareToPlay()
+            self.player.play()
+        }
     }
 }

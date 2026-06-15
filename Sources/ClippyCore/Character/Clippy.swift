@@ -23,19 +23,22 @@ public final class Clippy {
     public let animator: ClippyAnimator
     public let soundBank: ClippySoundBank?
 
-    public let idleAnimationNames = [
+    private static let idleAnimationNamesList = [
         "Idle1_1", "IdleAtom", "IdleEyeBrowRaise", "IdleFingerTap",
         "IdleHeadScratch", "IdleRopePile", "IdleSideToSide", "IdleSnooze",
         "LookLeft", "LookRight",
     ]
-    public let gestureAnimationNames = [
+    private static let gestureAnimationNamesList = [
         "Congratulate", "GetAttention", "Wave", "Print", "Save", "GetArtsy",
         "GetTechy", "GetWizardy", "Explain", "Alert", "CheckingSomething",
         "EmptyTrash", "SendMail", "Writing", "Processing",
     ]
+    public let idleAnimationNames = Clippy.idleAnimationNamesList
+    public let gestureAnimationNames = Clippy.gestureAnimationNamesList
 
     public init(packRoot: URL, scale: CGFloat = 2) throws {
         let sheet = try ClippySpriteSheet(packRoot: packRoot)
+        sheet.preloadTextures(for: Self.preloadedAnimationNames)
         let size = CGSize(width: sheet.frameSize.width * scale, height: sheet.frameSize.height * scale)
         let renderer = SpriteKitRasterCharacterRenderer(size: size)
         let animator = ClippyAnimator(sheet: sheet, renderer: renderer)
@@ -48,6 +51,26 @@ public final class Clippy {
         self.windowController = ClippyWindowController(rendererView: renderer.view, size: size) { point in
             CGRect(origin: .zero, size: size).contains(point)
         }
+    }
+
+    private static var preloadedAnimationNames: [String] {
+        let spec = ClippySpec.current
+        let stateAnimations = AgentActivityState.allCases.compactMap { spec.animation(for: $0)?.animationName }
+        return Array(Set(
+            stateAnimations
+            + [
+                "RestPose",
+                "GestureLeft",
+                "GestureRight",
+                "GestureUp",
+                "GestureDown",
+                spec.greetingAnimationName,
+                spec.openInputAnimationName,
+                spec.replyAnimationName,
+                spec.errorAnimationName,
+                spec.fallbackGestureAnimationName,
+            ]
+        ))
     }
 
     public var frame: CGRect {
