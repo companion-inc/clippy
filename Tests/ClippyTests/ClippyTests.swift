@@ -285,13 +285,11 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(notification.repeatsUntilStateChange == false)
 
     #expect(theme.animation(for: .idle) == nil)
-    // Clippy-style dark bubble: dark surface fill, near-white text.
+    #expect(theme.balloon.tailHeight == 13)
     let fill = try #require(theme.balloon.fillColor.usingColorSpace(.deviceRGB))
-    #expect(fill.redComponent < 0.2)
-    #expect(fill.greenComponent < 0.2)
-    let text = try #require(theme.balloon.textColor.usingColorSpace(.deviceRGB))
-    #expect(text.redComponent > 0.8)
-    #expect(theme.balloon.cornerRadius == 10)
+    #expect(fill.redComponent > 0.99)
+    #expect(fill.greenComponent > 0.99)
+    #expect(fill.blueComponent < fill.redComponent)
 }
 
 @Test func clippySpriteSheetProducesVisibleRestPoseTexture() throws {

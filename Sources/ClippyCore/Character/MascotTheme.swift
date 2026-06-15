@@ -67,15 +67,9 @@ public struct MascotBalloonTheme {
         self.boldFontName = boldFontName
     }
 
-    // Copied from Clippy's response bubble: a dark surface (#171918), a hairline
-    // subtle border (#373B39), near-white text (#ECEEED), 10pt continuous corners.
     public static let clippy = MascotBalloonTheme(
-        fillColor: NSColor(srgbRed: 0x17 / 255.0, green: 0x19 / 255.0, blue: 0x18 / 255.0, alpha: 0.96),
-        strokeColor: NSColor(srgbRed: 0x37 / 255.0, green: 0x3B / 255.0, blue: 0x39 / 255.0, alpha: 0.55),
-        textColor: NSColor(srgbRed: 0xEC / 255.0, green: 0xEE / 255.0, blue: 0xED / 255.0, alpha: 1),
-        mutedTextColor: NSColor(srgbRed: 0xAD / 255.0, green: 0xB5 / 255.0, blue: 0xB2 / 255.0, alpha: 1),
-        borderWidth: 0.8,
-        cornerRadius: 10
+        fillColor: NSColor(calibratedRed: 1.0, green: 1.0, blue: 0.8, alpha: 1),
+        strokeColor: .black
     )
 }
 

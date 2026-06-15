@@ -13,25 +13,6 @@ public enum ClippyBalloonStyle {
         return bold ? NSFontManager.shared.convert(fallback, toHaveTrait: .boldFontMask) : fallback
     }
 
-    /// A Clippy-style bubble layer: a tail-less rounded rectangle with continuous
-    /// (squircle) corners, a hairline border, and a soft drop shadow — copied from
-    /// Clippy's CompanionResponseOverlay (radius 10, 0.8pt border, shadow r16 y8).
-    public static func makeLayer(theme: MascotBalloonTheme = .clippy) -> CALayer {
-        let layer = CALayer()
-        layer.backgroundColor = theme.fillColor.cgColor
-        layer.borderColor = theme.strokeColor.cgColor
-        layer.borderWidth = theme.borderWidth
-        layer.cornerRadius = theme.cornerRadius
-        layer.cornerCurve = .continuous
-        layer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
-        layer.shadowColor = NSColor.black.cgColor
-        layer.shadowOpacity = 0.35
-        layer.shadowRadius = 16
-        layer.shadowOffset = CGSize(width: 0, height: -8) // below the bubble (y-up layer)
-        layer.masksToBounds = false
-        return layer
-    }
-
     public static func makeShapeLayer(theme: MascotBalloonTheme = .clippy) -> CAShapeLayer {
         let layer = CAShapeLayer()
         layer.fillColor = theme.fillColor.cgColor
