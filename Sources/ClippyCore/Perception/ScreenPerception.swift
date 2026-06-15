@@ -23,6 +23,29 @@ public enum ScreenPerception {
         return data
     }
 
+    /// A screenshot saved to disk, with the pixel size of the saved image so the
+    /// model's coordinates can be mapped back to the screen.
+    public struct Screenshot: Sendable {
+        public let path: String
+        public let pixelSize: CGSize
+    }
+
+    /// Capture the main display to a JPEG on disk (overwriting the previous one) and
+    /// return its path + pixel size. This is how Clippy gets *eyes*: the model `Read`s
+    /// this file to see the screen, then points in its pixel space.
+    public static func captureToFile(maxDimension: Int = 1600, compression: CGFloat = 0.7) -> Screenshot? {
+        guard let image = CGDisplayCreateImage(CGMainDisplayID()),
+              let scaled = try? scale(image: image, maxDimension: maxDimension) else { return nil }
+        let rep = NSBitmapImageRep(cgImage: scaled)
+        guard let data = rep.representation(using: .jpeg, properties: [.compressionFactor: compression]) else { return nil }
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
+        let url = base.appendingPathComponent("Clippy/screen.jpg")
+        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        guard (try? data.write(to: url)) != nil else { return nil }
+        return Screenshot(path: url.path, pixelSize: CGSize(width: scaled.width, height: scaled.height))
+    }
+
     private static func scale(image: CGImage, maxDimension: Int) throws -> CGImage {
         let longest = max(image.width, image.height)
         guard longest > maxDimension else {

@@ -63,6 +63,26 @@ public enum GroundingTag: Equatable, Sendable {
         case .point, .highlight, .shape, .act: return false
         }
     }
+
+    /// Map this tag's coordinates from the screenshot's pixel space (what the model
+    /// emitted, having Read the image) into global AppKit screen space, so the overlay
+    /// and Clippy's body land where the model actually meant. Radii scale with the
+    /// image→screen ratio. `.act` has no coordinates and is returned unchanged.
+    public func inScreenSpace(imageSize: CGSize, display: CGRect) -> GroundingTag {
+        guard imageSize.width > 0, imageSize.height > 0 else { return self }
+        let scale = Double(display.width / imageSize.width)
+        func m(_ p: CGPoint) -> CGPoint {
+            GroundingDirector.screenPoint(fromPixel: p, imageSize: imageSize, display: display)
+        }
+        switch self {
+        case let .point(p, label, screen): return .point(m(p), label: label, screen: screen)
+        case let .target(p, r, label, screen): return .target(m(p), radius: r * scale, label: label, screen: screen)
+        case let .hover(p, r, label, screen): return .hover(m(p), radius: r * scale, label: label, screen: screen)
+        case let .highlight(p, r, label, screen): return .highlight(m(p), radius: r * scale, label: label, screen: screen)
+        case let .shape(kind, points, label, screen): return .shape(kind: kind, points: points.map(m), label: label, screen: screen)
+        case .act: return self
+        }
+    }
 }
 
 /// An assistant reply split into the text Clippy speaks and the directives it acts on.

@@ -34,6 +34,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }()
     private var isTurnRunning = false
     private var currentBrainTask: Task<Void, Never>?
+    private var lastShot: ScreenPerception.Screenshot?
+    private var overlayDismiss: DispatchWorkItem?
     private var commandTimer: Timer?
     private var activeActivityState: AgentActivityState = .idle
 
@@ -263,8 +265,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         playActivityState(.thinking)
 
         let brain = conversation
+        // Give Clippy eyes: capture the screen so the model can Read it and point
+        // accurately. The path + pixel size go in the message; the model decides
+        // whether to look. We keep the shot to map its coordinates back to the screen.
+        let shot = ScreenPerception.captureToFile()
+        lastShot = shot
+        let brainMessage = Self.augmentWithScreenshot(text, shot)
         currentBrainTask = Task { [weak self] in
-            for await chunk in brain.stream(text) {
+            for await chunk in brain.stream(brainMessage) {
                 if Task.isCancelled { break }
                 await MainActor.run {
                     switch chunk {
@@ -293,6 +301,21 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         overlay?.clear()
         chatBubble?.hide()
         scheduleNextIdle()
+    }
+
+    /// Prepend a note telling the model a fresh screenshot is on disk, so it can
+    /// `Read` it to see the screen and point in that image's pixel space.
+    private static func augmentWithScreenshot(_ text: String, _ shot: ScreenPerception.Screenshot?) -> String {
+        guard let shot else { return text }
+        let w = Int(shot.pixelSize.width), h = Int(shot.pixelSize.height)
+        return """
+        [Current screenshot of the user's screen: \(shot.path) (\(w)x\(h) px). \
+        Read it with your Read tool when you need to see the screen to point at, find, \
+        or describe something. Any [POINT]/[TARGET]/[HOVER]/[HIGHLIGHT]/[SHAPE] coordinates \
+        you emit are pixels in THAT image (top-left origin).]
+
+        \(text)
+        """
     }
 
     /// Live partial text while the reply streams in. Tags (even half-typed) are
@@ -340,11 +363,26 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     /// Render parsed grounding directives: draw the marks, and move Clippy beside the
     /// first anchored target so it points at it with the matching body gesture.
-    private func presentGrounding(_ tags: [GroundingTag]) {
+    private func presentGrounding(_ rawTags: [GroundingTag]) {
         guard let mascot, let screen = NSScreen.main else {
             return
         }
+        // The model emitted coordinates in the screenshot's pixel space; map them onto
+        // the actual screen so the ring and Clippy's body land in the right place.
+        let tags: [GroundingTag]
+        if let shot = lastShot {
+            tags = rawTags.map { $0.inScreenSpace(imageSize: shot.pixelSize, display: screen.frame) }
+        } else {
+            tags = rawTags
+        }
         overlay?.show(tags.compactMap(AnnotationMark.init(tag:)), on: screen)
+        // Auto-dismiss the marks so they don't linger on screen forever.
+        overlayDismiss?.cancel()
+        if tags.contains(where: { AnnotationMark(tag: $0) != nil }) {
+            let dismiss = DispatchWorkItem { [weak self] in self?.overlay?.clear() }
+            overlayDismiss = dismiss
+            DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: dismiss)
+        }
 
         if let anchor = tags.first(where: { $0.anchor != nil })?.anchor {
             // Point at a target with Clippy's body.

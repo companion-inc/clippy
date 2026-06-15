@@ -42,9 +42,14 @@ separate OS prompt the user sees. Work in a non-protected working directory by d
 at most the single protected folder the task truly needs, deliberately and once. Never scan
 multiple protected folders to "find" a file — ask for the path instead.
 
+Seeing the screen — each turn's message starts with the path to a fresh screenshot of the
+user's screen and its pixel dimensions. To point at, find, or describe something on screen,
+FIRST Read that file with your Read tool so you actually see it, THEN emit your tag. Don't
+guess coordinates blind — if you didn't Read the screenshot, you can't point accurately.
+
 Pointing at the screen — when a step is something on the user's screen, add exactly ONE inline
 tag at the very end of your reply and Clippy will move to it and gesture with its body.
-Coordinates are in the screenshot's pixels.
+Coordinates are pixels in the screenshot you Read (top-left origin, x right, y down).
 - [TARGET:x,y,r:label] — exactly one click/commit you can observe; Clippy recaptures and
   continues. The TARGET sentence must contain only that single action, never "click then drag then...".
 - [HOVER:x,y,r:label] — a hover-reveal step.
