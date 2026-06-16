@@ -5,8 +5,12 @@ import vm from "node:vm";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const defaultSourceRoot =
-  "/Users/advaitpaliwal/Projects/clawd/research/clippy-sources/repos/pithings-clippy/src/agents/clippy";
-const sourceRoot = process.argv[2] ? path.resolve(process.argv[2]) : defaultSourceRoot;
+  path.join(repoRoot, "Research/sources/repos/pithings-clippy/src/agents/clippy");
+const sourceRoot = process.argv[2]
+  ? path.resolve(process.argv[2])
+  : process.env.CLIPPY_SOURCE_ROOT
+    ? path.resolve(process.env.CLIPPY_SOURCE_ROOT)
+    : defaultSourceRoot;
 const outputRoot = process.argv[3]
   ? path.resolve(process.argv[3])
   : path.join(repoRoot, "Resources/Characters/Clippy");

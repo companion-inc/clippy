@@ -705,6 +705,8 @@ private func writeExecutableScript(named name: String, contents: String) throws 
             $0.path == CredentialCatalog.irisSettingsPath &&
             $0.keyPath == "providerKeys.deepgramApiKey"
     })
+    #expect(CredentialCatalog.irisSettingsPath.hasSuffix("/Library/Application Support/Iris/settings.json"))
+    #expect(CredentialCatalog.irisNativePreferencesPath.hasSuffix("/Library/Preferences/ai.companion.iris.mac.plist"))
 }
 
 @Test func voiceSidecarReportsOnlyPresenceForEnvironment() throws {
@@ -716,6 +718,8 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 
     #expect(config.wakeWord == "clippy")
     #expect(config.port == 4748)
+    #expect(config.executablePath == "uv")
+    #expect(config.workingDirectoryPath.hasSuffix("/Companion/Code/iris/apps/iris-voice"))
     #expect(status["DEEPGRAM_API_KEY"] == "present")
     #expect(status["OPENAI_API_KEY"] == "missing")
     #expect(status["ANTHROPIC_API_KEY"] == "missing")

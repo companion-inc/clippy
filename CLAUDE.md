@@ -22,5 +22,5 @@ When the user says "short and sweet," "keep it brief," or specifies a scope ("do
 
 ## Implementation Notes
 
-- **Keychain vs local secrets**: Check `/Users/advaitpaliwal/.local/config/clippy-secrets.json` first (if it exists and is committed), then fall back to keychain lookups via `security find-generic-password`. Don't assume either path; test the real mechanism before claiming what works.
+- **Keychain vs local secrets**: Check `$HOME/.local/config/clippy-secrets.json` first (if it exists and is committed), then fall back to keychain lookups via `security find-generic-password`. Don't assume either path; test the real mechanism before claiming what works.
 - **Animation states**: Verify against the character manifest in `Resources/Characters/Clippy/character.json` before returning a state string.

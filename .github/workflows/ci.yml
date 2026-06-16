@@ -118,16 +118,31 @@ jobs:
             printf 'notarized: no; configure Developer ID and Apple notary secrets for Gatekeeper-clean downloads\n' > Clippy-macOS.notarization.txt
           fi
 
+      - name: Create disk image
+        run: |
+          hdiutil create \
+            -volname Clippy \
+            -srcfolder .build/release/Clippy.app \
+            -ov \
+            -format UDZO \
+            Clippy.dmg
+
       - name: Write checksum
-        run: shasum -a 256 Clippy-macOS.zip > Clippy-macOS.zip.sha256
+        run: |
+          shasum -a 256 Clippy-macOS.zip > Clippy-macOS.zip.sha256
+          shasum -a 256 Clippy.dmg > Clippy.dmg.sha256
+          shasum -a 256 Clippy.dmg Clippy-macOS.zip > SHA256SUMS.txt
 
       - name: Upload app artifact
         uses: actions/upload-artifact@v4
         with:
           name: Clippy-macOS-${{ github.sha }}
           path: |
+            Clippy.dmg
+            Clippy.dmg.sha256
             Clippy-macOS.zip
             Clippy-macOS.zip.sha256
+            SHA256SUMS.txt
             Clippy-macOS.notarization.txt
           retention-days: 30
 
@@ -153,4 +168,11 @@ jobs:
           cd dist
           gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
             gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "Clippy macOS build."
-          gh release upload "$GITHUB_REF_NAME" Clippy-macOS.zip Clippy-macOS.zip.sha256 Clippy-macOS.notarization.txt --clobber
+          gh release upload "$GITHUB_REF_NAME" \
+            Clippy.dmg \
+            Clippy.dmg.sha256 \
+            Clippy-macOS.zip \
+            Clippy-macOS.zip.sha256 \
+            SHA256SUMS.txt \
+            Clippy-macOS.notarization.txt \
+            --clobber

@@ -1,79 +1,155 @@
 # Clippy
 
-Native macOS desktop Clippy: a visible paperclip assistant that can chat, react
-with classic Clippy animations, request approvals, and drive local computer-use
-tools through the app runtime.
+<p align="center">
+  <img src="Docs/assets/clippy-icon.png" alt="Clippy app icon" width="96">
+</p>
 
-There is one on-screen character: Clippy. The app uses the committed Clippy sprite pack under
-`Resources/Characters/Clippy` and one shared local conversation adapter.
+<p align="center">
+  Native macOS Clippy: a visible desktop assistant with classic Office-style
+  animations, local CLI brains, voice input, screen grounding, and computer-use
+  tools.
+</p>
 
-## Build
+<p align="center">
+  <a href="https://github.com/companion-inc/clippy/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/companion-inc/clippy/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/companion-inc/clippy/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/companion-inc/clippy?sort=semver"></a>
+  <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-black"></a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/companion-inc/clippy/releases/latest/download/Clippy.dmg"><strong>Download for macOS</strong></a>
+  ·
+  <a href="https://github.com/companion-inc/clippy/releases/latest">Latest release</a>
+  ·
+  <a href="Docs/STATUS.md">Status</a>
+  ·
+  <a href="Docs/Handbook/README.md">Handbook</a>
+</p>
+
+![Clippy desktop assistant hero](Docs/assets/clippy-readme-hero.png)
+
+## What Clippy Does
+
+Clippy is a native Swift macOS app that keeps one animated Clippy character on
+screen. Click it or use the command channel to chat, hold `Control+Option` to
+talk, and let the assistant point at or operate the desktop through bundled
+local tools.
+
+The product path is local-first:
+
+- The visible app, speech bubble, permissions UI, annotation overlay, character
+  renderer, and app packaging live in this repository.
+- The assistant brain runs through locally installed CLI sessions: Claude Code
+  through `claude`, or Codex through `codex app-server`.
+- Voice uses Deepgram directly when `DEEPGRAM_API_KEY` is configured, with the
+  Apple speech stack as the local fallback.
+- Computer-use calls run through the Clippy-bundled Cua helper in packaged
+  builds.
+
+![Bundled Clippy sprite states](Docs/assets/clippy-actions.png)
+
+## Download
+
+Download the current macOS build:
+
+```text
+https://github.com/companion-inc/clippy/releases/latest/download/Clippy.dmg
+```
+
+Open the DMG, drag `Clippy.app` into Applications, and launch it. When macOS
+blocks the first launch of a locally signed build, Control-click `Clippy.app`,
+choose `Open`, and approve the prompt once.
+
+Clippy asks for permissions only when the relevant feature needs them:
+
+- Microphone for push-to-talk voice input.
+- Screen Recording for screen grounding and pointing.
+- Accessibility for computer-use actions you approve.
+
+## Requirements
+
+- macOS 13 or newer.
+- One local brain CLI signed in:
+  - `claude` for Claude Code.
+  - `codex` for Codex app-server.
+- Optional: `DEEPGRAM_API_KEY` for streaming speech-to-text and text-to-speech.
+
+Deepgram keys can be supplied through the environment or this local file:
+
+```text
+~/Library/Application Support/Clippy/Secrets.json
+```
+
+```json
+{
+  "deepgramAPIKey": "..."
+}
+```
+
+## Build From Source
 
 ```sh
 swift test
 swift build
 ```
 
-## Download
-
-Every push to `main` runs GitHub Actions and uploads a downloadable
-`Clippy-macOS.zip` artifact from the CI run. Tagged pushes like `v0.1.0` also
-publish the same zip to GitHub Releases.
-
-The CI artifact embeds the Cua driver inside
-`Clippy.app/Contents/Helpers/ClippyComputerUseRuntime`; it does not require a
-separate Cua app install at runtime.
-
-## Run
+To build the Launch Services app wrapper:
 
 ```sh
-swift run Clippy
+Scripts/package-clippy-app.sh release
+open -n .build/release/Clippy.app
 ```
 
-For a Launch Services app wrapper:
+`Scripts/package-clippy-app.sh` requires a `cua-driver` binary so packaged
+computer-use tools can run from inside `Clippy.app`. Set `CLIPPY_CUA_DRIVER` to
+an existing binary, or install the Cua driver in one of the script's default
+locations.
 
-```sh
-cua_driver_path="$(Scripts/download-cua-driver.sh | tail -n 1)"
-CLIPPY_CUA_DRIVER="$PWD/$cua_driver_path" Scripts/package-clippy-app.sh
-open -n .build/debug/Clippy.app
-```
-
-If Cua is already installed locally, the package script can use that install
-directly:
-
-```sh
-Scripts/package-clippy-app.sh
-open -n .build/debug/Clippy.app
-```
+## Developer Commands
 
 The running app listens for optional debug commands through `CLIPPY_CMD_FILE`:
 
 ```text
 ask:<message>
 open
+hide
+show
 snapshot
 move:<x>,<y>
 park:lowerLeft|lowerRight|upperLeft|upperRight
 state:idle|thinking|working|notification|attention|error|sweeping|carrying|juggling|sleeping
 ```
 
-## Resources
+## Repository Layout
 
-The Clippy-compatible source pack is archived in the ignored research folder.
-Export it into this repo with:
+- `Sources/Clippy` - macOS application entry point.
+- `Sources/ClippyCore` - character rendering, voice, local brain adapters,
+  computer-use routing, permissions, windows, and runtime logic.
+- `Sources/ClippyMCP` - helper MCP server for Clippy-owned annotations.
+- `Resources/Characters/Clippy` - committed sprite pack and animation manifest.
+- `Resources/Clippy.icns` - app icon.
+- `Scripts` - packaging and asset export scripts.
+- `Docs` - implementation status, architecture notes, verification matrix, and
+  research handbook.
 
-```sh
-node Scripts/export-pithings-clippy.mjs
-```
+## Release Process
 
-That creates:
+Every push to `main` runs tests and packages the macOS app. Tagged pushes that
+start with `v` publish GitHub Release assets:
 
-```text
-Resources/Characters/Clippy/character.json
-Resources/Characters/Clippy/sounds-mp3.json
-Resources/Characters/Clippy/map.png
-Resources/Characters/Clippy/manifest.json
-```
+- `Clippy.dmg`
+- `Clippy.dmg.sha256`
+- `Clippy-macOS.zip`
+- `Clippy-macOS.zip.sha256`
+- `SHA256SUMS.txt`
+- `Clippy-macOS.notarization.txt`
 
-Start with `Docs/STATUS.md` and `Docs/Handbook/README.md` for the current
-implementation contract.
+## Contributing
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md). For architecture context, read
+[Docs/STATUS.md](Docs/STATUS.md) and [Docs/Handbook/README.md](Docs/Handbook/README.md)
+before changing runtime behavior.
+
+## License
+
+Clippy is released under the [MIT License](LICENSE).

@@ -55,8 +55,13 @@ public struct CredentialCatalog: Codable, Equatable, Sendable {
 }
 
 public extension CredentialCatalog {
-    static let irisSettingsPath = "/Users/advaitpaliwal/Library/Application Support/Iris/settings.json"
-    static let irisNativePreferencesPath = "/Users/advaitpaliwal/Library/Preferences/ai.companion.iris.mac.plist"
+    static var irisSettingsPath: String {
+        "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Application Support/Iris/settings.json"
+    }
+
+    static var irisNativePreferencesPath: String {
+        "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Preferences/ai.companion.iris.mac.plist"
+    }
 
     static let defaultDescriptors: [CredentialDescriptor] = [
         CredentialDescriptor(

@@ -45,8 +45,12 @@ public extension VoiceSidecarConfiguration {
         "XAI_API_KEY",
     ]
 
-    static let irisVoiceSidecar = VoiceSidecarConfiguration(
-        executablePath: "uv",
-        workingDirectoryPath: "/Users/advaitpaliwal/Companion/Code/iris/apps/iris-voice"
-    )
+    static var irisVoiceSidecar: VoiceSidecarConfiguration {
+        let environment = ProcessInfo.processInfo.environment
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return VoiceSidecarConfiguration(
+            executablePath: environment["CLIPPY_VOICE_SIDECAR_EXECUTABLE"] ?? "uv",
+            workingDirectoryPath: environment["CLIPPY_IRIS_VOICE_DIR"] ?? "\(home)/Companion/Code/iris/apps/iris-voice"
+        )
+    }
 }
