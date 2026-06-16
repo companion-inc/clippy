@@ -11,9 +11,14 @@ public actor CodexConversation: AgentBrain {
     private let workingDirectory: String?
     private let systemPrompt: String?
     private let mcpRuntimes: [MCPServerRuntime]
+    private let diagnosticsLogURL: URL?
     private var appServer: AppServerConnection?
     private var threadID: String?
     private var nextRequestID = 0
+
+    private static let diagnosticsByteLimit = 512 * 1024
+    private static let diagnosticsRetainBytes = 384 * 1024
+    private static let diagnosticsQueue = DispatchQueue(label: "ai.companion.clippy.codex.diagnostics")
 
     public init(
         binaryPath: String,
@@ -24,7 +29,8 @@ public actor CodexConversation: AgentBrain {
         workingDirectory: String? = nil,
         systemPrompt: String? = ClippyAgentInstructions.systemPrompt,
         computerUseRuntime: MCPServerRuntime? = ComputerUseMCPConfig.defaultRuntime(),
-        annotationRuntime: MCPServerRuntime? = ClippyAnnotationMCPConfig.defaultRuntime()
+        annotationRuntime: MCPServerRuntime? = ClippyAnnotationMCPConfig.defaultRuntime(),
+        diagnosticsLogURL: URL? = CodexConversation.defaultDiagnosticsLogURL
     ) {
         self.binaryPath = binaryPath
         self.model = model
@@ -32,6 +38,7 @@ public actor CodexConversation: AgentBrain {
         self.workingDirectory = workingDirectory
         self.systemPrompt = systemPrompt
         self.mcpRuntimes = Self.uniqueRuntimes([computerUseRuntime, annotationRuntime].compactMap { $0 })
+        self.diagnosticsLogURL = diagnosticsLogURL
     }
 
     deinit {
@@ -58,6 +65,15 @@ public actor CodexConversation: AgentBrain {
         probe.waitUntilExit()
         let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (path?.isEmpty == false) ? path : nil
+    }
+
+    public static var defaultDiagnosticsLogURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
+        return base
+            .appendingPathComponent("Clippy", isDirectory: true)
+            .appendingPathComponent("Logs", isDirectory: true)
+            .appendingPathComponent("codex-app-server.log")
     }
 
     public func prepare() async {
@@ -290,8 +306,19 @@ public actor CodexConversation: AgentBrain {
         }
 
         box.set(process)
-        Task.detached(priority: .utility) {
-            _ = errorPipe.fileHandleForReading.readDataToEndOfFile()
+        let diagnosticsLogURL = self.diagnosticsLogURL
+        Self.appendDiagnostic(
+            """
+            starting codex app-server
+            command: \(binaryPath) \(arguments.joined(separator: " "))
+            workingDirectory: \(workingDirectory ?? "<default>")
+            mcpRuntimes:
+            \(Self.diagnosticSummary(for: mcpRuntimes))
+            """,
+            to: diagnosticsLogURL
+        )
+        Task.detached(priority: .utility) { [diagnosticsLogURL] in
+            Self.drainStandardError(errorPipe.fileHandleForReading, to: diagnosticsLogURL)
         }
 
         let connection = AppServerConnection(
@@ -397,6 +424,63 @@ public actor CodexConversation: AgentBrain {
         var seen: Set<String> = []
         return runtimes.filter { runtime in
             seen.insert(runtime.serverName).inserted
+        }
+    }
+
+    private static func diagnosticSummary(for runtimes: [MCPServerRuntime]) -> String {
+        if runtimes.isEmpty { return "- none" }
+        return runtimes.map { runtime in
+            let args = runtime.args.isEmpty ? "" : " " + runtime.args.joined(separator: " ")
+            let tools = runtime.enabledTools.isEmpty ? "all tools" : runtime.enabledTools.joined(separator: ",")
+            return "- \(runtime.serverName): \(runtime.command)\(args) [\(tools)]"
+        }.joined(separator: "\n")
+    }
+
+    private static func drainStandardError(_ handle: FileHandle, to logURL: URL?) {
+        guard let logURL else {
+            _ = handle.readDataToEndOfFile()
+            return
+        }
+        while true {
+            let data = handle.availableData
+            if data.isEmpty { break }
+            appendDiagnosticData(data, label: "codex app-server stderr", to: logURL)
+        }
+    }
+
+    private static func appendDiagnostic(_ text: String, to logURL: URL?) {
+        guard let logURL else { return }
+        appendDiagnosticData(Data(text.utf8), label: "clippy", to: logURL)
+    }
+
+    private static func appendDiagnosticData(_ data: Data, label: String, to logURL: URL) {
+        guard !data.isEmpty else { return }
+        diagnosticsQueue.async {
+            let manager = FileManager.default
+            do {
+                try manager.createDirectory(at: logURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                if manager.fileExists(atPath: logURL.path) == false {
+                    manager.createFile(atPath: logURL.path, contents: nil)
+                }
+                let handle = try FileHandle(forUpdating: logURL)
+                defer { handle.closeFile() }
+                handle.seekToEndOfFile()
+                let timestamp = ISO8601DateFormatter().string(from: Date())
+                handle.write(Data("\n[\(timestamp)] \(label)\n".utf8))
+                handle.write(data)
+                if data.last != 0x0A {
+                    handle.write(Data([0x0A]))
+                }
+            } catch {
+                return
+            }
+
+            let size = (try? manager.attributesOfItem(atPath: logURL.path)[.size] as? NSNumber)?.intValue ?? 0
+            guard size > diagnosticsByteLimit,
+                  let fullLog = try? Data(contentsOf: logURL)
+            else { return }
+            let retained = Data(fullLog.suffix(diagnosticsRetainBytes))
+            try? retained.write(to: logURL, options: .atomic)
         }
     }
 

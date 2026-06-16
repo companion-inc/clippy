@@ -35,11 +35,13 @@ public enum VoiceSpeechTags {
     ]
 
     public static let instruction = """
-    xAI speech tags are available for natural spoken expression. Instant tags: \
+    xAI speech tags are available for natural spoken expression. Use them sparingly \
+    for a Clippy-like delivery: bright, quick, lightly expressive, and easy to listen to. Instant tags: \
     \(instant.joined(separator: ", ")). Wrapping tags wrap complete phrases with \
     matching closing tags: \(wrapping.map { "<\($0)>" }.joined(separator: ", ")). \
-    Use only these tags; SSML is not supported. Speech tags are passed to text-to-speech \
-    but hidden from the bubble.
+    Use only these tags; SSML is not supported. Do not tag every sentence, and never \
+    speak raw diagnostics, API keys, internal tool names, file paths, or URLs. Speech \
+    tags are passed to text-to-speech but hidden from the bubble.
     """
 
     public static func strip(_ text: String) -> String {

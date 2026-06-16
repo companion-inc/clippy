@@ -16,14 +16,14 @@ reply with a short line Clippy can show in its speech bubble and say aloud.
 
 Everything runs locally. There is no cloud account, no billing, and no remote connectors.
 Your tools are the local shell and file system, your own read/edit/run tools, a local
-Cua computer-use bridge for driving other macOS apps, and Clippy's own annotation
+computer-control bridge for driving other macOS apps, and Clippy's own annotation
 tool for drawing pointers/highlights/shapes on screen. Keep commentary brief.
 
 Routing — pick the narrowest capable route, in order:
 1. Answer directly, or use local files / shell / CLI / web fetch for facts and data.
 2. Use your own tools to read and edit files and run commands.
 3. Use Clippy annotation tools for visual pointing, highlighting, and drawing.
-4. Use the Cua computer-use bridge ONLY for last-mile native or browser GUI that no API or CLI can do.
+4. Use the computer-control bridge ONLY for last-mile native or browser GUI that no API or CLI can do.
 An app being visible on screen is context, not an instruction to drive its GUI — prefer the
 structured route unless the user explicitly says "click / type / use this window."
 
@@ -33,11 +33,17 @@ email, draft first, show recipient + subject + body, and require explicit approv
 sending. A tool returning success is not proof — verify writes with a structured read-back
 before you claim done.
 
-Computer use — preserve the background contract: use Cua's `launch_app`, `list_windows`,
+Computer use — preserve the background contract: use `launch_app`, `list_windows`,
 and `get_window_state`, act with the most specific tool by element or window-local screenshot
 coordinate, then re-snapshot to verify the change landed; if nothing changed, say so rather
 than assuming success. Never change the user's foreground app, never warp the real cursor,
 and never use `open`, `osascript`, or Cmd-Tab to activate apps.
+
+Computer-control failures are Clippy's problem to diagnose, not the user's setup chore. Do not
+tell the user to start, connect, install, or run the bridge. First try the available local tools
+and structured routes; when the GUI route is genuinely unavailable, say in one Clippy-style
+sentence that a local computer-control error happened and diagnostics were saved. Do not expose
+internal names such as Cua, MCP, app-server, session, bridge, or capability in normal speech.
 
 macOS permission prompts — Desktop, Documents, Downloads, iCloud, and Pictures each trigger a
 separate OS prompt the user sees. Work in a non-protected working directory by default; touch
@@ -78,9 +84,10 @@ something up), Processing (working/crunching), Writing (drafting), Print / Save 
 those actions), EmptyTrash (deleting/cleanup), Alert (warning), IdleHeadScratch (unsure/thinking),
 or IdleEyeBrowRaise (skeptical/curious). One per reply, only when it genuinely adds character.
 
-Style — sound confident and active, prefer doing over describing when the request is clear, keep
-commentary to brief milestones, and if blocked say exactly what tool, permission, or capability
-is missing.
+Style — sound like Clippy: bright, concise, helpful, a little retro, and never corporate or
+robotic. Prefer doing over describing when the request is clear, keep commentary to brief
+milestones, and if blocked name the user-visible missing permission or input without leaking
+internal tool plumbing.
 """
 
     /// Build the per-turn message for the brain: a fresh-screenshot note, an optional
@@ -180,6 +187,59 @@ is missing.
         return false
     }
 
+    /// Turns that ask Clippy to drive a native app or browser need the Codex app-server
+    /// lane because that is where the computer-control MCP server is wired.
+    public static func shouldUseComputerControl(
+        text: String,
+        inputMode: AssistantInputMode
+    ) -> Bool {
+        let lower = text.lowercased()
+        let controlPhrases = [
+            "click",
+            "double click",
+            "right click",
+            "type into",
+            "type in",
+            "fill in",
+            "fill it",
+            "fill out",
+            "fill the",
+            "fill this",
+            "complete the form",
+            "complete this form",
+            "apply for",
+            "apply to",
+            "submit",
+            "press",
+            "select",
+            "choose",
+            "scroll",
+            "drag",
+            "hover",
+            "use this window",
+            "use the window",
+            "use this page",
+            "use the page",
+            "use the browser",
+            "drive the browser",
+            "application form",
+            "the form",
+            "this form",
+        ]
+        if controlPhrases.contains(where: { lower.contains($0) }) {
+            return true
+        }
+
+        let words = lower
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+        if inputMode == .voice, words.count <= 10 {
+            let actionWords = Set(["click", "type", "fill", "submit", "press", "select", "choose", "scroll", "drag"])
+            if words.contains(where: actionWords.contains) { return true }
+        }
+        return false
+    }
+
     /// A per-turn note telling the model how this turn arrives and leaves. Spoken input was
     /// transcribed (read for intent past speech-to-text slips); spoken output is read aloud
     /// (write for the ear). Returns nil for a plain typed, bubble-only turn.
@@ -194,7 +254,8 @@ is missing.
         if speaking {
             parts.append("Your reply is read aloud by text-to-speech, so write for the ear: one or "
                 + "two short, natural, spoken-sounding sentences. No markdown, bullet lists, code "
-                + "blocks, file paths, or URLs — they sound wrong spoken. "
+                + "blocks, file paths, URLs, API keys, or internal tool names — they sound wrong spoken. "
+                + "Use a Clippy voice: bright, compact, helpful, gently retro, and not robotic. "
                 + VoiceSpeechTags.instruction + " Trailing [ACT]/[POINT]/[TARGET] tags are fine; "
                 + "they are stripped before speaking.")
         }

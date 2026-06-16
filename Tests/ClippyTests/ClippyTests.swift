@@ -41,6 +41,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     let spokenOut = ClippyAgentInstructions.voiceContextNote(inputMode: .text, speaking: true)
     #expect(spokenOut != nil)
     #expect(spokenOut?.contains("read aloud") == true)
+    #expect(spokenOut?.contains("Clippy voice") == true)
     #expect(spokenOut?.contains("SPOKE this") == false)
 
     // Spoken input, silent replies — only the read-past-transcription-typos half.
@@ -90,6 +91,16 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "summarize the docs", inputMode: .voice) == false)
 }
 
+@Test func computerControlPolicyRoutesGuiWorkToCodexLane() {
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "fill out this application form", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "fill it out right away", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "apply to this job in the browser", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "click the blue button", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "type this into the page", inputMode: .voice))
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "summarize the docs", inputMode: .voice) == false)
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "what's on my screen", inputMode: .text) == false)
+}
+
 @Test func codexConversationResumesTheSameThreadAcrossTurns() async throws {
     let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-codex-log-\(UUID().uuidString).txt")
     let scriptURL = try writeExecutableScript(
@@ -133,7 +144,8 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         model: "gpt-5.5",
         effort: "minimal",
         workingDirectory: nil,
-        systemPrompt: nil
+        systemPrompt: nil,
+        diagnosticsLogURL: nil
     )
 
     let first = await conversation.send("first turn")
@@ -191,7 +203,8 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         model: "gpt-5.5",
         effort: "minimal",
         workingDirectory: nil,
-        systemPrompt: nil
+        systemPrompt: nil,
+        diagnosticsLogURL: nil
     )
 
     await conversation.prepare()
@@ -292,7 +305,8 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         workingDirectory: nil,
         systemPrompt: nil,
         computerUseRuntime: MCPServerRuntime(serverName: "cua-driver", command: "/tmp/cua-driver", args: ["mcp"], enabledTools: ["click"]),
-        annotationRuntime: MCPServerRuntime(serverName: "clippy-annotation", command: "/tmp/ClippyMCP", enabledTools: ["annotate"])
+        annotationRuntime: MCPServerRuntime(serverName: "clippy-annotation", command: "/tmp/ClippyMCP", enabledTools: ["annotate"]),
+        diagnosticsLogURL: nil
     )
 
     let turn = await conversation.send("use tools")
@@ -342,7 +356,8 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         model: "gpt-5.5",
         effort: "minimal",
         workingDirectory: nil,
-        systemPrompt: nil
+        systemPrompt: nil,
+        diagnosticsLogURL: nil
     )
 
     var iterator = conversation.stream("stream me").makeAsyncIterator()
@@ -404,7 +419,8 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         model: "gpt-5.5",
         effort: "minimal",
         workingDirectory: nil,
-        systemPrompt: nil
+        systemPrompt: nil,
+        diagnosticsLogURL: nil
     )
 
     let task = Task {
@@ -434,6 +450,76 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 
     #expect(log.contains("started"))
     #expect(log.contains("terminated"))
+}
+
+@Test func codexConversationPersistsAppServerStderrDiagnostics() async throws {
+    let diagnosticsURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent("clippy-codex-diagnostics-\(UUID().uuidString).log")
+    let scriptURL = try writeExecutableScript(
+        named: "fake-codex-stderr.zsh",
+        contents: """
+        #!/bin/zsh
+        set -eu
+        print -u2 -- "cua-driver: failed to initialize accessibility session"
+        request_id() {
+          print -r -- "$1" | sed -n 's/.*"id":\\([0-9][0-9]*\\).*/\\1/p'
+        }
+        while IFS= read -r line; do
+          id="$(request_id "$line")"
+          if [[ "$line" == *'"method":"initialize"'* ]]; then
+            print -r -- '{"id":'${id}',"result":{}}'
+          elif [[ "$line" == *'thread/start'* || "$line" == *'thread\\/start'* ]]; then
+            print -r -- '{"id":'${id}',"result":{"thread":{"id":"THREAD-DIAG"}}}'
+          elif [[ "$line" == *'turn/start'* || "$line" == *'turn\\/start'* ]]; then
+            print -r -- '{"id":'${id}',"result":{"turn":{"id":"TURN-DIAG","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":0,"completedAt":null,"durationMs":null}}}'
+            print -r -- '{"method":"item/agentMessage/delta","params":{"threadId":"THREAD-DIAG","turnId":"TURN-DIAG","itemId":"ITEM-DIAG","delta":"DONE"}}'
+            print -r -- '{"method":"item/completed","params":{"threadId":"THREAD-DIAG","turnId":"TURN-DIAG","completedAtMs":0,"item":{"type":"agentMessage","id":"ITEM-DIAG","text":"DONE","phase":null,"memoryCitation":null}}}'
+            print -r -- '{"method":"turn/completed","params":{"threadId":"THREAD-DIAG","turn":{"id":"TURN-DIAG","items":[],"itemsView":"full","status":"completed","error":null,"startedAt":0,"completedAt":0,"durationMs":1}}}'
+          fi
+        done
+        """
+    )
+    defer {
+        try? FileManager.default.removeItem(at: scriptURL.deletingLastPathComponent())
+        try? FileManager.default.removeItem(at: diagnosticsURL)
+    }
+
+    let conversation = CodexConversation(
+        binaryPath: scriptURL.path,
+        model: "gpt-5.5",
+        effort: "minimal",
+        workingDirectory: nil,
+        systemPrompt: nil,
+        diagnosticsLogURL: diagnosticsURL
+    )
+
+    let turn = await conversation.send("diagnose")
+    #expect(turn.text == "DONE")
+
+    let deadline = Date().addingTimeInterval(5)
+    var logged = ""
+    while Date() < deadline {
+        logged = (try? String(contentsOf: diagnosticsURL, encoding: .utf8)) ?? ""
+        if logged.contains("failed to initialize accessibility session") {
+            break
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+
+    #expect(logged.contains("starting codex app-server"))
+    #expect(logged.contains("codex app-server stderr"))
+    #expect(logged.contains("failed to initialize accessibility session"))
+}
+
+@Test func clippyUserFacingErrorHidesInternalComputerUseFailures() {
+    let raw = "The Cua computer-use bridge is not connected in this session, so I can't click and type."
+    let friendly = ClippyUserFacingError.replacement(for: raw, isError: false)
+
+    #expect(friendly == "I hit a local computer-control error. I saved the details in Clippy Logs.")
+    #expect(friendly?.contains("Cua") == false)
+    #expect(friendly?.contains("MCP") == false)
+    #expect(friendly?.contains("bridge") == false)
+    #expect(friendly?.contains("session") == false)
 }
 
 @Test func rasterCharacterPackDecodesClippyAnimations() throws {

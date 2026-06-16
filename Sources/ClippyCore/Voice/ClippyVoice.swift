@@ -12,11 +12,11 @@ public struct ClippyVoice: Equatable, Sendable, Identifiable {
 }
 
 public extension ClippyVoice {
-    static let eve = ClippyVoice(id: "eve", displayName: "Eve - energetic")
-    static let ara = ClippyVoice(id: "ara", displayName: "Ara - warm")
-    static let rex = ClippyVoice(id: "rex", displayName: "Rex - clear")
-    static let sal = ClippyVoice(id: "sal", displayName: "Sal - smooth")
-    static let leo = ClippyVoice(id: "leo", displayName: "Leo - authoritative")
+    static let eve = ClippyVoice(id: "eve", displayName: "Clippy - bright")
+    static let ara = ClippyVoice(id: "ara", displayName: "Clippy - warm")
+    static let rex = ClippyVoice(id: "rex", displayName: "Clippy - clear")
+    static let sal = ClippyVoice(id: "sal", displayName: "Clippy - smooth")
+    static let leo = ClippyVoice(id: "leo", displayName: "Clippy - steady")
 
     static let all: [ClippyVoice] = [eve, ara, rex, sal, leo]
 

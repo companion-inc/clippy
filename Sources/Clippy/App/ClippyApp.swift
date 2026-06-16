@@ -21,6 +21,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var tts: XAITTS?
     private var providerKeys: ProviderKeysController?
     private var usingDeepgram = false
+    private var codexComputerControlConversation: (any AgentBrain)?
     private var sttEnabled = UserDefaults.standard.object(forKey: "ClippySTTEnabled") as? Bool ?? true
     private var ttsEnabled = UserDefaults.standard.object(forKey: "ClippyTTSEnabled") as? Bool ?? true
     private var conversation: (any AgentBrain)?
@@ -141,6 +142,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     // MARK: - Brain
 
     private func setUpBrain() {
+        codexComputerControlConversation = nil
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         switch selectedModel.backend {
         case .claude:
@@ -162,6 +164,31 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 log("brain disabled: codex CLI not found")
             }
         }
+    }
+
+    private func computerControlBrain() -> (any AgentBrain)? {
+        if selectedModel.backend == .codex {
+            return conversation
+        }
+        if let codexComputerControlConversation {
+            return codexComputerControlConversation
+        }
+        guard BrainDiscovery.codexSignedIn(),
+              let cli = CodexConversation.locateBinary()
+        else {
+            return nil
+        }
+        let brain = CodexConversation(
+            binaryPath: cli,
+            model: ClippyModel.gpt55.id,
+            workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+        )
+        codexComputerControlConversation = brain
+        log("brain: codex \(ClippyModel.gpt55.id) computer-control")
+        Task {
+            await brain.prepare()
+        }
+        return brain
     }
 
     private func prewarmBrain() {
@@ -297,7 +324,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             }
             return
         }
-        guard let conversation else {
+        let needsComputerControl = ClippyAgentInstructions.shouldUseComputerControl(text: text, inputMode: inputMode)
+        let activeBrain = needsComputerControl ? (computerControlBrain() ?? conversation) : conversation
+        guard let activeBrain else {
             if isClippyHidden == false {
                 syncBubbleAnchorToClippy()
                 chatBubble.showReplyForReading("(My local brain isn't installed.)")
@@ -310,11 +339,15 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         pendingIdle?.cancel()
         log("user: \(text)")
 
-        let brain = conversation
+        let brain = activeBrain
+        if needsComputerControl {
+            log("routing: codex computer-control requested")
+        }
         // Give Clippy eyes only for screen-dependent turns. Sending a screenshot
         // through the app-server on every plain chat turn makes simple replies
         // slower for no user-visible gain.
-        let wantsScreen = ClippyAgentInstructions.shouldAttachScreenshot(text: text, inputMode: inputMode)
+        let wantsScreen = needsComputerControl
+            || ClippyAgentInstructions.shouldAttachScreenshot(text: text, inputMode: inputMode)
         let shot = wantsScreen ? captureCleanTurnScreenshot() : nil
         lastShot = shot
         if let shot {
@@ -446,7 +479,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func enqueueSpoken(_ chunk: String, _ tts: XAITTS) {
         let clean = GroundingParser.strip(chunk)
-        if !clean.isEmpty { tts.enqueue(clean) }
+        if let friendly = ClippyUserFacingError.replacement(for: clean, isError: false) {
+            tts.enqueue(friendly)
+        } else if !clean.isEmpty {
+            tts.enqueue(clean)
+        }
     }
 
     /// Stop any in-flight reply and spoken audio so a new utterance — or an
@@ -474,7 +511,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func showStreamingReply(_ text: String) {
         guard isClippyHidden == false else { return }
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
-        let display = VoiceSpeechTags.strip(GroundingParser.stripForStreaming(text))
+        let display = ClippyUserFacingError.replacement(for: text, isError: false)
+            ?? VoiceSpeechTags.strip(GroundingParser.stripForStreaming(text))
         if !display.isEmpty {
             turnHasStreamingText = true
             cancelTurnProgressUpdates()
@@ -492,10 +530,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             return
         }
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
-        let parsed = GroundingParser.parse(turn.text)
-        // Errors show their message as-is; otherwise show only the stripped speech.
-        // A tag-only reply (no spoken text) shows nothing — never the raw brackets.
-        let spoken = turn.isError ? turn.text : VoiceSpeechTags.strip(parsed.spokenText)
+        let friendlyFailure = ClippyUserFacingError.replacement(for: turn.text, isError: turn.isError)
+        let replyText = friendlyFailure ?? turn.text
+        let parsed = GroundingParser.parse(replyText)
+        // Runtime failures get a Clippy-shaped sentence; normal replies show only
+        // the stripped speech. A tag-only reply shows nothing — never raw brackets.
+        let spoken = VoiceSpeechTags.strip(parsed.spokenText)
         if spoken.isEmpty {
             chatBubble?.hide()
         } else {
@@ -503,7 +543,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         // Flush any sentence not yet spoken. Streamed replies already spoke most of it
         // sentence-by-sentence; any non-streaming fallback speaks the whole reply here.
-        if !turn.isError { speakStreaming(turn.text, final: true) }
+        if turn.isError == false {
+            speakStreaming(replyText, final: true)
+        }
         log("clippy: \(turn.text.prefix(120))")
 
         if !turn.isError, !parsed.tags.isEmpty {
