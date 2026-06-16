@@ -26,7 +26,9 @@
   <a href="Docs/Handbook/README.md">Handbook</a>
 </p>
 
-![Standalone Clippy render](Docs/assets/clippy-demo-clean-desktop.png)
+<p align="center">
+  <img src="Docs/assets/clippy-attention.gif" alt="Clippy" width="260">
+</p>
 
 ## What Clippy Does
 
@@ -46,18 +48,11 @@ The product path is local-first:
 - Computer-use calls run through the Clippy-bundled Cua helper in packaged
   builds.
 
-## Clippy Renders
-
-These images are standalone renders built directly from the committed Clippy
-sprite pack. They are not desktop screenshots, generated UI mockups, or real
-screen captures, and they contain no personal files, tabs, app content, names,
-or local machine data.
+## Preview
 
 | Idle | Attention | Gesture |
 | --- | --- | --- |
-| ![Clippy idle render](Docs/assets/clippy-demo-clean-desktop.png) | ![Clippy attention render](Docs/assets/clippy-demo-voice.png) | ![Clippy gesture render](Docs/assets/clippy-demo-pointing.png) |
-
-![Bundled Clippy sprite states](Docs/assets/clippy-actions.png)
+| ![Clippy idle](Docs/assets/clippy-idle.gif) | ![Clippy attention](Docs/assets/clippy-attention.gif) | ![Clippy gesture](Docs/assets/clippy-gesture-left.gif) |
 
 ## Download
 
