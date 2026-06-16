@@ -60,6 +60,18 @@ public actor CodexConversation: AgentBrain {
         return (path?.isEmpty == false) ? path : nil
     }
 
+    public func prepare() async {
+        do {
+            let box = ProcessBox()
+            let connection = try ensureAppServer(process: box)
+            _ = try ensureThread(on: connection)
+            box.set(nil)
+        } catch {
+            appServer = nil
+            threadID = nil
+        }
+    }
+
     public func send(_ message: String) async -> AgentTurn {
         var partial = ""
         for await chunk in stream(message) {

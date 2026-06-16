@@ -194,8 +194,9 @@ is missing.
         if speaking {
             parts.append("Your reply is read aloud by text-to-speech, so write for the ear: one or "
                 + "two short, natural, spoken-sounding sentences. No markdown, bullet lists, code "
-                + "blocks, file paths, or URLs — they sound wrong spoken. Trailing "
-                + "[ACT]/[POINT]/[TARGET] tags are fine; they're stripped before speaking.")
+                + "blocks, file paths, or URLs — they sound wrong spoken. "
+                + VoiceSpeechTags.instruction + " Trailing [ACT]/[POINT]/[TARGET] tags are fine; "
+                + "they are stripped before speaking.")
         }
         guard !parts.isEmpty else { return nil }
         return "[Voice mode — " + parts.joined(separator: " ") + "]"

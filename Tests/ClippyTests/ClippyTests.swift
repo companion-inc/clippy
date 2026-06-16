@@ -153,6 +153,60 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(logged.contains("second turn"))
 }
 
+@Test func codexConversationPrepareOpensThreadBeforeFirstTurn() async throws {
+    let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-codex-prepare-\(UUID().uuidString).txt")
+    let scriptURL = try writeExecutableScript(
+        named: "fake-codex-prepare.zsh",
+        contents: """
+        #!/bin/zsh
+        set -eu
+        log_file='\(logURL.path)'
+        print -r -- "args:$*" >> "$log_file"
+        request_id() {
+          print -r -- "$1" | sed -n 's/.*"id":\\([0-9][0-9]*\\).*/\\1/p'
+        }
+        while IFS= read -r line; do
+          print -r -- "$line" >> "$log_file"
+          id="$(request_id "$line")"
+          if [[ "$line" == *'"method":"initialize"'* ]]; then
+            print -r -- '{"id":'${id}',"result":{}}'
+          elif [[ "$line" == *'thread/start'* || "$line" == *'thread\\/start'* ]]; then
+            print -r -- '{"id":'${id}',"result":{"thread":{"id":"THREAD-PREPARED"}}}'
+          elif [[ "$line" == *'turn/start'* || "$line" == *'turn\\/start'* ]]; then
+            print -r -- '{"id":'${id}',"result":{"turn":{"id":"TURN-PREPARED","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":0,"completedAt":null,"durationMs":null}}}'
+            print -r -- '{"method":"item/agentMessage/delta","params":{"threadId":"THREAD-PREPARED","turnId":"TURN-PREPARED","itemId":"ITEM-PREPARED","delta":"READY"}}'
+            print -r -- '{"method":"item/completed","params":{"threadId":"THREAD-PREPARED","turnId":"TURN-PREPARED","completedAtMs":0,"item":{"type":"agentMessage","id":"ITEM-PREPARED","text":"READY","phase":null,"memoryCitation":null}}}'
+            print -r -- '{"method":"turn/completed","params":{"threadId":"THREAD-PREPARED","turn":{"id":"TURN-PREPARED","items":[],"itemsView":"full","status":"completed","error":null,"startedAt":0,"completedAt":0,"durationMs":1}}}'
+          fi
+        done
+        """
+    )
+    defer {
+        try? FileManager.default.removeItem(at: scriptURL.deletingLastPathComponent())
+        try? FileManager.default.removeItem(at: logURL)
+    }
+
+    let conversation = CodexConversation(
+        binaryPath: scriptURL.path,
+        model: "gpt-5.5",
+        effort: "minimal",
+        workingDirectory: nil,
+        systemPrompt: nil
+    )
+
+    await conversation.prepare()
+    let turn = await conversation.send("first prepared turn")
+
+    #expect(turn.text == "READY")
+
+    let logged = try String(contentsOf: logURL, encoding: .utf8)
+    let lines = logged.split(whereSeparator: \.isNewline).map(String.init)
+    #expect(logged.contains(#""threadId":"THREAD-PREPARED""#))
+    #expect(logged.contains("first prepared turn"))
+    #expect(lines.filter { $0.contains("thread/start") || $0.contains("thread\\/start") }.count == 1)
+    #expect(lines.filter { $0.contains("turn/start") || $0.contains("turn\\/start") }.count == 1)
+}
+
 @Test func computerUseMCPConfigPrefersExplicitCuaDriver() throws {
     let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-cua-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -694,6 +748,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     let catalog = CredentialCatalog()
     let openAI = try #require(catalog.descriptor(for: .openAI))
     let deepgram = try #require(catalog.descriptor(for: .deepgram))
+    let xai = try #require(catalog.descriptor(for: .xAI))
 
     #expect(openAI.environmentVariable == "OPENAI_API_KEY")
     #expect(openAI.sources.contains {
@@ -704,6 +759,22 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         $0.kind == .irisSettingsJSON &&
             $0.path == CredentialCatalog.irisSettingsPath &&
             $0.keyPath == "providerKeys.deepgramApiKey"
+    })
+    #expect(deepgram.sources.contains {
+        $0.kind == .nativePreferences &&
+            $0.path == CredentialCatalog.irisNativePreferencesPath &&
+            $0.keyPath == "providerKeys.deepgram-api-key"
+    })
+    #expect(xai.environmentVariable == "XAI_API_KEY")
+    #expect(xai.sources.contains {
+        $0.kind == .irisSettingsJSON &&
+            $0.path == CredentialCatalog.irisSettingsPath &&
+            $0.keyPath == "providerKeys.xaiApiKey"
+    })
+    #expect(xai.sources.contains {
+        $0.kind == .nativePreferences &&
+            $0.path == CredentialCatalog.irisNativePreferencesPath &&
+            $0.keyPath == "providerKeys.xai-api-key"
     })
     #expect(CredentialCatalog.irisSettingsPath.hasSuffix("/Library/Application Support/Iris/settings.json"))
     #expect(CredentialCatalog.irisNativePreferencesPath.hasSuffix("/Library/Preferences/ai.companion.iris.mac.plist"))
@@ -725,14 +796,15 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(status["ANTHROPIC_API_KEY"] == "missing")
 }
 
-@Test func deepgramTTSConvertsSplitLinear16FramesToFloatPCM() throws {
-    let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000, channels: 1, interleaved: false)!
+@Test func xaiTTSConvertsSplitLinear16FramesToFloatPCM() throws {
+    let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 24_000, channels: 1, interleaved: false)!
     var carry = Data([0x00])
 
-    let buffer = try #require(DeepgramTTS.makePCMBuffer(
+    let buffer = try #require(XAITTS.makePCMBuffer(
         fromLinear16: Data([0x80, 0xff, 0x7f, 0x00]),
         carry: &carry,
-        format: format
+        format: format,
+        gain: 1
     ))
 
     #expect(buffer.frameLength == 2)
@@ -740,6 +812,13 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(channel[0] == -1)
     #expect(channel[1] > 0.99)
     #expect(carry == Data([0x00]))
+}
+
+@Test func xaiSpeechTagsAreRemovedFromDisplayText() {
+    let text = "[chuckle] <whisper>that worked</whisper> [pause]"
+    #expect(VoiceSpeechTags.strip(text) == "that worked")
+    #expect(VoiceSpeechTags.instruction.contains("[chuckle]"))
+    #expect(VoiceSpeechTags.instruction.contains("<whisper>"))
 }
 
 @Test func computerUseRoutePolicyRequiresFreshWindowSnapshot() async throws {

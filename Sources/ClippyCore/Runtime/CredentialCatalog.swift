@@ -77,6 +77,7 @@ public extension CredentialCatalog {
             sources: [
                 CredentialSourceDescriptor(kind: .environment, keyPath: "DEEPGRAM_API_KEY"),
                 CredentialSourceDescriptor(kind: .irisSettingsJSON, path: irisSettingsPath, keyPath: "providerKeys.deepgramApiKey"),
+                CredentialSourceDescriptor(kind: .nativePreferences, path: irisNativePreferencesPath, keyPath: "providerKeys.deepgram-api-key"),
             ]
         ),
         CredentialDescriptor(
@@ -101,6 +102,7 @@ public extension CredentialCatalog {
             sources: [
                 CredentialSourceDescriptor(kind: .environment, keyPath: "XAI_API_KEY"),
                 CredentialSourceDescriptor(kind: .irisSettingsJSON, path: irisSettingsPath, keyPath: "providerKeys.xaiApiKey"),
+                CredentialSourceDescriptor(kind: .nativePreferences, path: irisNativePreferencesPath, keyPath: "providerKeys.xai-api-key"),
             ]
         ),
     ]

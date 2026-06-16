@@ -39,8 +39,8 @@ The product path is local-first:
   renderer, and app packaging live in this repository.
 - The assistant brain runs through locally installed CLI sessions: Claude Code
   through `claude`, or Codex through `codex app-server`.
-- Voice uses Deepgram directly when `DEEPGRAM_API_KEY` is configured, with the
-  Apple speech stack as the local fallback.
+- Voice input uses Deepgram when `DEEPGRAM_API_KEY` is configured, with the
+  Apple speech stack as the local fallback. Spoken replies use xAI TTS.
 - Computer-use calls run through the Clippy-bundled Cua helper in packaged
   builds.
 
@@ -74,9 +74,11 @@ Clippy asks for permissions only when the relevant feature needs them:
 - One local brain CLI signed in:
   - `claude` for Claude Code.
   - `codex` for Codex app-server.
-- Optional: `DEEPGRAM_API_KEY` for streaming speech-to-text and text-to-speech.
+- Optional: `DEEPGRAM_API_KEY` for streaming speech-to-text.
+- Optional: `XAI_API_KEY` for spoken replies.
 
-Deepgram keys can be supplied through the environment or this local file:
+Provider keys can be supplied through the environment, Iris local settings, or
+this local file:
 
 ```text
 ~/Library/Application Support/Clippy/Secrets.json
@@ -84,7 +86,8 @@ Deepgram keys can be supplied through the environment or this local file:
 
 ```json
 {
-  "deepgramAPIKey": "..."
+  "deepgramAPIKey": "...",
+  "xaiAPIKey": "..."
 }
 ```
 

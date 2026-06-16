@@ -23,6 +23,7 @@ public enum AgentStreamChunk: Sendable {
 /// A local conversation brain Clippy can chat through. Clippy is the only product shell;
 /// this protocol must not grow selectable characters or per-character backends.
 public protocol AgentBrain: Actor {
+    func prepare() async
     func send(_ message: String) async -> AgentTurn
     /// Streams the reply as it is generated. The default yields just the final
     /// `send` result; local CLI adapters override it with real token streaming.
@@ -30,6 +31,8 @@ public protocol AgentBrain: Actor {
 }
 
 public extension AgentBrain {
+    func prepare() async {}
+
     nonisolated func stream(_ message: String) -> AsyncStream<AgentStreamChunk> {
         AsyncStream { continuation in
             Task {
