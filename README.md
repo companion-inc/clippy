@@ -26,7 +26,7 @@
   <a href="Docs/Handbook/README.md">Handbook</a>
 </p>
 
-![Clippy on a clean fake desktop](Docs/assets/clippy-demo-clean-desktop.png)
+![Clippy on a generated clean desktop](Docs/assets/clippy-demo-clean-desktop.png)
 
 ## What Clippy Does
 
@@ -48,9 +48,10 @@ The product path is local-first:
 
 ## Demo Images
 
-These images are synthetic demo composites built from the committed Clippy
-sprite pack. They are not screenshots of a real desktop, and they contain no
-personal files, tabs, app content, names, or local machine data.
+These images are GPT-generated staged desktop composites with the committed
+Clippy sprite pack layered on top. They are not screenshots of a real desktop,
+and they contain no personal files, tabs, app content, names, or local machine
+data.
 
 | Clean desktop | Voice | Pointing |
 | --- | --- | --- |
