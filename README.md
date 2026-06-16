@@ -26,7 +26,7 @@
   <a href="Docs/Handbook/README.md">Handbook</a>
 </p>
 
-![Clippy on a generated clean desktop](Docs/assets/clippy-demo-clean-desktop.png)
+![Standalone Clippy render](Docs/assets/clippy-demo-clean-desktop.png)
 
 ## What Clippy Does
 
@@ -46,16 +46,16 @@ The product path is local-first:
 - Computer-use calls run through the Clippy-bundled Cua helper in packaged
   builds.
 
-## Demo Images
+## Clippy Renders
 
-These images are GPT-generated staged desktop composites with the committed
-Clippy sprite pack layered on top. They are not screenshots of a real desktop,
-and they contain no personal files, tabs, app content, names, or local machine
-data.
+These images are standalone renders built directly from the committed Clippy
+sprite pack. They are not desktop screenshots, generated UI mockups, or real
+screen captures, and they contain no personal files, tabs, app content, names,
+or local machine data.
 
-| Clean desktop | Voice | Pointing |
+| Idle | Attention | Gesture |
 | --- | --- | --- |
-| ![Clean desktop demo](Docs/assets/clippy-demo-clean-desktop.png) | ![Voice demo](Docs/assets/clippy-demo-voice.png) | ![Pointing demo](Docs/assets/clippy-demo-pointing.png) |
+| ![Clippy idle render](Docs/assets/clippy-demo-clean-desktop.png) | ![Clippy attention render](Docs/assets/clippy-demo-voice.png) | ![Clippy gesture render](Docs/assets/clippy-demo-pointing.png) |
 
 ![Bundled Clippy sprite states](Docs/assets/clippy-actions.png)
 
