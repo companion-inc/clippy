@@ -31,6 +31,12 @@ public final class ClippyWindowController {
         set { contentView.menuProvider = newValue }
     }
 
+    /// Custom right-click presenter for the character.
+    public var rightClickHandler: ((NSEvent, NSView) -> Void)? {
+        get { contentView.rightClickHandler }
+        set { contentView.rightClickHandler = newValue }
+    }
+
     /// Fired on an intentional character activation gesture.
     public var onCharacterClick: (() -> Void)? {
         get { contentView.onClick }

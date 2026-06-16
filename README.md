@@ -29,9 +29,10 @@
 ## What Clippy Does
 
 Clippy is a native Swift macOS app that keeps one animated Clippy character on
-screen. Click it or use the command channel to chat, hold `Control+Option` to
-talk, and let the assistant point at or operate the desktop through bundled
-local tools.
+screen. Click it or use the command channel to chat, use the menu-bar eye or
+right-click Clippy for the retro control menu, hold `Control+Option` to talk,
+and let the assistant point at or operate the desktop through bundled local
+tools.
 
 The product path is local-first:
 

@@ -5,6 +5,9 @@ public final class ClippyHitView: NSView {
     /// assistant's Animate!/Options menu.
     public var menuProvider: (() -> NSMenu?)?
 
+    /// Custom right-click presenter. Used by the app for its period-styled menu.
+    public var rightClickHandler: ((NSEvent, NSView) -> Void)?
+
     /// Invoked on an intentional double-click — opens the Clippy input.
     public var onClick: (() -> Void)?
 
@@ -36,6 +39,10 @@ public final class ClippyHitView: NSView {
     }
 
     public override func rightMouseDown(with event: NSEvent) {
+        if let rightClickHandler {
+            rightClickHandler(event, self)
+            return
+        }
         guard let menu = menuProvider?() else {
             super.rightMouseDown(with: event)
             return

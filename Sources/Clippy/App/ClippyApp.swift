@@ -12,6 +12,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var chatBubble: ClippyBubbleController?
     private var overlay: AnnotationOverlayWindow?
     private var permissionDrag: PermissionDragController?
+    private var statusItem: NSStatusItem?
+    private var retroMenu = RetroMenuController()
     private var ptt: PushToTalkMonitor?
     private var visibilityHotkey: GlobalHotkeyMonitor?
     private var speech: SpeechCapture?
@@ -95,12 +97,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         clippy.windowController.onFrameChanged = { [weak self] frame in
             self?.chatBubble?.setAnchor(frame, repositionVisible: false)
         }
-        clippy.windowController.contextMenuProvider = { [weak self] in
-            self?.makeContextMenu()
+        clippy.windowController.rightClickHandler = { [weak self] event, view in
+            let point = view.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
+            self?.showRetroMenu(topLeft: point)
         }
         clippy.windowController.onCharacterClick = { [weak self] in
             self?.toggleChat()
         }
+        setUpMenuBarItem()
         clippy.show()
         clippy.play(clippy.spec.greetingAnimationName) { [weak self] _, _ in
             self?.scheduleNextIdle()
@@ -665,6 +669,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func hideClippy() {
         guard isClippyHidden == false else { return }
         isClippyHidden = true
+        updateMenuBarItem()
         pendingIdle?.cancel()
         chatBubble?.hide()
         overlay?.clear()
@@ -680,6 +685,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func showClippy() {
         guard isClippyHidden else { return }
         isClippyHidden = false
+        updateMenuBarItem()
         clippy?.show()
         if let frame = clippy?.frame {
             chatBubble?.setAnchor(frame)
@@ -720,105 +726,143 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Context menu (right-click on the character)
+    // MARK: - Retro menu
 
-    private func makeContextMenu() -> NSMenu {
-        let menu = NSMenu()
+    private func setUpMenuBarItem() {
+        guard statusItem == nil else { return }
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if let button = item.button {
+            button.target = self
+            button.action = #selector(menuBarItemClicked(_:))
+            _ = button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+        }
+        statusItem = item
+        updateMenuBarItem()
+    }
 
-        let chat = NSMenuItem(
-            title: clippy?.spec.chatMenuTitle ?? ClippySpec.current.chatMenuTitle,
-            action: #selector(chatClicked),
-            keyEquivalent: ""
-        )
-        chat.target = self
-        menu.addItem(chat)
+    private func updateMenuBarItem() {
+        guard let button = statusItem?.button else { return }
+        button.image = Self.makeEyeStatusImage(hidden: isClippyHidden)
+        button.imagePosition = .imageOnly
+        button.toolTip = isClippyHidden ? "Show Clippy" : "Hide Clippy"
+    }
 
-        // Only offer "Stop Talking" while there is something to stop.
+    @objc private func menuBarItemClicked(_ sender: NSStatusBarButton) {
+        let windowFrame = sender.convert(sender.bounds, to: nil)
+        let screenFrame = sender.window?.convertToScreen(windowFrame)
+            ?? NSRect(origin: NSEvent.mouseLocation, size: .zero)
+        showRetroMenu(topLeft: NSPoint(x: screenFrame.minX, y: screenFrame.minY - 4))
+    }
+
+    private func showRetroMenu(topLeft point: NSPoint) {
+        retroMenu.show(items: makeRetroMenuItems(), topLeft: point)
+    }
+
+    private func makeRetroMenuItems() -> [RetroMenuItem] {
+        var items: [RetroMenuItem] = [
+            .action(clippy?.spec.chatMenuTitle ?? ClippySpec.current.chatMenuTitle) { [weak self] in
+                self?.toggleChat()
+            },
+        ]
+
         if isTurnRunning || (tts?.isSpeaking ?? false) {
-            let stop = NSMenuItem(title: "Stop Talking", action: #selector(stopTalking), keyEquivalent: "")
-            stop.target = self
-            menu.addItem(stop)
+            items.append(.action("Stop Talking") { [weak self] in
+                self?.stopTalking()
+            })
         }
 
-        let animate = NSMenuItem(title: "Animate!", action: #selector(animateNow), keyEquivalent: "")
-        animate.target = self
-        menu.addItem(animate)
+        items.append(.action("Animate!") { [weak self] in
+            self?.animateNow()
+        })
 
-        let hide = NSMenuItem(
-            title: "Hide Clippy (\(GlobalHotkeyMonitor.toggleVisibilityLabel))",
-            action: #selector(toggleClippyVisibility),
-            keyEquivalent: ""
-        )
-        hide.target = self
-        menu.addItem(hide)
+        items.append(.action(
+            isClippyHidden ? "Show Clippy" : "Hide Clippy",
+            detail: GlobalHotkeyMonitor.toggleVisibilityLabel,
+            icon: isClippyHidden ? .eye : .eyeSlash
+        ) { [weak self] in
+            self?.toggleClippyVisibility()
+        })
 
-        let mute = NSMenuItem(title: "Mute Sounds", action: #selector(toggleMute), keyEquivalent: "")
-        mute.target = self
-        mute.state = (clippy?.isMuted ?? false) ? .on : .off
-        menu.addItem(mute)
+        items.append(.separator())
+        items.append(.toggle("Mute Sounds", isOn: clippy?.isMuted ?? false) { [weak self] in
+            self?.toggleMute()
+        })
+        items.append(.toggle("Voice Input (hold Ctrl+Option)", isOn: sttEnabled) { [weak self] in
+            self?.toggleSTT()
+        })
+        items.append(.toggle("Speak Replies", isOn: ttsEnabled) { [weak self] in
+            self?.toggleTTS()
+        })
 
-        let modelItem = NSMenuItem(title: "Model", action: nil, keyEquivalent: "")
-        let modelMenu = NSMenu()
+        items.append(.separator())
+        items.append(.header("Model"))
         for model in ClippyModel.all {
-            let item = NSMenuItem(title: model.displayName, action: #selector(selectModel(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = model.id
-            item.state = (model.id == selectedModel.id) ? .on : .off
-            modelMenu.addItem(item)
+            items.append(.choice(model.displayName, isSelected: model.id == selectedModel.id) { [weak self] in
+                self?.selectModel(id: model.id)
+            })
         }
-        modelItem.submenu = modelMenu
-        menu.addItem(modelItem)
 
-        let sttItem = NSMenuItem(title: "Voice input (hold ⌃⌥)", action: #selector(toggleSTT), keyEquivalent: "")
-        sttItem.target = self
-        sttItem.state = sttEnabled ? .on : .off
-        menu.addItem(sttItem)
-
-        let ttsItem = NSMenuItem(title: "Speak replies", action: #selector(toggleTTS), keyEquivalent: "")
-        ttsItem.target = self
-        ttsItem.state = ttsEnabled ? .on : .off
-        menu.addItem(ttsItem)
-
-        let voiceItem = NSMenuItem(title: "Voice", action: nil, keyEquivalent: "")
-        let voiceMenu = NSMenu()
+        items.append(.header("Voice"))
         for voice in ClippyVoice.all {
-            let item = NSMenuItem(title: voice.displayName, action: #selector(selectVoice(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = voice.id
-            item.state = (voice.id == selectedVoice.id) ? .on : .off
-            voiceMenu.addItem(item)
+            items.append(.choice(voice.displayName, isSelected: voice.id == selectedVoice.id) { [weak self] in
+                self?.selectVoice(id: voice.id)
+            })
         }
-        voiceItem.submenu = voiceMenu
-        menu.addItem(voiceItem)
 
-        let keysItem = NSMenuItem(title: "Configure API Key...", action: #selector(openProviderKeys), keyEquivalent: "")
-        keysItem.target = self
-        menu.addItem(keysItem)
+        items.append(.separator())
+        items.append(.action("Configure API Key...") { [weak self] in
+            self?.showProviderKeys()
+        })
 
-        let permItem = NSMenuItem(title: "Permissions", action: nil, keyEquivalent: "")
-        let permMenu = NSMenu()
-        let axItem = NSMenuItem(title: "Accessibility — voice hotkey + control", action: #selector(grantAccessibility), keyEquivalent: "")
-        axItem.target = self
-        axItem.state = AccessibilityPermission.isTrusted ? .on : .off
-        permMenu.addItem(axItem)
-        let screenItem = NSMenuItem(title: "Screen Recording — see the screen", action: #selector(grantScreenRecording), keyEquivalent: "")
-        screenItem.target = self
-        screenItem.state = ScreenPerception.hasPermission ? .on : .off
-        permMenu.addItem(screenItem)
-        let micItem = NSMenuItem(title: "Microphone — talk to Clippy", action: #selector(grantMicrophone), keyEquivalent: "")
-        micItem.target = self
-        micItem.state = MicrophonePermission.isGranted ? .on : .off
-        permMenu.addItem(micItem)
-        permItem.submenu = permMenu
-        menu.addItem(permItem)
+        items.append(.header("Permissions"))
+        items.append(.toggle("Accessibility", isOn: AccessibilityPermission.isTrusted) { [weak self] in
+            self?.grantAccessibility()
+        })
+        items.append(.toggle("Screen Recording", isOn: ScreenPerception.hasPermission) { [weak self] in
+            self?.grantScreenRecording()
+        })
+        items.append(.toggle("Microphone", isOn: MicrophonePermission.isGranted) { [weak self] in
+            self?.grantMicrophone()
+        })
 
-        menu.addItem(.separator())
+        items.append(.separator())
+        items.append(.action("Quit Clippy") { [weak self] in
+            self?.quitClippy()
+        })
+        return items
+    }
 
-        let quit = NSMenuItem(title: "Quit Clippy", action: #selector(quitClippy), keyEquivalent: "")
-        quit.target = self
-        menu.addItem(quit)
-
-        return menu
+    private static func makeEyeStatusImage(hidden: Bool) -> NSImage {
+        let image = NSImage(size: NSSize(width: 18, height: 18), flipped: false) { rect in
+            NSColor.black.setStroke()
+            NSColor.black.setFill()
+            let eyeRect = rect.insetBy(dx: 2, dy: 4)
+            let eye = NSBezierPath()
+            eye.move(to: NSPoint(x: eyeRect.minX, y: eyeRect.midY))
+            eye.curve(
+                to: NSPoint(x: eyeRect.maxX, y: eyeRect.midY),
+                controlPoint1: NSPoint(x: eyeRect.minX + 4, y: eyeRect.maxY),
+                controlPoint2: NSPoint(x: eyeRect.maxX - 4, y: eyeRect.maxY)
+            )
+            eye.curve(
+                to: NSPoint(x: eyeRect.minX, y: eyeRect.midY),
+                controlPoint1: NSPoint(x: eyeRect.maxX - 4, y: eyeRect.minY),
+                controlPoint2: NSPoint(x: eyeRect.minX + 4, y: eyeRect.minY)
+            )
+            eye.lineWidth = 1.4
+            eye.stroke()
+            NSBezierPath(ovalIn: NSRect(x: eyeRect.midX - 2, y: eyeRect.midY - 2, width: 4, height: 4)).fill()
+            if hidden {
+                let slash = NSBezierPath()
+                slash.move(to: NSPoint(x: rect.minX + 4, y: rect.minY + 4))
+                slash.line(to: NSPoint(x: rect.maxX - 4, y: rect.maxY - 4))
+                slash.lineWidth = 2
+                slash.stroke()
+            }
+            return true
+        }
+        image.isTemplate = true
+        return image
     }
 
     @objc private func chatClicked() {
@@ -901,9 +945,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     @objc private func selectVoice(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String, let voice = ClippyVoice.by(id: id) else {
+        guard let id = sender.representedObject as? String else {
             return
         }
+        selectVoice(id: id)
+    }
+
+    private func selectVoice(id: String) {
+        guard let voice = ClippyVoice.by(id: id) else { return }
         selectedVoice = voice
         UserDefaults.standard.set(id, forKey: "ClippyVoiceID")
         tts?.voiceID = id
@@ -913,9 +962,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     @objc private func selectModel(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? String, let model = ClippyModel.by(id: id) else {
+        guard let id = sender.representedObject as? String else {
             return
         }
+        selectModel(id: id)
+    }
+
+    private func selectModel(id: String) {
+        guard let model = ClippyModel.by(id: id) else { return }
         selectedModel = model
         UserDefaults.standard.set(id, forKey: "ClippySelectedModelID")
         setUpBrain()
