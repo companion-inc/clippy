@@ -638,6 +638,15 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(reportedFrame?.size == CGSize(width: 24, height: 24))
 }
 
+@Test @MainActor func clippyWindowDisablesCompetingBackgroundDrag() {
+    let controller = ClippyWindowController(
+        rendererView: NSView(frame: CGRect(origin: .zero, size: CGSize(width: 24, height: 24))),
+        size: CGSize(width: 24, height: 24)
+    ) { _ in true }
+
+    #expect(controller.window.isMovableByWindowBackground == false)
+}
+
 @Test func approvalPolicyProtectsSensitiveTools() throws {
     let policy = ApprovalPolicy()
     let shell = ToolInvocation(name: "shell.exec")

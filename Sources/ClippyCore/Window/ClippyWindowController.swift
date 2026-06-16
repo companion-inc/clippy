@@ -63,7 +63,7 @@ public final class ClippyWindowController {
         window.hasShadow = false
         window.level = WindowLevelPolicy.clippyLevel
         window.ignoresMouseEvents = false
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
         contentView.layer?.addSublayer(rendererLayer)
@@ -91,7 +91,7 @@ public final class ClippyWindowController {
         window.hasShadow = false
         window.level = WindowLevelPolicy.clippyLevel
         window.ignoresMouseEvents = false
-        window.isMovableByWindowBackground = true
+        window.isMovableByWindowBackground = false
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
 
         rendererView.frame = contentView.bounds
