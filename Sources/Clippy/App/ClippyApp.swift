@@ -791,7 +791,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         voiceItem.submenu = voiceMenu
         menu.addItem(voiceItem)
 
-        let keysItem = NSMenuItem(title: "API Keys...", action: #selector(openProviderKeys), keyEquivalent: "")
+        let keysItem = NSMenuItem(title: "Configure API Key...", action: #selector(openProviderKeys), keyEquivalent: "")
         keysItem.target = self
         menu.addItem(keysItem)
 

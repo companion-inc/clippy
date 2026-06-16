@@ -77,8 +77,8 @@ Clippy asks for permissions only when the relevant feature needs them:
 - Optional: `DEEPGRAM_API_KEY` for streaming speech-to-text.
 - Optional: `XAI_API_KEY` for spoken replies.
 
-Provider keys can be supplied through the environment, Iris local settings, or
-this local file:
+API keys can be supplied through the environment, Iris local settings, Clippy's
+`Configure API Key...` screen, or this local file:
 
 ```text
 ~/Library/Application Support/Clippy/Secrets.json
@@ -86,8 +86,8 @@ this local file:
 
 ```json
 {
-  "deepgramAPIKey": "...",
-  "xaiAPIKey": "..."
+  "sttAPIKey": "...",
+  "ttsAPIKey": "..."
 }
 ```
 

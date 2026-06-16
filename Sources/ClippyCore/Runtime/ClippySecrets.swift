@@ -8,7 +8,7 @@ public enum ClippySecrets {
     /// Deepgram key — used for streaming speech-to-text.
     public static var deepgramAPIKey: String? {
         resolve(
-            fileKeys: ["deepgramAPIKey", "deepgramApiKey"],
+            fileKeys: ["sttAPIKey", "sttApiKey", "deepgramAPIKey", "deepgramApiKey"],
             environmentKeys: ["DEEPGRAM_API_KEY"],
             irisSettingsKeyPath: "providerKeys.deepgramApiKey",
             irisNativePreferenceKey: "providerKeys.deepgram-api-key"
@@ -18,7 +18,7 @@ public enum ClippySecrets {
     /// xAI key — used for Grok text-to-speech.
     public static var xaiAPIKey: String? {
         resolve(
-            fileKeys: ["xaiAPIKey", "xaiApiKey", "xAIAPIKey"],
+            fileKeys: ["ttsAPIKey", "ttsApiKey", "xaiAPIKey", "xaiApiKey", "xAIAPIKey"],
             environmentKeys: ["XAI_API_KEY", "IRIS_XAI_API_KEY", "GROK_API_KEY"],
             irisSettingsKeyPath: "providerKeys.xaiApiKey",
             irisNativePreferenceKey: "providerKeys.xai-api-key"
@@ -40,10 +40,15 @@ public enum ClippySecrets {
         return names
     }
 
-    public static func saveProviderKeys(deepgramAPIKey: String?, xaiAPIKey: String?) throws {
+    public static func saveVoiceAPIKeys(sttAPIKey: String?, ttsAPIKey: String?) throws {
         var object = readObject(at: secretsFileURL) as? [String: Any] ?? [:]
-        set(deepgramAPIKey, for: "deepgramAPIKey", in: &object)
-        set(xaiAPIKey, for: "xaiAPIKey", in: &object)
+        set(sttAPIKey, for: "sttAPIKey", in: &object)
+        set(ttsAPIKey, for: "ttsAPIKey", in: &object)
+        object.removeValue(forKey: "deepgramAPIKey")
+        object.removeValue(forKey: "deepgramApiKey")
+        object.removeValue(forKey: "xaiAPIKey")
+        object.removeValue(forKey: "xaiApiKey")
+        object.removeValue(forKey: "xAIAPIKey")
 
         let directory = secretsFileURL.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
