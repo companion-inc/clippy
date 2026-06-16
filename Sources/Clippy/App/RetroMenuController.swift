@@ -3,10 +3,11 @@ import ClippyCore
 
 @MainActor
 struct RetroMenuItem {
-    enum Role {
+    indirect enum Role {
         case action(icon: RetroMenuIcon? = nil)
         case toggle(isOn: Bool)
         case choice(isSelected: Bool)
+        case submenu(items: [RetroMenuItem])
         case header
         case separator
     }
@@ -28,6 +29,10 @@ struct RetroMenuItem {
         RetroMenuItem(title: title, detail: nil, role: .choice(isSelected: isSelected), action: action)
     }
 
+    static func submenu(_ title: String, detail: String? = nil, items: [RetroMenuItem]) -> Self {
+        RetroMenuItem(title: title, detail: detail, role: .submenu(items: items), action: nil)
+    }
+
     static func header(_ title: String) -> Self {
         RetroMenuItem(title: title, detail: nil, role: .header, action: nil)
     }
@@ -44,16 +49,47 @@ enum RetroMenuIcon {
 
 @MainActor
 final class RetroMenuController {
-    private var window: RetroMenuWindow?
+    private var windows: [RetroMenuWindow] = []
     private var localMonitor: Any?
     private var globalMonitor: Any?
 
     func show(items: [RetroMenuItem], topLeft point: NSPoint) {
         close()
 
-        let content = RetroMenuView(items: items, dismiss: { [weak self] in
-            self?.close()
-        })
+        let panel = makePanel(items: items, topLeft: point, level: 0)
+        windows = [panel]
+        panel.orderFrontRegardless()
+        panel.makeKey()
+        installCloseMonitors()
+    }
+
+    func close() {
+        if let localMonitor {
+            NSEvent.removeMonitor(localMonitor)
+            self.localMonitor = nil
+        }
+        if let globalMonitor {
+            NSEvent.removeMonitor(globalMonitor)
+            self.globalMonitor = nil
+        }
+        windows.forEach { $0.orderOut(nil) }
+        windows.removeAll()
+    }
+
+    private func makePanel(items: [RetroMenuItem], topLeft point: NSPoint, level: Int) -> RetroMenuWindow {
+        let content = RetroMenuView(
+            items: items,
+            level: level,
+            dismiss: { [weak self] in
+                self?.close()
+            },
+            openSubmenu: { [weak self] items, row, level in
+                self?.openSubmenu(items: items, from: row, level: level)
+            },
+            closeSubmenus: { [weak self] level in
+                self?.closeSubmenus(after: level)
+            }
+        )
         let origin = adjustedOrigin(forTopLeft: point, size: content.frame.size)
         let panel = RetroMenuWindow(
             contentRect: NSRect(origin: origin, size: content.frame.size),
@@ -68,23 +104,25 @@ final class RetroMenuController {
         panel.level = WindowLevelPolicy.clippyLevel
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         panel.isReleasedWhenClosed = false
-        panel.orderFrontRegardless()
-        panel.makeKey()
-        window = panel
-        installCloseMonitors(for: panel)
+        return panel
     }
 
-    func close() {
-        if let localMonitor {
-            NSEvent.removeMonitor(localMonitor)
-            self.localMonitor = nil
-        }
-        if let globalMonitor {
-            NSEvent.removeMonitor(globalMonitor)
-            self.globalMonitor = nil
-        }
-        window?.orderOut(nil)
-        window = nil
+    private func openSubmenu(items: [RetroMenuItem], from row: NSView, level: Int) {
+        closeSubmenus(after: level - 1)
+        guard let rowWindow = row.window else { return }
+        let rowRect = row.convert(row.bounds, to: nil)
+        let screenRect = rowWindow.convertToScreen(rowRect)
+        let point = NSPoint(x: screenRect.maxX - 2, y: screenRect.maxY)
+        let panel = makePanel(items: items, topLeft: point, level: level)
+        windows.append(panel)
+        panel.orderFrontRegardless()
+    }
+
+    private func closeSubmenus(after level: Int) {
+        guard windows.count > level + 1 else { return }
+        let stale = windows.suffix(from: level + 1)
+        stale.forEach { $0.orderOut(nil) }
+        windows.removeLast(windows.count - level - 1)
     }
 
     private func adjustedOrigin(forTopLeft point: NSPoint, size: NSSize) -> NSPoint {
@@ -100,13 +138,17 @@ final class RetroMenuController {
         return NSPoint(x: x, y: top - size.height)
     }
 
-    private func installCloseMonitors(for panel: NSWindow) {
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self, weak panel] event in
+    private func installCloseMonitors() {
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
             if event.type == .keyDown, event.keyCode == 53 {
                 self?.close()
                 return nil
             }
-            if let panel, event.window !== panel, event.type != .keyDown {
+            if
+                event.type != .keyDown,
+                let eventWindow = event.window,
+                self?.windows.contains(where: { $0 === eventWindow }) == false
+            {
                 self?.close()
             }
             return event
@@ -131,11 +173,23 @@ private final class RetroMenuView: NSView {
     }
 
     private let items: [RetroMenuItem]
+    private let level: Int
     private let dismiss: () -> Void
+    private let openSubmenu: ([RetroMenuItem], NSView, Int) -> Void
+    private let closeSubmenus: (Int) -> Void
 
-    init(items: [RetroMenuItem], dismiss: @escaping () -> Void) {
+    init(
+        items: [RetroMenuItem],
+        level: Int,
+        dismiss: @escaping () -> Void,
+        openSubmenu: @escaping ([RetroMenuItem], NSView, Int) -> Void,
+        closeSubmenus: @escaping (Int) -> Void
+    ) {
         self.items = items
+        self.level = level
         self.dismiss = dismiss
+        self.openSubmenu = openSubmenu
+        self.closeSubmenus = closeSubmenus
         let height = items.reduce(Metrics.pad * 2) { total, item in
             total + Self.height(for: item)
         }
@@ -160,7 +214,13 @@ private final class RetroMenuView: NSView {
         var y = Metrics.pad
         for item in items {
             let height = Self.height(for: item)
-            let row = RetroMenuRowView(item: item, dismiss: dismiss)
+            let row = RetroMenuRowView(
+                item: item,
+                level: level,
+                dismiss: dismiss,
+                openSubmenu: openSubmenu,
+                closeSubmenus: closeSubmenus
+            )
             row.frame = NSRect(x: Metrics.pad, y: y, width: bounds.width - Metrics.pad * 2, height: height)
             addSubview(row)
             y += height
@@ -173,7 +233,7 @@ private final class RetroMenuView: NSView {
             return Metrics.headerHeight
         case .separator:
             return Metrics.separatorHeight
-        case .action, .toggle, .choice:
+        case .action, .toggle, .choice, .submenu:
             return Metrics.rowHeight
         }
     }
@@ -181,13 +241,25 @@ private final class RetroMenuView: NSView {
 
 private final class RetroMenuRowView: NSView {
     private let item: RetroMenuItem
+    private let level: Int
     private let dismiss: () -> Void
+    private let openSubmenu: ([RetroMenuItem], NSView, Int) -> Void
+    private let closeSubmenus: (Int) -> Void
     private var isHovered = false
     private var tracking: NSTrackingArea?
 
-    init(item: RetroMenuItem, dismiss: @escaping () -> Void) {
+    init(
+        item: RetroMenuItem,
+        level: Int,
+        dismiss: @escaping () -> Void,
+        openSubmenu: @escaping ([RetroMenuItem], NSView, Int) -> Void,
+        closeSubmenus: @escaping (Int) -> Void
+    ) {
         self.item = item
+        self.level = level
         self.dismiss = dismiss
+        self.openSubmenu = openSubmenu
+        self.closeSubmenus = closeSubmenus
         super.init(frame: .zero)
     }
 
@@ -216,6 +288,11 @@ private final class RetroMenuRowView: NSView {
         guard isEnabledRow else { return }
         isHovered = true
         needsDisplay = true
+        if case .submenu(let items) = item.role {
+            openSubmenu(items, self, level + 1)
+        } else {
+            closeSubmenus(level)
+        }
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -225,6 +302,10 @@ private final class RetroMenuRowView: NSView {
 
     override func mouseUp(with event: NSEvent) {
         guard isEnabledRow, bounds.contains(convert(event.locationInWindow, from: nil)) else {
+            return
+        }
+        if case .submenu(let items) = item.role {
+            openSubmenu(items, self, level + 1)
             return
         }
         dismiss()
@@ -243,11 +324,14 @@ private final class RetroMenuRowView: NSView {
             drawRow(icon: nil, mark: isOn ? "✓" : nil)
         case .choice(let isSelected):
             drawRow(icon: nil, mark: isSelected ? "•" : nil)
+        case .submenu:
+            drawRow(icon: nil, mark: nil, showsArrow: true)
         }
     }
 
     private var isEnabledRow: Bool {
-        item.action != nil
+        if case .submenu = item.role { return true }
+        return item.action != nil
     }
 
     private func drawSeparator() {
@@ -262,7 +346,7 @@ private final class RetroMenuRowView: NSView {
         (item.title as NSString).draw(in: NSRect(x: 8, y: 3, width: bounds.width - 16, height: 14), withAttributes: attrs)
     }
 
-    private func drawRow(icon: RetroMenuIcon?, mark: String?) {
+    private func drawRow(icon: RetroMenuIcon?, mark: String?, showsArrow: Bool = false) {
         if isHovered {
             RetroPalette.selection.setFill()
             bounds.fill()
@@ -284,9 +368,10 @@ private final class RetroMenuRowView: NSView {
             drawIcon(icon, color: textColor, rect: NSRect(x: 5, y: 4, width: 16, height: 14))
         }
 
-        let detailWidth: CGFloat = item.detail == nil ? 0 : 64
+        let arrowWidth: CGFloat = showsArrow ? 18 : 0
+        let detailWidth: CGFloat = item.detail == nil ? 0 : 74
         (item.title as NSString).draw(
-            in: NSRect(x: 26, y: 4, width: bounds.width - 34 - detailWidth, height: 15),
+            in: NSRect(x: 26, y: 4, width: bounds.width - 34 - detailWidth - arrowWidth, height: 15),
             withAttributes: attrs
         )
         if let detail = item.detail {
@@ -299,6 +384,19 @@ private final class RetroMenuRowView: NSView {
                 withAttributes: rightAttrs
             )
         }
+        if showsArrow {
+            drawArrow(color: textColor, rect: NSRect(x: bounds.width - 16, y: 6, width: 8, height: 10))
+        }
+    }
+
+    private func drawArrow(color: NSColor, rect: NSRect) {
+        color.setFill()
+        let arrow = NSBezierPath()
+        arrow.move(to: NSPoint(x: rect.minX, y: rect.minY))
+        arrow.line(to: NSPoint(x: rect.maxX, y: rect.midY))
+        arrow.line(to: NSPoint(x: rect.minX, y: rect.maxY))
+        arrow.close()
+        arrow.fill()
     }
 
     private func drawIcon(_ icon: RetroMenuIcon, color: NSColor, rect: NSRect) {

@@ -794,36 +794,38 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             self?.toggleTTS()
         })
 
-        items.append(.separator())
-        items.append(.header("Model"))
-        for model in ClippyModel.all {
-            items.append(.choice(model.displayName, isSelected: model.id == selectedModel.id) { [weak self] in
+        let modelItems = ClippyModel.all.map { model in
+            RetroMenuItem.choice(model.displayName, isSelected: model.id == selectedModel.id) { [weak self] in
                 self?.selectModel(id: model.id)
-            })
+            }
         }
+        items.append(.separator())
+        items.append(.submenu("Model", detail: selectedModel.displayName, items: modelItems))
 
-        items.append(.header("Voice"))
-        for voice in ClippyVoice.all {
-            items.append(.choice(voice.displayName, isSelected: voice.id == selectedVoice.id) { [weak self] in
+        let voiceItems = ClippyVoice.all.map { voice in
+            RetroMenuItem.choice(voice.displayName, isSelected: voice.id == selectedVoice.id) { [weak self] in
                 self?.selectVoice(id: voice.id)
-            })
+            }
         }
+        items.append(.submenu("Voice", detail: selectedVoice.id, items: voiceItems))
 
         items.append(.separator())
         items.append(.action("Configure API Key...") { [weak self] in
             self?.showProviderKeys()
         })
 
-        items.append(.header("Permissions"))
-        items.append(.toggle("Accessibility", isOn: AccessibilityPermission.isTrusted) { [weak self] in
-            self?.grantAccessibility()
-        })
-        items.append(.toggle("Screen Recording", isOn: ScreenPerception.hasPermission) { [weak self] in
-            self?.grantScreenRecording()
-        })
-        items.append(.toggle("Microphone", isOn: MicrophonePermission.isGranted) { [weak self] in
-            self?.grantMicrophone()
-        })
+        let permissionItems: [RetroMenuItem] = [
+            .toggle("Accessibility", isOn: AccessibilityPermission.isTrusted) { [weak self] in
+                self?.grantAccessibility()
+            },
+            .toggle("Screen Recording", isOn: ScreenPerception.hasPermission) { [weak self] in
+                self?.grantScreenRecording()
+            },
+            .toggle("Microphone", isOn: MicrophonePermission.isGranted) { [weak self] in
+                self?.grantMicrophone()
+            },
+        ]
+        items.append(.submenu("Permissions", items: permissionItems))
 
         items.append(.separator())
         items.append(.action("Quit Clippy") { [weak self] in
