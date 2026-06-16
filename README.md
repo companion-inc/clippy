@@ -1,7 +1,7 @@
 # Clippy
 
 <p align="center">
-  <img src="Docs/assets/clippy-icon.png" alt="Clippy app icon" width="96">
+  <img src="Docs/assets/clippy-attention.gif" alt="Clippy" width="260">
 </p>
 
 <p align="center">
@@ -24,10 +24,6 @@
   <a href="Docs/STATUS.md">Status</a>
   ·
   <a href="Docs/Handbook/README.md">Handbook</a>
-</p>
-
-<p align="center">
-  <img src="Docs/assets/clippy-attention.gif" alt="Clippy" width="260">
 </p>
 
 ## What Clippy Does
