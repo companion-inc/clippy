@@ -166,8 +166,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd dist
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "Clippy macOS build."
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "Clippy macOS build."
           gh release upload "$GITHUB_REF_NAME" \
             Clippy.dmg \
             Clippy.dmg.sha256 \
@@ -175,4 +175,5 @@ jobs:
             Clippy-macOS.zip.sha256 \
             SHA256SUMS.txt \
             Clippy-macOS.notarization.txt \
+            --repo "$GITHUB_REPOSITORY" \
             --clobber
