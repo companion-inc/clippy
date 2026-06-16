@@ -324,8 +324,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             }
             return
         }
+        let needsToolLane = ClippyAgentInstructions.shouldUseCodexToolLane(text: text, inputMode: inputMode)
         let needsComputerControl = ClippyAgentInstructions.shouldUseComputerControl(text: text, inputMode: inputMode)
-        let activeBrain = needsComputerControl ? (computerControlBrain() ?? conversation) : conversation
+        let needsAnnotationTool = ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: text, inputMode: inputMode)
+        let activeBrain = needsToolLane ? (computerControlBrain() ?? conversation) : conversation
         guard let activeBrain else {
             if isClippyHidden == false {
                 syncBubbleAnchorToClippy()
@@ -342,6 +344,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let brain = activeBrain
         if needsComputerControl {
             log("routing: codex computer-control requested")
+        } else if needsAnnotationTool {
+            log("routing: codex annotation requested")
         }
         let desktopContext = DesktopContextSnapshot.capture()
         log("desktop-context: \(desktopContext.logSummary)")

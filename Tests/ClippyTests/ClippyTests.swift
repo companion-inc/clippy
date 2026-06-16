@@ -138,8 +138,22 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "apply to this job in the browser", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "click the blue button", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "type this into the page", inputMode: .voice))
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "hover over that menu", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "hover a ring over this button", inputMode: .text) == false)
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "summarize the docs", inputMode: .voice) == false)
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "what's on my screen", inputMode: .text) == false)
+}
+
+@Test func codexToolLaneRoutesScreenAnnotationWork() {
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "highlight this button", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw an arrow on the page", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "point at the menu", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "circle this", inputMode: .voice))
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw a logo", inputMode: .text) == false)
+
+    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "highlight this button", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "fill out this form", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "summarize the docs", inputMode: .text) == false)
 }
 
 @Test func codexConversationResumesTheSameThreadAcrossTurns() async throws {

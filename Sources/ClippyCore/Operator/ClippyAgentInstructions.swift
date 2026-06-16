@@ -132,6 +132,60 @@ internal tool plumbing.
         true
     }
 
+    /// Turns that need MCP tools use the Codex app-server lane: GUI/browser
+    /// control uses Cua, while visual coaching uses Clippy's annotation tool.
+    public static func shouldUseCodexToolLane(
+        text: String,
+        inputMode: AssistantInputMode
+    ) -> Bool {
+        shouldUseComputerControl(text: text, inputMode: inputMode)
+            || shouldUseScreenAnnotationTool(text: text, inputMode: inputMode)
+    }
+
+    /// Turns that ask Clippy to draw, point, or mark the visible screen should
+    /// use the Codex app-server lane because that is where `clippy-annotation`
+    /// is wired. Inline tags still work as a fallback on text-only lanes.
+    public static func shouldUseScreenAnnotationTool(
+        text: String,
+        inputMode: AssistantInputMode
+    ) -> Bool {
+        let lower = text.lowercased()
+        let annotationPhrases = [
+            "annotate",
+            "draw on",
+            "draw over",
+            "draw an arrow",
+            "draw a circle",
+            "highlight this",
+            "highlight the",
+            "circle this",
+            "circle the",
+            "outline this",
+            "outline the",
+            "point at",
+            "point to",
+            "mark this",
+            "mark the",
+            "call out",
+            "show me where",
+            "show where",
+            "put an arrow",
+            "put a ring",
+        ]
+        if annotationPhrases.contains(where: { lower.contains($0) }) {
+            return true
+        }
+
+        let words = lower
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+        if inputMode == .voice, words.count <= 10 {
+            let actionWords = Set(["annotate", "highlight", "circle", "outline", "point", "mark", "arrow"])
+            if words.contains(where: actionWords.contains) { return true }
+        }
+        return false
+    }
+
     /// Turns that ask Clippy to drive a native app or browser need the Codex app-server
     /// lane because that is where the computer-control MCP server is wired.
     public static func shouldUseComputerControl(
@@ -160,7 +214,8 @@ internal tool plumbing.
             "choose",
             "scroll",
             "drag",
-            "hover",
+            "hover over",
+            "hover on",
             "use this window",
             "use the window",
             "use this page",
