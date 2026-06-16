@@ -47,10 +47,24 @@ public extension VoiceSidecarConfiguration {
 
     static var irisVoiceSidecar: VoiceSidecarConfiguration {
         let environment = ProcessInfo.processInfo.environment
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
         return VoiceSidecarConfiguration(
             executablePath: environment["CLIPPY_VOICE_SIDECAR_EXECUTABLE"] ?? "uv",
-            workingDirectoryPath: environment["CLIPPY_IRIS_VOICE_DIR"] ?? "\(home)/Companion/Code/iris/apps/iris-voice"
+            workingDirectoryPath: environment["CLIPPY_IRIS_VOICE_DIR"] ?? defaultIrisVoiceDirectoryPath
         )
+    }
+
+    private static var defaultIrisVoiceDirectoryPath: String {
+        let applicationSupport = FileManager.default.urls(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask
+        ).first ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Application Support", isDirectory: true)
+
+        return applicationSupport
+            .appendingPathComponent("Clippy", isDirectory: true)
+            .appendingPathComponent("VoiceSidecar", isDirectory: true)
+            .appendingPathComponent("iris-voice", isDirectory: true)
+            .path
     }
 }
