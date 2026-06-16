@@ -156,6 +156,12 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "summarize the docs", inputMode: .text) == false)
 }
 
+@Test func computerUsePromptKeepsCuaCursorForVisibleActions() {
+    #expect(ClippyAgentInstructions.systemPrompt.contains("The Cua lane includes an agent-cursor overlay"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("leave it enabled"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("Use `annotate` for teaching"))
+}
+
 @Test func codexConversationResumesTheSameThreadAcrossTurns() async throws {
     let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-codex-log-\(UUID().uuidString).txt")
     let scriptURL = try writeExecutableScript(
@@ -286,8 +292,11 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     let runtime = ComputerUseMCPConfig.defaultRuntime(environment: ["CLIPPY_CUA_DRIVER": cua.path])
     #expect(runtime?.serverName == "cua-driver")
     #expect(runtime?.command == cua.path)
-    #expect(runtime?.args == ["mcp", "--no-daemon-relaunch", "--no-overlay"])
+    #expect(runtime?.args.starts(with: ["mcp", "--no-daemon-relaunch", "--cursor-id", "clippy"]) == true)
+    #expect(runtime?.args.contains("--no-overlay") == false)
     #expect(runtime?.enabledTools.contains("drag") == true)
+    #expect(runtime?.enabledTools.contains("move_cursor") == true)
+    #expect(runtime?.enabledTools.contains("set_agent_cursor_style") == true)
     #expect(runtime?.enabledTools.contains("zoom") == true)
     #expect(runtime?.enabledTools.contains("screenshot") == false)
     #expect(ComputerUseMCPConfig.clippyEnabledTools.contains("screenshot"))
@@ -302,12 +311,16 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-bundled-cua-\(UUID().uuidString)", isDirectory: true)
     let macOSDir = tempDir.appendingPathComponent("Contents/MacOS", isDirectory: true)
     let helpersDir = tempDir.appendingPathComponent("Contents/Helpers", isDirectory: true)
+    let resourcesDir = tempDir.appendingPathComponent("Contents/Resources", isDirectory: true)
     try FileManager.default.createDirectory(at: macOSDir, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: helpersDir, withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: resourcesDir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempDir) }
     let helper = helpersDir.appendingPathComponent(ComputerUseMCPConfig.bundledHelperName)
     FileManager.default.createFile(atPath: helper.path, contents: Data("#!/bin/sh\n".utf8))
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
+    let icon = resourcesDir.appendingPathComponent(ComputerUseMCPConfig.cursorIconName)
+    FileManager.default.createFile(atPath: icon.path, contents: Data("png".utf8))
 
     let runtime = ComputerUseMCPConfig.defaultRuntime(
         environment: [:],
@@ -315,9 +328,12 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         workingDirectory: tempDir.path
     )
 
-    #expect(runtime?.serverName == "cua-driver")
-    #expect(runtime?.command == helper.path)
-    #expect(runtime?.args == ["mcp", "--no-daemon-relaunch", "--no-overlay"])
+    let resolved = try #require(runtime)
+    #expect(resolved.serverName == "cua-driver")
+    #expect(resolved.command == helper.path)
+    #expect(resolved.args.starts(with: ["mcp", "--no-daemon-relaunch", "--cursor-id", "clippy"]))
+    #expect(resolved.args.contains("--cursor-icon"))
+    #expect(resolved.args.contains { $0.hasSuffix("ClippyCursor.png") })
 }
 
 @Test func codexConversationWiresCuaAndAnnotationMCPServers() async throws {
@@ -691,6 +707,15 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(AnnotationPalette.backingTone(luminance: nil, fallbackAppearance: .init(named: .aqua)!) == .dark)
 }
 
+@Test func clippyBodyScaleClampsAndStepsInQuarterIncrements() {
+    #expect(ClippyBodyScale(0.1).value == ClippyBodyScale.minimum)
+    #expect(ClippyBodyScale(9).value == ClippyBodyScale.maximum)
+    #expect(ClippyBodyScale.default.adjusted(by: 1).value == 1.25)
+    #expect(ClippyBodyScale.default.adjusted(by: -1).value == 0.75)
+    #expect(ClippyBodyScale(1.25).rasterScale == 2.5)
+    #expect(ClippyBodyScale(1.25).percentTitle == "125%")
+}
+
 @Test func clippySpriteSheetProducesVisibleRestPoseTexture() throws {
     let root = clippyResourceRoot()
     let sheet = try ClippySpriteSheet(packRoot: root)
@@ -777,6 +802,16 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 
     #expect(reportedFrame?.origin == CGPoint(x: 120, y: 140))
     #expect(reportedFrame?.size == CGSize(width: 24, height: 24))
+}
+
+@Test @MainActor func spriteRendererResizeUpdatesViewAndSpriteAnchor() {
+    let renderer = SpriteKitRasterCharacterRenderer(size: CGSize(width: 24, height: 24))
+
+    renderer.resize(to: CGSize(width: 48, height: 36))
+
+    #expect(renderer.view.frame.size == CGSize(width: 48, height: 36))
+    #expect(renderer.scene.scaleMode == .resizeFill)
+    #expect(renderer.sprite.position == CGPoint(x: 24, y: 0))
 }
 
 @Test @MainActor func clippyWindowDisablesCompetingBackgroundDrag() {

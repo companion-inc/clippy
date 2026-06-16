@@ -24,7 +24,7 @@ public enum AnnotationMark: Equatable, Sendable {
 
 /// Borderless, transparent, click-through overlay that draws Clippy's on-screen marks
 /// (target/hover rings, highlight outlines, shape paths) in global screen coordinates.
-/// Replaces Clippy's synthetic cursor overlay — here Clippy's body does the pointing.
+/// This is for teaching marks; Cua's agent cursor overlay shows live GUI actions.
 @MainActor
 public final class AnnotationOverlayWindow {
     private let window: NSWindow
@@ -70,37 +70,68 @@ final class AnnotationDrawView: NSView {
     var marks: [AnnotationMark] = []
     var screenOrigin: CGPoint = .zero
     var backgroundSampler: AnnotationBackgroundSampler?
+    private let markScale: CGFloat = 1
 
     override var isFlipped: Bool { false }
     override var isOpaque: Bool { false }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
-        ctx.setShouldAntialias(false)
+        ctx.setAllowsAntialiasing(true)
+        ctx.setShouldAntialias(true)
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
         for mark in marks {
             switch mark {
             case let .ring(center, radius, kind):
                 let c = local(center)
-                let rect = CGRect(x: c.x - radius, y: c.y - radius, width: radius * 2, height: radius * 2)
+                let scaledRadius = radius * markScale
+                let rect = CGRect(
+                    x: c.x - scaledRadius,
+                    y: c.y - scaledRadius,
+                    width: scaledRadius * 2,
+                    height: scaledRadius * 2
+                )
                 let palette = palette(around: [center])
-                drawPixelBox(ctx, rect: rect, palette: palette, fill: true, dashed: kind == .hover)
-                drawPixelCrosshair(ctx, center: c, radius: min(max(radius * 0.28, 8), 16), palette: palette, dashed: kind == .hover)
+                drawRing(ctx, rect: rect, palette: palette, fill: true, dashed: kind == .hover)
+                drawCrosshair(
+                    ctx,
+                    center: c,
+                    radius: min(max(scaledRadius * 0.28, 8 * markScale), 16 * markScale),
+                    palette: palette,
+                    dashed: kind == .hover
+                )
             case let .region(center, radius):
                 let c = local(center)
-                let rect = CGRect(x: c.x - radius, y: c.y - radius, width: radius * 2, height: radius * 2)
-                drawPixelBox(ctx, rect: rect, palette: palette(around: regionSamplePoints(center: center, radius: radius)), fill: false, dashed: false)
+                let scaledRadius = radius * markScale
+                let rect = CGRect(
+                    x: c.x - scaledRadius,
+                    y: c.y - scaledRadius,
+                    width: scaledRadius * 2,
+                    height: scaledRadius * 2
+                )
+                drawRegion(
+                    ctx,
+                    rect: rect,
+                    palette: palette(around: regionSamplePoints(center: center, radius: scaledRadius)),
+                    fill: false
+                )
             case let .path(points, shape):
                 let pts = points.map(local)
                 guard let first = pts.first else { break }
                 let palette = palette(around: points)
                 if shape == .circle {
-                    let r: CGFloat = 32
-                    drawPixelBox(ctx, rect: CGRect(x: first.x - r, y: first.y - r, width: r * 2, height: r * 2), palette: palette, fill: true, dashed: false)
+                    let r: CGFloat = 32 * markScale
+                    drawRing(
+                        ctx,
+                        rect: CGRect(x: first.x - r, y: first.y - r, width: r * 2, height: r * 2),
+                        palette: palette,
+                        fill: true,
+                        dashed: false
+                    )
                     break
                 }
-                drawPixelPath(ctx, points: pts, palette: palette)
+                drawPath(ctx, points: pts, shape: shape, palette: palette)
                 if shape == .arrow, pts.count >= 2 {
                     drawArrowHead(ctx, from: pts[pts.count - 2], to: pts[pts.count - 1], palette: palette)
                 }
@@ -123,100 +154,117 @@ final class AnnotationDrawView: NSView {
         ]
     }
 
-    private func drawPixelBox(_ ctx: CGContext, rect: CGRect, palette: AnnotationPalette, fill: Bool, dashed: Bool) {
-        let path = pixelBoxPath(rect.integral.insetBy(dx: 1, dy: 1), step: 8)
+    private func drawRing(_ ctx: CGContext, rect: CGRect, palette: AnnotationPalette, fill: Bool, dashed: Bool) {
+        let path = CGPath(ellipseIn: rect.standardized.insetBy(dx: 1, dy: 1), transform: nil)
         if fill {
             ctx.setFillColor(palette.primary.withAlphaComponent(0.16).cgColor)
             ctx.addPath(path)
             ctx.fillPath()
         }
         if let backing = palette.backing {
-            strokePath(ctx, path: path, color: backing, width: 6, dashed: dashed)
-            strokePath(ctx, path: path, color: palette.primary, width: 3, dashed: dashed)
+            strokePath(ctx, path: path, color: backing, width: 6 * markScale, dashed: dashed)
+            strokePath(ctx, path: path, color: palette.primary, width: 3 * markScale, dashed: dashed)
         } else {
-            strokePath(ctx, path: path, color: palette.primary, width: 4, dashed: dashed)
+            strokePath(ctx, path: path, color: palette.primary, width: 4 * markScale, dashed: dashed)
         }
     }
 
-    private func drawPixelCrosshair(_ ctx: CGContext, center: CGPoint, radius: CGFloat, palette: AnnotationPalette, dashed: Bool) {
+    private func drawRegion(_ ctx: CGContext, rect: CGRect, palette: AnnotationPalette, fill: Bool) {
+        let r = rect.standardized.insetBy(dx: 1, dy: 1)
+        let corner = min(16 * markScale, max(4, min(r.width, r.height) * 0.18))
+        let path = CGPath(roundedRect: r, cornerWidth: corner, cornerHeight: corner, transform: nil)
+        if fill {
+            ctx.setFillColor(palette.primary.withAlphaComponent(0.12).cgColor)
+            ctx.addPath(path)
+            ctx.fillPath()
+        }
+        if let backing = palette.backing {
+            strokePath(ctx, path: path, color: backing, width: 6 * markScale)
+            strokePath(ctx, path: path, color: palette.primary, width: 3 * markScale)
+        } else {
+            strokePath(ctx, path: path, color: palette.primary, width: 4 * markScale)
+        }
+    }
+
+    private func drawCrosshair(_ ctx: CGContext, center: CGPoint, radius: CGFloat, palette: AnnotationPalette, dashed: Bool) {
         ctx.saveGState()
         if dashed {
-            ctx.setLineDash(phase: 0, lengths: [4, 3])
+            ctx.setLineDash(phase: 0, lengths: [4 * markScale, 3 * markScale])
         }
-        drawPixelLine(ctx, from: CGPoint(x: center.x - radius, y: center.y), to: CGPoint(x: center.x + radius, y: center.y), palette: palette)
-        drawPixelLine(ctx, from: CGPoint(x: center.x, y: center.y - radius), to: CGPoint(x: center.x, y: center.y + radius), palette: palette)
+        drawLine(ctx, from: CGPoint(x: center.x - radius, y: center.y), to: CGPoint(x: center.x + radius, y: center.y), palette: palette)
+        drawLine(ctx, from: CGPoint(x: center.x, y: center.y - radius), to: CGPoint(x: center.x, y: center.y + radius), palette: palette)
         ctx.restoreGState()
     }
 
-    private func drawPixelPath(_ ctx: CGContext, points: [CGPoint], palette: AnnotationPalette) {
+    private func drawPath(_ ctx: CGContext, points: [CGPoint], shape: GroundingTag.ShapeKind, palette: AnnotationPalette) {
         if let backing = palette.backing {
-            drawPathStroke(ctx, points: points, color: backing, width: 7)
-            drawPathStroke(ctx, points: points, color: palette.primary, width: 3)
+            drawPathStroke(ctx, points: points, shape: shape, color: backing, width: 7 * markScale)
+            drawPathStroke(ctx, points: points, shape: shape, color: palette.primary, width: 3 * markScale)
         } else {
-            drawPathStroke(ctx, points: points, color: palette.primary, width: 4)
+            drawPathStroke(ctx, points: points, shape: shape, color: palette.primary, width: 4 * markScale)
         }
     }
 
-    private func drawPixelLine(_ ctx: CGContext, from a: CGPoint, to b: CGPoint, palette: AnnotationPalette) {
+    private func drawLine(_ ctx: CGContext, from a: CGPoint, to b: CGPoint, palette: AnnotationPalette) {
         if let backing = palette.backing {
-            drawPathStroke(ctx, points: [a, b], color: backing, width: 6)
-            drawPathStroke(ctx, points: [a, b], color: palette.primary, width: 3)
+            drawPathStroke(ctx, points: [a, b], shape: .line, color: backing, width: 6 * markScale)
+            drawPathStroke(ctx, points: [a, b], shape: .line, color: palette.primary, width: 3 * markScale)
         } else {
-            drawPathStroke(ctx, points: [a, b], color: palette.primary, width: 4)
+            drawPathStroke(ctx, points: [a, b], shape: .line, color: palette.primary, width: 4 * markScale)
         }
-    }
-
-    private func pixelBoxPath(_ rect: CGRect, step rawStep: CGFloat) -> CGPath {
-        let r = rect.standardized
-        let step = min(rawStep, max(2, min(r.width, r.height) / 4))
-        let path = CGMutablePath()
-        path.move(to: CGPoint(x: r.minX + step, y: r.minY))
-        path.addLine(to: CGPoint(x: r.maxX - step, y: r.minY))
-        path.addLine(to: CGPoint(x: r.maxX - step, y: r.minY + step))
-        path.addLine(to: CGPoint(x: r.maxX, y: r.minY + step))
-        path.addLine(to: CGPoint(x: r.maxX, y: r.maxY - step))
-        path.addLine(to: CGPoint(x: r.maxX - step, y: r.maxY - step))
-        path.addLine(to: CGPoint(x: r.maxX - step, y: r.maxY))
-        path.addLine(to: CGPoint(x: r.minX + step, y: r.maxY))
-        path.addLine(to: CGPoint(x: r.minX + step, y: r.maxY - step))
-        path.addLine(to: CGPoint(x: r.minX, y: r.maxY - step))
-        path.addLine(to: CGPoint(x: r.minX, y: r.minY + step))
-        path.addLine(to: CGPoint(x: r.minX + step, y: r.minY + step))
-        path.closeSubpath()
-        return path
     }
 
     private func strokePath(_ ctx: CGContext, path: CGPath, color: NSColor, width: CGFloat, dashed: Bool = false) {
         ctx.saveGState()
-        ctx.setLineCap(.butt)
-        ctx.setLineJoin(.miter)
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
         ctx.setLineWidth(width)
         ctx.setStrokeColor(color.cgColor)
         if dashed {
-            ctx.setLineDash(phase: 0, lengths: [6, 4])
+            ctx.setLineDash(phase: 0, lengths: [6 * markScale, 4 * markScale])
         }
         ctx.addPath(path)
         ctx.strokePath()
         ctx.restoreGState()
     }
 
-    private func drawPathStroke(_ ctx: CGContext, points: [CGPoint], color: NSColor, width: CGFloat) {
+    private func drawPathStroke(
+        _ ctx: CGContext,
+        points: [CGPoint],
+        shape: GroundingTag.ShapeKind,
+        color: NSColor,
+        width: CGFloat
+    ) {
         guard let first = points.first else { return }
         ctx.setLineWidth(width)
         ctx.setStrokeColor(color.cgColor)
-        ctx.setLineCap(.butt)
-        ctx.setLineJoin(.miter)
+        ctx.setLineCap(.round)
+        ctx.setLineJoin(.round)
         ctx.beginPath()
         ctx.move(to: first)
-        for p in points.dropFirst() {
-            ctx.addLine(to: p)
+        if shape == .curve, points.count > 2 {
+            let rest = Array(points.dropFirst())
+            for index in rest.indices {
+                let current = rest[index]
+                if index == rest.indices.last {
+                    ctx.addLine(to: current)
+                } else {
+                    let next = rest[index + 1]
+                    let mid = CGPoint(x: (current.x + next.x) / 2, y: (current.y + next.y) / 2)
+                    ctx.addQuadCurve(to: mid, control: current)
+                }
+            }
+        } else {
+            for p in points.dropFirst() {
+                ctx.addLine(to: p)
+            }
         }
         ctx.strokePath()
     }
 
     private func drawArrowHead(_ ctx: CGContext, from a: CGPoint, to b: CGPoint, palette: AnnotationPalette) {
         let angle = atan2(b.y - a.y, b.x - a.x)
-        let len: CGFloat = 18
+        let len: CGFloat = 18 * markScale
         let spread = CGFloat.pi / 7
         let left = CGPoint(x: b.x - len * cos(angle - spread), y: b.y - len * sin(angle - spread))
         let right = CGPoint(x: b.x - len * cos(angle + spread), y: b.y - len * sin(angle + spread))

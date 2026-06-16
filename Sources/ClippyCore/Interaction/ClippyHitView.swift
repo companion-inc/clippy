@@ -35,7 +35,7 @@ public final class ClippyHitView: NSView {
     }
 
     public override func hitTest(_ point: NSPoint) -> NSView? {
-        visibleHitTest(point) ? self : nil
+        bounds.contains(point) && visibleHitTest(point) ? self : nil
     }
 
     public override func rightMouseDown(with event: NSEvent) {

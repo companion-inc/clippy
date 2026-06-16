@@ -4,7 +4,7 @@ import ClippyCore
 @main
 @MainActor
 final class ClippyApp: NSObject, NSApplicationDelegate {
-    private static let characterScale: CGFloat = 2
+    private static let bodyScaleKey = "ClippyBodyScale"
 
     private var clippy: Clippy?
     private var pendingIdle: DispatchWorkItem?
@@ -38,6 +38,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let id = UserDefaults.standard.string(forKey: "ClippyVoiceID")
         return id.flatMap(ClippyVoice.by(id:)) ?? .default
     }()
+    private var bodyScale: ClippyBodyScale = {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: ClippyApp.bodyScaleKey) != nil else {
+            return .default
+        }
+        return ClippyBodyScale(defaults.double(forKey: ClippyApp.bodyScaleKey))
+    }()
     private var isTurnRunning = false
     private var currentBrainTask: Task<Void, Never>?
     private var lastShot: ScreenPerception.Screenshot?
@@ -66,7 +73,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         RetroFont.registerBundledFonts()
-        startClippy(Self.makeClippy())
+        startClippy(Self.makeClippy(bodyScale: bodyScale))
         overlay = AnnotationOverlayWindow()
         setUpBrain()
         setUpVoice()
@@ -76,9 +83,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     // MARK: - Clippy setup
 
-    private static func makeClippy() -> Clippy {
+    private static func makeClippy(bodyScale: ClippyBodyScale) -> Clippy {
         do {
-            return try Clippy(packRoot: clippyResourceRoot(), scale: characterScale)
+            return try Clippy(packRoot: clippyResourceRoot(), bodyScale: bodyScale)
         } catch {
             fatalError("Clippy resources failed to load: \(error)")
         }
@@ -841,6 +848,19 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             self?.toggleTTS()
         })
 
+        let bodySizeItems: [RetroMenuItem] = [
+            .action("- Smaller", detail: "25%") { [weak self] in
+                self?.adjustBodyScale(by: -1)
+            },
+            .action("+ Bigger", detail: "25%") { [weak self] in
+                self?.adjustBodyScale(by: 1)
+            },
+            .action("Reset Size", detail: "100%") { [weak self] in
+                self?.setBodyScale(.default)
+            },
+        ]
+        items.append(.submenu("Clippy Size", detail: bodyScale.percentTitle, items: bodySizeItems))
+
         let modelItems = ClippyModel.all.map { model in
             RetroMenuItem.choice(model.displayName, isSelected: model.id == selectedModel.id) { [weak self] in
                 self?.selectModel(id: model.id)
@@ -947,6 +967,22 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         ttsEnabled.toggle()
         UserDefaults.standard.set(ttsEnabled, forKey: "ClippyTTSEnabled")
         if !ttsEnabled { tts?.stop() }
+    }
+
+    private func adjustBodyScale(by steps: Int) {
+        setBodyScale(bodyScale.adjusted(by: steps))
+    }
+
+    private func setBodyScale(_ scale: ClippyBodyScale) {
+        bodyScale = scale
+        UserDefaults.standard.set(scale.value, forKey: Self.bodyScaleKey)
+        if let clippy {
+            clippy.resizeBody(to: scale, in: screenForClippy()?.visibleFrame ?? NSScreen.main?.visibleFrame, animated: true)
+        }
+        log("body size: \(scale.percentTitle)")
+        guard isClippyHidden == false else { return }
+        syncBubbleAnchorToClippy()
+        chatBubble?.showReplyForReading("Clippy size \(scale.percentTitle).")
     }
 
     @objc private func grantAccessibility() {
@@ -1113,9 +1149,27 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 }
             } else if command == "clearground" {
                 overlay?.clear()
+            } else if command.hasPrefix("bodysize:") {
+                applyBodySizeCommand(String(command.dropFirst("bodysize:".count)))
             } else if command.hasPrefix("act:") {
                 presentGrounding([.act(animation: String(command.dropFirst(4)).trimmingCharacters(in: .whitespaces))])
             }
+        }
+    }
+
+    private func applyBodySizeCommand(_ raw: String) {
+        let command = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch command {
+        case "+", "plus", "increase", "bigger", "larger":
+            adjustBodyScale(by: 1)
+        case "-", "minus", "decrease", "smaller":
+            adjustBodyScale(by: -1)
+        case "reset", "default":
+            setBodyScale(.default)
+        default:
+            let cleaned = command.replacingOccurrences(of: "%", with: "")
+            guard let number = Double(cleaned) else { return }
+            setBodyScale(ClippyBodyScale(number > 10 ? number / 100 : number))
         }
     }
 

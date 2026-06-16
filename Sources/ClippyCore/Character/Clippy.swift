@@ -22,6 +22,9 @@ public final class Clippy {
     public let renderer: SpriteKitRasterCharacterRenderer
     public let animator: ClippyAnimator
     public let soundBank: ClippySoundBank?
+    public private(set) var bodyScale: ClippyBodyScale
+
+    private let sheet: ClippySpriteSheet
 
     private static let idleAnimationNamesList = [
         "Idle1_1", "IdleAtom", "IdleEyeBrowRaise", "IdleFingerTap",
@@ -36,20 +39,26 @@ public final class Clippy {
     public let idleAnimationNames = Clippy.idleAnimationNamesList
     public let gestureAnimationNames = Clippy.gestureAnimationNamesList
 
-    public init(packRoot: URL, scale: CGFloat = 2) throws {
+    public convenience init(packRoot: URL, scale: CGFloat = ClippyBodyScale.default.rasterScale) throws {
+        try self.init(packRoot: packRoot, bodyScale: ClippyBodyScale(Double(scale / ClippyBodyScale.defaultRasterScale)))
+    }
+
+    public init(packRoot: URL, bodyScale: ClippyBodyScale = .default) throws {
         let sheet = try ClippySpriteSheet(packRoot: packRoot)
         sheet.preloadTextures(for: Self.preloadedAnimationNames)
-        let size = CGSize(width: sheet.frameSize.width * scale, height: sheet.frameSize.height * scale)
+        let size = Self.windowSize(frameSize: sheet.frameSize, bodyScale: bodyScale)
         let renderer = SpriteKitRasterCharacterRenderer(size: size)
         let animator = ClippyAnimator(sheet: sheet, renderer: renderer)
         let soundBank = try? ClippySoundBank(packRoot: packRoot)
         animator.soundBank = soundBank
 
+        self.sheet = sheet
         self.renderer = renderer
         self.animator = animator
         self.soundBank = soundBank
+        self.bodyScale = bodyScale
         self.windowController = ClippyWindowController(rendererView: renderer.view, size: size) { point in
-            CGRect(origin: .zero, size: size).contains(point)
+            point.x >= 0 && point.y >= 0
         }
     }
 
@@ -92,6 +101,20 @@ public final class Clippy {
 
     public func move(to origin: CGPoint, animated: Bool = true) {
         windowController.move(to: origin, animated: animated)
+    }
+
+    public func resizeBody(to bodyScale: ClippyBodyScale, in visibleFrame: CGRect? = nil, animated: Bool = true) {
+        let size = Self.windowSize(frameSize: sheet.frameSize, bodyScale: bodyScale)
+        let oldFrame = windowController.frame
+        var origin = CGPoint(x: oldFrame.midX - size.width / 2, y: oldFrame.minY)
+        if let visibleFrame {
+            origin = Self.clampedOrigin(origin, size: size, in: visibleFrame)
+        }
+        self.bodyScale = bodyScale
+        renderer.resize(to: size)
+        windowController.resize(to: size, anchoredAt: origin, animated: animated) { [renderer] in
+            renderer.resize(to: size)
+        }
     }
 
     public func park(in visibleFrame: CGRect, edge: ClippyParkEdge) {
@@ -147,5 +170,19 @@ public final class Clippy {
         }
         let rep = NSBitmapImageRep(cgImage: texture.cgImage())
         return rep.representation(using: .png, properties: [:])
+    }
+
+    private static func windowSize(frameSize: CGSize, bodyScale: ClippyBodyScale) -> CGSize {
+        CGSize(
+            width: (frameSize.width * bodyScale.rasterScale).rounded(),
+            height: (frameSize.height * bodyScale.rasterScale).rounded()
+        )
+    }
+
+    private static func clampedOrigin(_ origin: CGPoint, size: CGSize, in visibleFrame: CGRect) -> CGPoint {
+        CGPoint(
+            x: min(max(origin.x, visibleFrame.minX), visibleFrame.maxX - size.width),
+            y: min(max(origin.y, visibleFrame.minY), visibleFrame.maxY - size.height)
+        )
     }
 }

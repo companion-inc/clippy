@@ -109,6 +109,31 @@ public final class ClippyWindowController {
         window.orderOut(nil)
     }
 
+    public func resize(to size: CGSize, anchoredAt origin: CGPoint, animated: Bool, completion: (() -> Void)? = nil) {
+        let frame = CGRect(origin: origin, size: size)
+        let finish = { [weak self] in
+            guard let self else {
+                completion?()
+                return
+            }
+            self.contentView.frame = CGRect(origin: .zero, size: size)
+            self.onFrameChanged?(self.window.frame)
+            completion?()
+        }
+        if animated {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.18
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                window.animator().setFrame(frame, display: true)
+            } completionHandler: {
+                finish()
+            }
+        } else {
+            window.setFrame(frame, display: true)
+            finish()
+        }
+    }
+
     public func move(to origin: CGPoint, animated: Bool, completion: (() -> Void)? = nil) {
         let frame = CGRect(origin: origin, size: window.frame.size)
         let finish = { [weak self] in

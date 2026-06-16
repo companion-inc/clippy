@@ -227,7 +227,7 @@ enum ClippyAnnotationMCP {
     private static let tools: [[String: Any]] = [
         [
             "name": "annotate",
-            "description": "Draw Clippy-owned screen annotations: point, target ring, hover ring, highlight, or shape path. Coordinates are pixels in the current Clippy screenshot, top-left origin.",
+            "description": "Draw Clippy-owned teaching annotations: point, target ring, hover ring, highlight, or shape path. Coordinates are pixels in the current Clippy screenshot, top-left origin. Use this for explanations, highlights, arrows, regions, and multi-mark teaching. Cua's agent cursor overlay handles ordinary visible GUI action progress.",
             "inputSchema": [
                 "type": "object",
                 "additionalProperties": false,

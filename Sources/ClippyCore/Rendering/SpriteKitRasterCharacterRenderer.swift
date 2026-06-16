@@ -27,6 +27,14 @@ public final class SpriteKitRasterCharacterRenderer {
         sprite.size = fittedSize(for: texture)
     }
 
+    public func resize(to size: CGSize) {
+        view.frame = CGRect(origin: .zero, size: size)
+        sprite.position = CGPoint(x: size.width / 2, y: 0)
+        if let texture = sprite.texture {
+            sprite.size = fittedSize(for: texture)
+        }
+    }
+
     public func show(animationName: String, spriteSheet: ClippySpriteSheet) throws {
         guard let frames = spriteSheet.frames(for: animationName), let texture = frames.textures.first else {
             throw SpriteKitRasterCharacterRendererError.missingAnimationFrames(animationName)
