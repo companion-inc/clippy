@@ -134,7 +134,7 @@ jobs:
           shasum -a 256 Clippy.dmg Clippy-macOS.zip > SHA256SUMS.txt
 
       - name: Upload app artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: Clippy-macOS-${{ github.sha }}
           path: |
@@ -155,7 +155,7 @@ jobs:
       contents: write
     steps:
       - name: Download packaged app artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: Clippy-macOS-${{ github.sha }}
           path: dist
