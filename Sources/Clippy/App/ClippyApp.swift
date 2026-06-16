@@ -343,12 +343,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if needsComputerControl {
             log("routing: codex computer-control requested")
         }
-        // Give Clippy eyes only for screen-dependent turns. Sending a screenshot
-        // through the app-server on every plain chat turn makes simple replies
-        // slower for no user-visible gain.
-        let wantsScreen = needsComputerControl
-            || ClippyAgentInstructions.shouldAttachScreenshot(text: text, inputMode: inputMode)
-        let shot = wantsScreen ? captureCleanTurnScreenshot() : nil
+        let desktopContext = DesktopContextSnapshot.capture()
+        log("desktop-context: \(desktopContext.logSummary)")
+        // Give Clippy eyes on every turn so short phrases like "do this" and
+        // typed bubble turns still carry the real app/window context underneath.
+        let wantsScreen = ClippyAgentInstructions.shouldAttachScreenshot(text: text, inputMode: inputMode)
+        let screenshotScreen = desktopContext.targetScreen() ?? screenForClippy()
+        let shot = wantsScreen ? captureCleanTurnScreenshot(screen: screenshotScreen) : nil
         lastShot = shot
         if let shot {
             log("screen-capture: index=\(shot.screenIndex) frame=\(shot.screenFrame) pixels=\(Int(shot.pixelSize.width))x\(Int(shot.pixelSize.height))")
@@ -373,7 +374,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             screenshotPixelWidth: Int(shot?.pixelSize.width ?? 0),
             screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
             inputMode: inputMode,
-            speaking: speaking)
+            speaking: speaking,
+            desktopContext: desktopContext)
         ttsSpokenChars = 0
         currentBrainTask = Task { [weak self] in
             for await chunk in brain.stream(brainMessage) {
@@ -421,8 +423,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         turnProgressItems.removeAll()
     }
 
-    private func captureCleanTurnScreenshot() -> ScreenPerception.Screenshot? {
-        let targetScreen = screenForClippy()
+    private func captureCleanTurnScreenshot(screen targetScreen: NSScreen?) -> ScreenPerception.Screenshot? {
         let clippyWindow = clippy?.windowController.window
         let bubbleWindow = chatBubble?.window
         let clippyWasVisible = clippyWindow?.isVisible == true

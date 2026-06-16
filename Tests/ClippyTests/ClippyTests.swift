@@ -57,38 +57,79 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(both?.contains("read aloud") == true)
 }
 
-@Test func brainMessageOrdersScreenshotThenVoiceThenText() {
+@Test func desktopContextPromptBlockIncludesAppWindowScreenAndBrowser() {
+    let context = DesktopContextSnapshot(
+        app: .init(name: "Google Chrome", bundleIdentifier: "com.google.Chrome", processIdentifier: 123),
+        window: .init(
+            title: "Example App",
+            ownerName: "Google Chrome",
+            ownerProcessIdentifier: 123,
+            windowIdentifier: 456,
+            bounds: CGRect(x: 10, y: 20, width: 800, height: 600)
+        ),
+        screen: .init(
+            index: 1,
+            appKitFrame: CGRect(x: 0, y: 0, width: 1728, height: 1117),
+            displayBounds: CGRect(x: 0, y: 0, width: 3456, height: 2234),
+            displayIdentifier: 99
+        ),
+        browser: .init(title: "Example App", url: "https://example.test/form")
+    )
+
+    let block = context.promptBlock
+
+    #expect(block.contains("active app: Google Chrome (com.google.Chrome, pid 123)"))
+    #expect(block.contains("active window: title \"Example App\" id 456"))
+    #expect(block.contains("browser tab url: https://example.test/form"))
+    #expect(block.contains("screenshot target screen: index 1"))
+}
+
+@Test func brainMessageOrdersDesktopContextScreenshotVoiceThenText() throws {
+    let context = DesktopContextSnapshot(
+        app: .init(name: "Google Chrome", bundleIdentifier: "com.google.Chrome", processIdentifier: 123),
+        window: nil,
+        screen: nil,
+        browser: nil
+    )
     let msg = ClippyAgentInstructions.brainMessage(
         text: "whats on my screen",
         screenshotPath: "/tmp/shot.png",
         screenshotPixelWidth: 3456,
         screenshotPixelHeight: 2234,
         inputMode: .voice,
-        speaking: true)
-    // Screenshot note first, voice note second, the user's words last.
-    let shotIdx = msg.range(of: "Current screenshot")!.lowerBound
-    let voiceIdx = msg.range(of: "Voice mode")!.lowerBound
-    let textIdx = msg.range(of: "whats on my screen")!.lowerBound
+        speaking: true,
+        desktopContext: context)
+    // Desktop context first, screenshot second, voice note third, user's words last.
+    let contextIdx = try #require(msg.range(of: "Current desktop context")?.lowerBound)
+    let shotIdx = try #require(msg.range(of: "Current full-display screenshot")?.lowerBound)
+    let voiceIdx = try #require(msg.range(of: "Voice mode")?.lowerBound)
+    let textIdx = try #require(msg.range(of: "whats on my screen")?.lowerBound)
+    #expect(contextIdx < shotIdx)
     #expect(shotIdx < voiceIdx)
     #expect(voiceIdx < textIdx)
     #expect(msg.contains("3456x2234 px"))
+    #expect(msg.contains("active app: Google Chrome"))
 
-    // A typed, silent turn carries the screenshot + text but no voice note.
+    // A typed, silent turn carries desktop metadata + text but no voice note.
     let quiet = ClippyAgentInstructions.brainMessage(
-        text: "hello", screenshotPath: "/tmp/s.png",
-        screenshotPixelWidth: 10, screenshotPixelHeight: 20,
-        inputMode: .text, speaking: false)
+        text: "hello",
+        screenshotPath: nil,
+        screenshotPixelWidth: 0,
+        screenshotPixelHeight: 0,
+        inputMode: .text,
+        speaking: false,
+        desktopContext: context)
     #expect(quiet.contains("Voice mode") == false)
     #expect(quiet.contains("hello"))
-    #expect(quiet.contains("not normalized"))
+    #expect(quiet.contains("active app: Google Chrome"))
 }
 
-@Test func screenshotPolicySkipsPlainChatAndCapturesScreenTurns() {
-    #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "Say exactly: perf ok.", inputMode: .text) == false)
+@Test func screenshotPolicyCapturesEveryTurn() {
+    #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "Say exactly: perf ok.", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "what's on my screen", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "highlight this button", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "fix that", inputMode: .voice))
-    #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "summarize the docs", inputMode: .voice) == false)
+    #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "summarize the docs", inputMode: .voice))
 }
 
 @Test func computerControlPolicyRoutesGuiWorkToCodexLane() {

@@ -50,11 +50,11 @@ separate OS prompt the user sees. Work in a non-protected working directory by d
 at most the single protected folder the task truly needs, deliberately and once. Never scan
 multiple protected folders to "find" a file — ask for the path instead.
 
-Seeing the screen — visual turns include the path to a fresh screenshot of the user's screen
-and its pixel dimensions. To point at, find, or describe something on screen, FIRST Read that
-file with your Read tool so you actually see it, THEN emit your tag. Don't guess coordinates
-blind — if this turn has no screenshot note, use your Cua tools to inspect the app/window
-state before pointing or acting.
+Seeing the desktop — every turn includes current app/window metadata. Every turn also attempts
+to include the path to a fresh full-display screenshot and its pixel dimensions. To point at,
+find, or describe something on screen, FIRST Read that file with your Read tool so you actually
+see it, THEN emit your tag. Don't guess coordinates blind — if this turn has no screenshot note,
+use your Cua tools to inspect the app/window state before pointing or acting.
 
 Pointing at the screen — when a step is something on the user's screen, add exactly ONE inline
 tag at the very end of your reply and Clippy will move to it and gesture with its body.
@@ -90,21 +90,26 @@ milestones, and if blocked name the user-visible missing permission or input wit
 internal tool plumbing.
 """
 
-    /// Build the per-turn message for the brain: a fresh-screenshot note, an optional
-    /// voice-context note, then the user's text. Voice in/out can change turn to turn, so
-    /// this context is attached per message rather than baked into the static prompt above.
+    /// Build the per-turn message for the brain: current desktop metadata, a
+    /// fresh-screenshot note, an optional voice-context note, then the user's
+    /// text. Voice in/out can change turn to turn, so this context is attached
+    /// per message rather than baked into the static prompt above.
     public static func brainMessage(
         text: String,
         screenshotPath: String?,
         screenshotPixelWidth: Int,
         screenshotPixelHeight: Int,
         inputMode: AssistantInputMode,
-        speaking: Bool
+        speaking: Bool,
+        desktopContext: DesktopContextSnapshot? = nil
     ) -> String {
         var blocks: [String] = []
+        if let desktopContext {
+            blocks.append(desktopContext.promptBlock)
+        }
         if let path = screenshotPath {
             blocks.append("""
-            [Current screenshot of the user's screen: \(path) (\(screenshotPixelWidth)x\(screenshotPixelHeight) px). \
+            [Current full-display screenshot of the user's screen: \(path) (\(screenshotPixelWidth)x\(screenshotPixelHeight) px). \
             Read it with your Read tool when you need to see the screen to point at, find, \
             or describe something. Any [POINT]/[TARGET]/[HOVER]/[HIGHLIGHT]/[SHAPE] coordinates \
             you emit MUST be real pixel coordinates in THAT image (top-left origin), not normalized \
@@ -118,73 +123,13 @@ internal tool plumbing.
         return blocks.joined(separator: "\n\n")
     }
 
-    /// Direct screenshots are expensive for text-only turns. Capture them only
-    /// when the user's wording asks Clippy to inspect, point at, annotate, or act
-    /// on visible screen content; Cua can still inspect native UI on demand.
+    /// Current product policy is to give every turn eyes. The capture remains
+    /// behind one function so tests and callers agree on the privacy/perf trade.
     public static func shouldAttachScreenshot(
-        text: String,
-        inputMode: AssistantInputMode
+        text _: String,
+        inputMode _: AssistantInputMode
     ) -> Bool {
-        let lower = text.lowercased()
-        let visualPhrases = [
-            "on my screen",
-            "the screen",
-            "this screen",
-            "my monitor",
-            "the monitor",
-            "this monitor",
-            "the display",
-            "this display",
-            "the window",
-            "this window",
-            "the page",
-            "this page",
-            "this app",
-            "the app",
-            "screenshot",
-            "what do you see",
-            "can you see",
-            "look at",
-            "point at",
-            "point to",
-            "draw",
-            "outline",
-            "highlight",
-            "circle",
-            "arrow",
-            "annotate",
-            "coordinate",
-            "target",
-            "click",
-            "double click",
-            "right click",
-            "drag",
-            "scroll",
-            "hover",
-            "cursor",
-            "button",
-            "menu",
-            "icon",
-        ]
-        if visualPhrases.contains(where: { lower.contains($0) }) {
-            return true
-        }
-
-        let words = lower
-            .components(separatedBy: CharacterSet.alphanumerics.inverted)
-            .filter { !$0.isEmpty }
-        let deictic = Set(["this", "that", "these", "those", "here", "there"])
-        if words.contains(where: deictic.contains) {
-            return true
-        }
-
-        // Short spoken fragments often rely on whatever the user is pointing at:
-        // "fix that", "move this", "what's here".
-        if inputMode == .voice, words.count <= 8 {
-            let actionWords = Set(["fix", "move", "open", "select", "choose", "press", "tap"])
-            return words.contains(where: actionWords.contains)
-        }
-        return false
+        true
     }
 
     /// Turns that ask Clippy to drive a native app or browser need the Codex app-server
