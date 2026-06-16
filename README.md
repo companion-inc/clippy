@@ -26,7 +26,7 @@
   <a href="Docs/Handbook/README.md">Handbook</a>
 </p>
 
-![Clippy desktop assistant hero](Docs/assets/clippy-readme-hero.png)
+![Clippy on a clean fake desktop](Docs/assets/clippy-demo-clean-desktop.png)
 
 ## What Clippy Does
 
@@ -45,6 +45,16 @@ The product path is local-first:
   Apple speech stack as the local fallback.
 - Computer-use calls run through the Clippy-bundled Cua helper in packaged
   builds.
+
+## Demo Images
+
+These images are synthetic demo composites built from the committed Clippy
+sprite pack. They are not screenshots of a real desktop, and they contain no
+personal files, tabs, app content, names, or local machine data.
+
+| Clean desktop | Voice | Pointing |
+| --- | --- | --- |
+| ![Clean desktop demo](Docs/assets/clippy-demo-clean-desktop.png) | ![Voice demo](Docs/assets/clippy-demo-voice.png) | ![Pointing demo](Docs/assets/clippy-demo-pointing.png) |
 
 ![Bundled Clippy sprite states](Docs/assets/clippy-actions.png)
 
