@@ -527,10 +527,9 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         }
     }
 
-    #expect(statuses.contains("Starting ChatGPT"))
+    #expect(statuses.contains("Thinking"))
     #expect(statuses.contains("Opening the Clippy thread"))
     #expect(statuses.contains("Sending the turn"))
-    #expect(statuses.contains("Waiting for ChatGPT"))
     #expect(firstPartial == "EARLY ")
 }
 
@@ -1115,6 +1114,12 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(VoiceSpeechTags.strip(text) == "that worked")
     #expect(VoiceSpeechTags.instruction.contains("[chuckle]"))
     #expect(VoiceSpeechTags.instruction.contains("<whisper>"))
+}
+
+@Test func clippyVoiceDefaultUsesClassicRexVoice() {
+    #expect(ClippyVoice.default.id == "rex")
+    #expect(ClippyVoice.all.first?.id == "rex")
+    #expect(ClippyVoice.default.displayName == "Clippy - classic")
 }
 
 @Test func computerUseRoutePolicyRequiresFreshWindowSnapshot() async throws {

@@ -206,7 +206,7 @@ public actor LocalCLIConversation: AgentBrain {
         process.standardOutput = outPipe
         process.standardError = errPipe
 
-        continuation.yield(.status(hasStarted ? "Resuming Claude" : "Starting Claude"))
+        continuation.yield(.status("Thinking"))
         do {
             try process.run()
         } catch {
@@ -216,7 +216,7 @@ public actor LocalCLIConversation: AgentBrain {
         }
         hasStarted = true
         box.set(process)
-        continuation.yield(.status("Waiting for Claude"))
+        continuation.yield(.status("Thinking"))
 
         var accumulated = ""
         var resultText: String?

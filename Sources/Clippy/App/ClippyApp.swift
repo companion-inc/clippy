@@ -83,6 +83,44 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let round: Int
     }
 
+    private enum OnboardingPermission: CaseIterable {
+        case accessibility
+        case screenRecording
+        case microphone
+
+        var name: String {
+            switch self {
+            case .accessibility: "Accessibility"
+            case .screenRecording: "Screen Recording"
+            case .microphone: "Microphone"
+            }
+        }
+
+        var settingsAnchor: String {
+            switch self {
+            case .accessibility: "Privacy_Accessibility"
+            case .screenRecording: "Privacy_ScreenCapture"
+            case .microphone: "Privacy_Microphone"
+            }
+        }
+
+        var isGranted: Bool {
+            switch self {
+            case .accessibility: AccessibilityPermission.isTrusted
+            case .screenRecording: ScreenPerception.hasPermission
+            case .microphone: MicrophonePermission.isGranted
+            }
+        }
+
+        var animationName: String {
+            switch self {
+            case .accessibility: "GetAttention"
+            case .screenRecording: "Explain"
+            case .microphone: "Alert"
+            }
+        }
+    }
+
     static func main() {
         let app = NSApplication.shared
         let delegate = ClippyApp()
@@ -1334,17 +1372,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     @objc private func grantAccessibility() {
         _ = AccessibilityPermission.requestIfNeeded(prompt: true)
-        showPermissionDialog(permissionName: "Accessibility", anchor: "Privacy_Accessibility")
+        showPermissionDialog(permission: .accessibility)
     }
 
     @objc private func grantScreenRecording() {
         _ = ScreenPerception.requestPermission()
-        showPermissionDialog(permissionName: "Screen Recording", anchor: "Privacy_ScreenCapture")
+        showPermissionDialog(permission: .screenRecording)
     }
 
     @objc private func grantMicrophone() {
         Task { _ = await SpeechCapture.requestMicrophone() }
-        openPrivacyPane("Privacy_Microphone")
+        showPermissionDialog(permission: .microphone)
     }
 
     @objc private func openProviderKeys() {
@@ -1389,12 +1427,23 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         isOnboardingActive = true
         syncBubbleAnchorToClippy()
-        showBrainChoiceStep()
+        showWelcomeStep()
+    }
+
+    private func showWelcomeStep() {
+        showOnboardingStep(
+            "I'm Clippy. I can talk, see your screen, and help use apps.",
+            animation: "Greeting",
+            choices: [
+                .init(title: "Next") { [weak self] in self?.showBrainChoiceStep() },
+            ]
+        )
     }
 
     private func showBrainChoiceStep() {
         showOnboardingStep(
-            "Hi, I'm Clippy. Which account should I use?",
+            "Which account should I use?",
+            animation: "GetAttention",
             choices: [
                 .init(title: "ChatGPT") { [weak self] in self?.showCodexOnboarding() },
                 .init(title: "Claude") { [weak self] in self?.showClaudeOnboarding() },
@@ -1413,7 +1462,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
         Pick the account you want Clippy to use.
         """
-        showOnboardingStep(prompt, choices: [
+        showOnboardingStep(prompt, animation: "CheckingSomething", choices: [
             .init(title: "ChatGPT") { [weak self] in self?.showCodexOnboarding() },
             .init(title: "Claude") { [weak self] in self?.showClaudeOnboarding() },
             .init(title: "Skip") { [weak self] in self?.showVoiceKeyStep() },
@@ -1426,6 +1475,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             if ClippySecrets.openAIAPIKey != nil && !fileExistsInHome(".codex/auth.json") {
                 showOnboardingStep(
                     "I found an OpenAI API key locally. Use it for ChatGPT?",
+                    animation: "GetTechy",
                     choices: [
                         .init(title: "Use Found Key") { [weak self] in
                             self?.selectOnboardingModel(.gpt55)
@@ -1439,6 +1489,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             } else {
                 showOnboardingStep(
                     "ChatGPT is ready. Use this account for Clippy?",
+                    animation: "GetTechy",
                     choices: [
                         .init(title: "Use ChatGPT") { [weak self] in
                             self?.selectOnboardingModel(.gpt55)
@@ -1450,6 +1501,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         } else if status.isInstalled {
             showOnboardingStep(
                 "ChatGPT can connect here, but you still need to sign in.",
+                animation: "GetTechy",
                 choices: [
                     .init(title: "Sign In") { [weak self] in self?.runCodexLogin() },
                     .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
@@ -1458,6 +1510,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         } else {
             showOnboardingStep(
                 "ChatGPT is not set up here yet.",
+                animation: "GetTechy",
                 choices: [
                     .init(title: "Set Up ChatGPT") { [weak self] in self?.runCodexInstall() },
                     .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
@@ -1472,6 +1525,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             if ClippySecrets.anthropicAPIKey != nil && !fileExistsInHome(".claude/.credentials.json") && !fileExistsInHome(".claude.json") {
                 showOnboardingStep(
                     "I found an Anthropic API key locally. Use it for Claude?",
+                    animation: "GetWizardy",
                     choices: [
                         .init(title: "Use Found Key") { [weak self] in
                             self?.selectOnboardingModel(.opus48)
@@ -1485,6 +1539,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             } else {
                 showOnboardingStep(
                     "Claude is ready. Use this account for Clippy?",
+                    animation: "GetWizardy",
                     choices: [
                         .init(title: "Use Claude") { [weak self] in
                             self?.selectOnboardingModel(.opus48)
@@ -1496,6 +1551,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         } else if status.isInstalled {
             showOnboardingStep(
                 "Claude can connect here, but you still need to sign in.",
+                animation: "GetWizardy",
                 choices: [
                     .init(title: "Sign In") { [weak self] in self?.runClaudePlanLogin() },
                     .init(title: "Use API Key") { [weak self] in self?.runClaudeConsoleLogin() },
@@ -1505,6 +1561,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         } else {
             showOnboardingStep(
                 "Claude is not set up here yet.",
+                animation: "GetWizardy",
                 choices: [
                     .init(title: "Set Up Claude") { [weak self] in self?.runClaudeInstall() },
                     .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
@@ -1519,6 +1576,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if deepgramReady && xaiReady {
             showOnboardingStep(
                 "I found your Deepgram and xAI keys locally. Want me to use those for voice?",
+                animation: "SendMail",
                 choices: [
                     .init(title: "Use Found Keys") { [weak self] in
                         self?.configureVoiceProviders()
@@ -1539,6 +1597,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         ].compactMap { $0 }
         showOnboardingStep(
             "Voice is optional. I still need \(missing.joined(separator: " and ")).",
+            animation: "SendMail",
             choices: [
                 .init(title: "Configure Keys") { [weak self] in
                     self?.showProviderKeys()
@@ -1555,24 +1614,36 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func showPermissionStep() {
         showOnboardingStep(
             "Last step: Mac permissions. I need Microphone for voice, Screen Recording to see what you're asking about, and Accessibility to click things for you.",
+            animation: "GetAttention",
             choices: [
-                .init(title: "Grant Permissions") { [weak self] in self?.showPermissionOnboarding() },
+                .init(title: "Grant Permissions") { [weak self] in self?.startPermissionWalkthrough() },
                 .init(title: "Skip") { [weak self] in self?.finishBubbleOnboarding() },
             ]
         )
     }
 
-    private func showPermissionOnboarding() {
-        showOnboardingStep(
-            "Pick a permission. After macOS opens settings, come back and refresh me.",
-            choices: [
-                .init(title: "Accessibility") { [weak self] in self?.grantAccessibility() },
-                .init(title: "Screen Recording") { [weak self] in self?.grantScreenRecording() },
-                .init(title: "Microphone") { [weak self] in self?.grantMicrophone() },
-                .init(title: "Refresh") { [weak self] in self?.showPermissionStep() },
-                .init(title: "Done") { [weak self] in self?.finishBubbleOnboarding() },
-            ]
-        )
+    private func startPermissionWalkthrough() {
+        showNextPermissionDialog()
+    }
+
+    private func showNextPermissionDialog() {
+        guard let permission = OnboardingPermission.allCases.first(where: { !$0.isGranted }) else {
+            permissionDrag?.hide()
+            finishBubbleOnboarding()
+            return
+        }
+        switch permission {
+        case .accessibility:
+            _ = AccessibilityPermission.requestIfNeeded(prompt: true)
+        case .screenRecording:
+            _ = ScreenPerception.requestPermission()
+        case .microphone:
+            Task { _ = await SpeechCapture.requestMicrophone() }
+        }
+        chatBubble?.hide()
+        showPermissionDialog(permission: permission, doneButtonTitle: "Done") { [weak self] in
+            self?.showNextPermissionDialog()
+        }
     }
 
     private func selectOnboardingModel(_ model: ClippyModel) {
@@ -1585,10 +1656,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func finishBubbleOnboarding() {
         isOnboardingActive = false
+        permissionDrag?.hide()
         markSetupCompleted()
         if conversation == nil {
             setUpBrain()
         }
+        playOnboardingAnimation("Congratulate")
         chatBubble?.showReplyForReading("All set. Click me when you want to type, or hold Control+Option to talk.")
     }
 
@@ -1663,15 +1736,28 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func showRefreshAfterExternalSetup(_ message: String, resume: @escaping () -> Void) {
-        showOnboardingStep(message, choices: [
+        showOnboardingStep(message, animation: "Save", choices: [
             .init(title: "Refresh") { resume() },
             .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
         ])
     }
 
-    private func showOnboardingStep(_ prompt: String, choices: [ClippyBubbleController.Choice]) {
+    private func showOnboardingStep(
+        _ prompt: String,
+        animation: String = "Explain",
+        choices: [ClippyBubbleController.Choice]
+    ) {
         syncBubbleAnchorToClippy()
+        playOnboardingAnimation(animation)
         chatBubble?.showChoicesTyping(prompt, choices: choices)
+    }
+
+    private func playOnboardingAnimation(_ name: String) {
+        pendingIdle?.cancel()
+        guard isClippyHidden == false else {
+            return
+        }
+        _ = playOnce(name)
     }
 
     private func fileExistsInHome(_ relativePath: String) -> Bool {
@@ -1728,18 +1814,25 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         return directory
     }
 
-    private func openPrivacyPane(_ anchor: String) {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    /// Show the Codex-style permission dialog: a draggable Clippy tile + an
-    /// "Open System Settings" button, so the user can drag Clippy into the privacy list.
-    private func showPermissionDialog(permissionName: String, anchor: String) {
+    /// Show the focused permission helper: a Clippy tile + an "Open System Settings"
+    /// button. The bubble is hidden while this panel is active so the user has one
+    /// instruction surface, not two competing ones.
+    private func showPermissionDialog(
+        permission: OnboardingPermission,
+        doneButtonTitle: String = "Done",
+        onDone: (() -> Void)? = nil
+    ) {
         permissionDrag?.hide()
+        chatBubble?.hide()
+        playOnboardingAnimation(permission.animationName)
         let controller = PermissionDragController(
-            appURL: Bundle.main.bundleURL, permissionName: permissionName, settingsAnchor: anchor)
+            appURL: Bundle.main.bundleURL,
+            permissionName: permission.name,
+            settingsAnchor: permission.settingsAnchor,
+            allowsDragging: permission != .microphone,
+            doneButtonTitle: doneButtonTitle,
+            onDone: onDone
+        )
         permissionDrag = controller
         controller.show()
     }

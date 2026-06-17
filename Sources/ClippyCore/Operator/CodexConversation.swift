@@ -128,8 +128,7 @@ public actor CodexConversation: AgentBrain {
         var finalError: String?
 
         do {
-            let hasRunningServer = appServer?.process.isRunning == true
-            continuation.yield(.status(hasRunningServer ? "Reusing ChatGPT" : "Starting ChatGPT"))
+            continuation.yield(.status("Thinking"))
             let connection = try ensureAppServer(process: box)
             let hasOpenThread = threadID?.isEmpty == false && connection.process.isRunning
             continuation.yield(.status(hasOpenThread ? "Using the open thread" : "Opening the Clippy thread"))
@@ -180,7 +179,7 @@ public actor CodexConversation: AgentBrain {
                         throw AppServerError(error)
                     }
                     activeTurnID = Self.turnID(fromTurnStartResponse: object) ?? activeTurnID
-                    continuation.yield(.status("Waiting for ChatGPT"))
+                    continuation.yield(.status("Thinking"))
                     continue
                 }
 

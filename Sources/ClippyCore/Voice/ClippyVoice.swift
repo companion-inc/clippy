@@ -14,13 +14,13 @@ public struct ClippyVoice: Equatable, Sendable, Identifiable {
 public extension ClippyVoice {
     static let eve = ClippyVoice(id: "eve", displayName: "Clippy - bright")
     static let ara = ClippyVoice(id: "ara", displayName: "Clippy - warm")
-    static let rex = ClippyVoice(id: "rex", displayName: "Clippy - clear")
+    static let rex = ClippyVoice(id: "rex", displayName: "Clippy - classic")
     static let sal = ClippyVoice(id: "sal", displayName: "Clippy - smooth")
     static let leo = ClippyVoice(id: "leo", displayName: "Clippy - steady")
 
-    static let all: [ClippyVoice] = [eve, ara, rex, sal, leo]
+    static let all: [ClippyVoice] = [rex, leo, sal, ara, eve]
 
-    static let `default` = eve
+    static let `default` = rex
 
     static func by(id: String) -> ClippyVoice? {
         all.first { $0.id == id }

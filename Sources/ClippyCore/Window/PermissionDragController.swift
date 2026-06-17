@@ -1,4 +1,5 @@
 import AppKit
+import SpriteKit
 
 /// Permission onboarding modeled on **Codex's** actual design (read out of
 /// `chronicle-setup-state-*.js`): a self-contained dialog — NOT a strip pinned under
@@ -23,8 +24,21 @@ public final class PermissionDragController {
         return rep.representation(using: .png, properties: [:])
     }
 
-    public init(appURL: URL, permissionName: String, settingsAnchor: String) {
-        let panel = RetroPermissionPanel(appURL: appURL, permissionName: permissionName, settingsAnchor: settingsAnchor)
+    public init(
+        appURL: URL,
+        permissionName: String,
+        settingsAnchor: String,
+        allowsDragging: Bool = true,
+        doneButtonTitle: String = "Done",
+        onDone: (() -> Void)? = nil
+    ) {
+        let panel = RetroPermissionPanel(
+            appURL: appURL,
+            permissionName: permissionName,
+            settingsAnchor: settingsAnchor,
+            allowsDragging: allowsDragging,
+            doneButtonTitle: doneButtonTitle
+        )
         let size = NSSize(width: 404, height: 248)
         window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
@@ -37,6 +51,10 @@ public final class PermissionDragController {
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         window.contentView = panel
         panel.onClose = { [weak self] in self?.hide() }
+        panel.onDone = { [weak self] in
+            self?.hide()
+            onDone?()
+        }
     }
 
     public func show(autoHideAfter seconds: TimeInterval = 180) {
@@ -69,10 +87,17 @@ public final class PermissionDragController {
 /// Clippy tile, and an "Open System Settings" default button.
 final class RetroPermissionPanel: NSView {
     var onClose: (() -> Void)?
+    var onDone: (() -> Void)?
     private let settingsAnchor: String
     override var isFlipped: Bool { true }
 
-    init(appURL: URL, permissionName: String, settingsAnchor: String) {
+    init(
+        appURL: URL,
+        permissionName: String,
+        settingsAnchor: String,
+        allowsDragging: Bool,
+        doneButtonTitle: String
+    ) {
         self.settingsAnchor = settingsAnchor
         super.init(frame: .zero)
 
@@ -84,9 +109,10 @@ final class RetroPermissionPanel: NSView {
         closeBox.onClick = { [weak self] in self?.onClose?() }
 
         // — instruction copy —
-        let blurb = NSTextField(wrappingLabelWithString:
-            "Add Clippy to the \(permissionName) list so it can do its job. "
-            + "Drag the Clippy tile below into the list — or click Open System Settings and switch Clippy on.")
+        let blurbText = allowsDragging
+            ? "Add Clippy to the \(permissionName) list so it can do its job. Drag the Clippy tile below into the list — or click Open System Settings and switch Clippy on."
+            : "Add Clippy to the \(permissionName) list so it can do its job. Click Open System Settings and switch Clippy on, then click Done."
+        let blurb = NSTextField(wrappingLabelWithString: blurbText)
         blurb.font = RetroFont.ui(12)
         blurb.textColor = RetroPalette.text
         blurb.isBordered = false
@@ -94,7 +120,10 @@ final class RetroPermissionPanel: NSView {
         blurb.translatesAutoresizingMaskIntoConstraints = false
 
         // — the draggable app tile (the whole point) —
-        let tile = RetroDragTile(appURL: appURL, label: "Drag Clippy into \(permissionName) settings")
+        let tileLabel = allowsDragging
+            ? "Drag Clippy into \(permissionName) settings"
+            : "Turn Clippy on in \(permissionName) settings"
+        let tile = RetroDragTile(appURL: appURL, label: tileLabel, allowsDragging: allowsDragging)
         tile.translatesAutoresizingMaskIntoConstraints = false
 
         // — open-settings button —
@@ -103,11 +132,16 @@ final class RetroPermissionPanel: NSView {
         openButton.translatesAutoresizingMaskIntoConstraints = false
         openButton.onClick = { [weak self] in self?.openSettings() }
 
+        let doneButton = RetroButton(title: doneButtonTitle)
+        doneButton.translatesAutoresizingMaskIntoConstraints = false
+        doneButton.onClick = { [weak self] in self?.onDone?() }
+
         addSubview(titleBar)
         addSubview(closeBox)
         addSubview(blurb)
         addSubview(tile)
         addSubview(openButton)
+        addSubview(doneButton)
 
         NSLayoutConstraint.activate([
             titleBar.topAnchor.constraint(equalTo: topAnchor, constant: 3),
@@ -130,9 +164,14 @@ final class RetroPermissionPanel: NSView {
             tile.heightAnchor.constraint(equalToConstant: 68),
 
             openButton.topAnchor.constraint(equalTo: tile.bottomAnchor, constant: 16),
-            openButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            openButton.trailingAnchor.constraint(equalTo: doneButton.leadingAnchor, constant: -8),
             openButton.widthAnchor.constraint(equalToConstant: 168),
             openButton.heightAnchor.constraint(equalToConstant: 24),
+
+            doneButton.topAnchor.constraint(equalTo: openButton.topAnchor),
+            doneButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -16),
+            doneButton.widthAnchor.constraint(equalToConstant: 64),
+            doneButton.heightAnchor.constraint(equalToConstant: 24),
         ])
     }
 
@@ -177,15 +216,17 @@ final class RetroTitleBar: NSView {
 /// the .app file on drag (so it drops into the macOS permission list) with a grab cursor.
 final class RetroDragTile: NSView, NSDraggingSource {
     private let appURL: URL
+    private let allowsDragging: Bool
     override var isFlipped: Bool { true }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    init(appURL: URL, label: String) {
+    init(appURL: URL, label: String, allowsDragging: Bool = true) {
         self.appURL = appURL
+        self.allowsDragging = allowsDragging
         super.init(frame: .zero)
 
         let icon = NSImageView()
-        icon.image = Self.appIcon(for: appURL)
+        icon.image = Self.clippyCharacterImage(for: appURL)
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.translatesAutoresizingMaskIntoConstraints = false
 
@@ -218,13 +259,14 @@ final class RetroDragTile: NSView, NSDraggingSource {
     }
 
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .openHand) // grab affordance, like Codex's cursor-grab
+        addCursorRect(bounds, cursor: allowsDragging ? .openHand : .pointingHand)
     }
 
     override func mouseDown(with event: NSEvent) {
+        guard allowsDragging else { return }
         NSCursor.closedHand.set()
         let item = NSDraggingItem(pasteboardWriter: appURL as NSURL)
-        let icon = Self.appIcon(for: appURL)
+        let icon = Self.clippyCharacterImage(for: appURL)
         item.setDraggingFrame(CGRect(x: 12, y: bounds.midY - 22, width: 44, height: 44), contents: icon)
         beginDraggingSession(with: [item], event: event, source: self)
     }
@@ -240,8 +282,52 @@ final class RetroDragTile: NSView, NSDraggingSource {
         NSCursor.arrow.set()
     }
 
-    /// The app's own icon, read straight from its bundle (CFBundleIconFile → .icns),
-    /// falling back to LaunchServices. Matches Codex's `app.getFileIcon(appPath)`.
+    /// Draw the real Clippy character in the draggable tile, while the drag payload
+    /// remains the signed .app bundle that macOS accepts in privacy lists.
+    private static func clippyCharacterImage(for appURL: URL) -> NSImage {
+        for root in characterPackRoots(appURL: appURL) {
+            guard let image = restPoseImage(packRoot: root) else {
+                continue
+            }
+            return image
+        }
+        return appIcon(for: appURL)
+    }
+
+    private static func characterPackRoots(appURL: URL) -> [URL] {
+        var roots: [URL] = []
+        if let resources = Bundle(url: appURL)?.resourceURL {
+            roots.append(resources.appending(path: "Characters/Clippy"))
+        }
+        if let resources = Bundle.main.resourceURL {
+            roots.append(resources.appending(path: "Characters/Clippy"))
+        }
+        roots.append(URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appending(path: "Resources/Characters/Clippy"))
+        roots.append(URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appending(path: "Resources/Characters/Clippy"))
+        var seen: Set<String> = []
+        return roots.filter { seen.insert($0.path).inserted }
+    }
+
+    private static func restPoseImage(packRoot: URL) -> NSImage? {
+        guard
+            let sheet = try? ClippySpriteSheet(packRoot: packRoot),
+            let frame = sheet.pack.animations["RestPose"]?.frames.first,
+            let texture = sheet.texture(for: frame)
+        else {
+            return nil
+        }
+        let cgImage = texture.cgImage()
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+    }
+
+    /// Fallback only: the bundle icon still carries the .app identity, but the
+    /// normal tile should render the character sprite above.
     private static func appIcon(for appURL: URL) -> NSImage {
         if let bundle = Bundle(url: appURL),
            let iconName = bundle.object(forInfoDictionaryKey: "CFBundleIconFile") as? String {
