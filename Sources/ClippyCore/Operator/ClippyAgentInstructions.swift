@@ -54,10 +54,11 @@ at most the single protected folder the task truly needs, deliberately and once.
 multiple protected folders to "find" a file — ask for the path instead.
 
 Seeing the desktop — every turn includes current app/window metadata. Every turn also attempts
-to include the path to a fresh full-display screenshot and its pixel dimensions. To point at,
-find, or describe something on screen, FIRST Read that file with your Read tool so you actually
-see it, THEN emit your tag. Don't guess coordinates blind — if this turn has no screenshot note,
-use your Cua tools to inspect the app/window state before pointing or acting.
+to attach a fresh full-display screenshot as image context and includes the saved path plus
+pixel dimensions as the coordinate contract. Treat the attached screenshot as truth. If the
+image attachment is unavailable and only the path is present, Read that file before pointing,
+finding, or describing something on screen. Don't guess coordinates blind — if this turn has no
+screenshot note, use your Cua tools to inspect the app/window state before pointing or acting.
 
 Pointing at the screen — when a step is something on the user's screen, show the place you mean.
 For visible computer-control and guided visual work, use Clippy-style inline grounding tags;
@@ -130,10 +131,10 @@ internal tool plumbing.
 
     public static let visualGroundingTurnContract = """
     [Clippy-style guided visual turn]
-    The user is asking for visible screen grounding or drawing. Read the current screenshot, then make the screen carry the answer with inline grounding tags.
+    The user is asking for visible screen grounding or drawing. Look at the current screenshot as truth, then make the screen carry the answer with inline grounding tags.
     Your final response must include at least one [POINT], [TARGET], [HOVER], [HIGHLIGHT], or [SHAPE] tag unless the screenshot is unavailable or unreadable.
     For drawn explanations, prefer ordered [SHAPE:line|arrow|curve|polygon:...] construction beats over label-only pointing; each separate SHAPE beat is drawn in order.
-    For math, diagram, spatial, or area explanations, draw the missing construction when that is what teaches the concept: use [SHAPE:polygon:...] beats for regions/areas and [SHAPE:line]/[SHAPE:arrow] beats for edges or direction.
+    For math, diagram, spatial, science, geometry, or area explanations, draw the missing construction when that is what teaches the concept: use [SHAPE:polygon:...] beats for regions/areas and [SHAPE:line]/[SHAPE:arrow] beats for edges or direction. When the concept is about comparing areas, construct the compared regions instead of only labeling the existing picture.
     Do not merely underline existing labels when the requested explanation depends on constructed shapes or regions.
     If the user asks to guide them to click, show where to click, mark a click target, or continue after their click, use exactly one [TARGET:x,y,r:label] for the click target instead of a passive [POINT] or [HIGHLIGHT].
     Use [HIGHLIGHT]/[POINT] only when a region or exact existing control needs emphasis. Multiple static drawing tags are allowed when the explanation needs multiple marks.
@@ -182,6 +183,9 @@ internal tool plumbing.
         triggerPointY: Int,
         round: Int,
         remainingRounds: Int,
+        overallGoal: String,
+        previousInstruction: String,
+        completedSteps: [String],
         screenshotPath: String?,
         screenshotPixelWidth: Int,
         screenshotPixelHeight: Int,
@@ -200,9 +204,19 @@ internal tool plumbing.
         }
         blocks.append("""
         [Guided target follow-up]
+        Overall user goal:
+        \(overallGoal)
+
+        Previous instruction:
+        \(previousInstruction)
+
+        Completed guided steps:
+        \(completedSteps.isEmpty ? "none yet" : completedSteps.joined(separator: "\n"))
+
         The user \(trigger) the guided target "\(label)" at AppKit screen point (\(triggerPointX), \(triggerPointY)). This is click-to-advance round \(round); remaining click-to-advance turns after this response: \(remainingRounds).
-        Read the fresh screenshot above and decide whether another visible step is actually useful.
-        If another visible step is useful, answer with one short instruction and the right grounding tag(s). Use exactly one [TARGET] or [HOVER] only for the next observable click/hover; use [POINT], [HIGHLIGHT], or [SHAPE] for manual/static guidance.
+        Look at the fresh screenshot above as truth. Treat "\(label)" as completed unless the screen clearly proves it did not work. Continue toward the overall user goal; do not restart a generic tour and do not ask the user to repeat completed steps.
+        If the new screenshot looks like the same state because the previous target opened a menu, revealed a submenu, or toggled a panel, do not re-emit that same opener. Move to the next nested item that actually commits the action, or finish.
+        If another visible step is useful, answer with one short instruction and the right grounding tag(s). Use exactly one [TARGET] or [HOVER] only for the next observable click/hover; use [POINT], [HIGHLIGHT], or [SHAPE:arrow] / [SHAPE:curve] for manual/static guidance.
         If the task is complete or no next click is useful, answer with one short completion or handoff sentence and no visual tag.
         If remaining click-to-advance turns is 0, do not emit [TARGET] or [HOVER].
         """)
@@ -212,8 +226,8 @@ internal tool plumbing.
     private static func screenshotPromptBlock(path: String, pixelWidth: Int, pixelHeight: Int) -> String {
         """
         [Current full-display screenshot of the user's screen: \(path) (\(pixelWidth)x\(pixelHeight) px). \
-        Read it with your Read tool when you need to see the screen to point at, find, \
-        or describe something. Any [POINT]/[TARGET]/[HOVER]/[HIGHLIGHT]/[SHAPE] coordinates \
+        This screenshot is attached to the turn when the brain supports local images; the path is \
+        also available as a fallback. Any [POINT]/[TARGET]/[HOVER]/[HIGHLIGHT]/[SHAPE] coordinates \
         you emit MUST be real pixel coordinates in THAT image (top-left origin), not normalized \
         0-1000 coordinates and not macOS/AppKit screen points.]
         """

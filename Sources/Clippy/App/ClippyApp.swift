@@ -74,6 +74,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var guidedTargetHoverMonitor: Any?
     private var guidedTargetExpiry: DispatchWorkItem?
     private var guidedHoverRest: DispatchWorkItem?
+    private var guidedCompletedSteps: [String] = []
     private var nextGuidedTargetRound = 0
     private let guidedTargetMaxRounds = 4
 
@@ -99,6 +100,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let radius: CGFloat
         let label: String
         let round: Int
+        let overallGoal: String
+        let previousInstruction: String
     }
 
     private enum OnboardingPermission: CaseIterable {
@@ -582,6 +585,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         pendingIdle?.cancel()
         log("user: \(text)")
         activeUserRequest = ActiveUserRequest(text: text, inputMode: inputMode, attemptedModel: attemptedModel)
+        guidedCompletedSteps = []
+        nextGuidedTargetRound = 0
 
         let brain = activeBrain
         if needsComputerControl {
@@ -634,8 +639,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             )
             : nil
         ttsSpokenChars = 0
+        let localImagePaths = Self.localImagePaths(for: shot)
         currentBrainTask = Task { [weak self] in
-            for await chunk in brain.stream(brainMessage) {
+            for await chunk in brain.stream(brainMessage, localImagePaths: localImagePaths) {
                 if Task.isCancelled { break }
                 await MainActor.run {
                     switch chunk {
@@ -713,6 +719,15 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
         overlay?.clear()
         return ScreenPerception.captureToFile(screen: targetScreen, belowWindowNumber: belowWindowNumber)
+    }
+
+    private static func localImagePaths(for screenshot: ScreenPerception.Screenshot?) -> [String] {
+        localImagePaths(for: screenshot?.path)
+    }
+
+    private static func localImagePaths(for path: String?) -> [String] {
+        guard let path, !path.isEmpty else { return [] }
+        return [path]
     }
 
     private func syncBubbleAnchorToClippy() {
@@ -846,7 +861,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         log("clippy: \(turn.text.prefix(120))")
 
         if !turn.isError, !parsed.tags.isEmpty {
-            presentGrounding(parsed.tags)
+            presentGrounding(parsed.tags, instructionText: spoken)
             return
         }
         overlay?.clear()
@@ -952,8 +967,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             screenshotPixelHeight: context.screenshotPixelHeight,
             desktopContext: context.desktopContext
         )
+        let localImagePaths = Self.localImagePaths(for: context.screenshotPath)
         currentBrainTask = Task { [weak self] in
-            let repairTurn = await brain.send(repairMessage)
+            let repairTurn = await brain.send(
+                repairMessage,
+                localImagePaths: localImagePaths
+            )
             if Task.isCancelled { return }
             await MainActor.run {
                 self?.receiveReply(repairTurn)
@@ -963,7 +982,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     /// Render parsed grounding directives: draw the marks, and move Clippy beside the
     /// first anchored target so it points at it with the matching body gesture.
-    private func presentGrounding(_ rawTags: [GroundingTag]) {
+    private func presentGrounding(_ rawTags: [GroundingTag], instructionText: String? = nil) {
         guard isClippyHidden == false else {
             return
         }
@@ -985,7 +1004,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         log("grounding-beats: \(groundingBeatSummary(tags))")
         let marks = tags.compactMap(AnnotationMark.init(tag:))
         overlay?.showSequence(marks, on: screen)
-        armGuidedTarget(from: tags)
+        armGuidedTarget(from: tags, instructionText: instructionText)
         // Auto-dismiss the marks so they don't linger on screen forever.
         overlayDismiss?.cancel()
         if !marks.isEmpty {
@@ -1046,10 +1065,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }.joined(separator: " | ")
     }
 
-    private func armGuidedTarget(from tags: [GroundingTag]) {
+    private func armGuidedTarget(from tags: [GroundingTag], instructionText: String?) {
         let round = nextGuidedTargetRound
         nextGuidedTargetRound = 0
-        guard let target = firstGuidedTarget(in: tags, round: round) else {
+        guard let target = firstGuidedTarget(in: tags, round: round, instructionText: instructionText) else {
             disarmGuidedTarget(reason: "no-target")
             return
         }
@@ -1089,13 +1108,31 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 90, execute: expiry)
     }
 
-    private func firstGuidedTarget(in tags: [GroundingTag], round: Int) -> GuidedTarget? {
+    private func firstGuidedTarget(in tags: [GroundingTag], round: Int, instructionText: String?) -> GuidedTarget? {
+        let goal = activeUserRequest?.text ?? ""
+        let instruction = instructionText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         for tag in tags {
             switch tag {
             case let .target(center, radius, label, _):
-                return GuidedTarget(kind: .click, center: center, radius: CGFloat(radius), label: label, round: round)
+                return GuidedTarget(
+                    kind: .click,
+                    center: center,
+                    radius: CGFloat(radius),
+                    label: label,
+                    round: round,
+                    overallGoal: goal,
+                    previousInstruction: instruction
+                )
             case let .hover(center, radius, label, _):
-                return GuidedTarget(kind: .hover, center: center, radius: CGFloat(radius), label: label, round: round)
+                return GuidedTarget(
+                    kind: .hover,
+                    center: center,
+                    radius: CGFloat(radius),
+                    label: label,
+                    round: round,
+                    overallGoal: goal,
+                    previousInstruction: instruction
+                )
             case .point, .highlight, .shape, .act:
                 continue
             }
@@ -1187,6 +1224,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
         let nextRound = target.round + 1
         let remainingRounds = max(0, guidedTargetMaxRounds - nextRound)
+        if !guidedCompletedSteps.contains(target.label) {
+            guidedCompletedSteps.append(target.label)
+        }
         nextGuidedTargetRound = nextRound
         log("guided target follow-up start label=\(target.label) round=\(nextRound) \(trigger)X=\(Int(point.x)) \(trigger)Y=\(Int(point.y))")
 
@@ -1216,13 +1256,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             triggerPointY: Int(point.y),
             round: nextRound,
             remainingRounds: remainingRounds,
+            overallGoal: target.overallGoal,
+            previousInstruction: target.previousInstruction,
+            completedSteps: guidedCompletedSteps,
             screenshotPath: shot?.path,
             screenshotPixelWidth: Int(shot?.pixelSize.width ?? 0),
             screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
             desktopContext: desktopContext
         )
+        let localImagePaths = Self.localImagePaths(for: shot)
         currentBrainTask = Task { [weak self] in
-            for await chunk in brain.stream(message) {
+            for await chunk in brain.stream(message, localImagePaths: localImagePaths) {
                 if Task.isCancelled { break }
                 await MainActor.run {
                     switch chunk {

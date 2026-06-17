@@ -25,13 +25,19 @@ public enum AgentStreamChunk: Sendable {
 public protocol AgentBrain: Actor {
     func prepare() async
     func send(_ message: String) async -> AgentTurn
+    func send(_ message: String, localImagePaths: [String]) async -> AgentTurn
     /// Streams the reply as it is generated. The default yields just the final
     /// `send` result; local CLI adapters override it with real token streaming.
     nonisolated func stream(_ message: String) -> AsyncStream<AgentStreamChunk>
+    nonisolated func stream(_ message: String, localImagePaths: [String]) -> AsyncStream<AgentStreamChunk>
 }
 
 public extension AgentBrain {
     func prepare() async {}
+
+    func send(_ message: String, localImagePaths _: [String]) async -> AgentTurn {
+        await send(message)
+    }
 
     nonisolated func stream(_ message: String) -> AsyncStream<AgentStreamChunk> {
         AsyncStream { continuation in
@@ -41,5 +47,9 @@ public extension AgentBrain {
                 continuation.finish()
             }
         }
+    }
+
+    nonisolated func stream(_ message: String, localImagePaths _: [String]) -> AsyncStream<AgentStreamChunk> {
+        stream(message)
     }
 }

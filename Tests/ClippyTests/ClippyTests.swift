@@ -133,6 +133,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         desktopContext: context,
         requiresVisualGrounding: true)
     #expect(guided.contains("Clippy-style guided visual turn"))
+    #expect(guided.contains("Look at the current screenshot as truth"))
     #expect(guided.contains("Do not answer text-only"))
     #expect(guided.contains("[TARGET]"))
     #expect(guided.contains("[HOVER]"))
@@ -140,6 +141,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(guided.contains("drawn in order"))
     #expect(guided.contains("missing construction"))
     #expect(guided.contains("[SHAPE:polygon:...] beats for regions/areas"))
+    #expect(guided.contains("construct the compared regions"))
     #expect(guided.contains("Do not merely underline existing labels"))
     #expect(guided.contains("[TARGET:x,y,r:label]"))
     #expect(guided.contains("subject-specific template"))
@@ -187,15 +189,26 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         triggerPointY: 360,
         round: 2,
         remainingRounds: 0,
+        overallGoal: "Guide me through the demo.",
+        previousInstruction: "Click Add button.",
+        completedSteps: ["Add button"],
         screenshotPath: "/tmp/shot.png",
         screenshotPixelWidth: 1600,
         screenshotPixelHeight: 1034,
         desktopContext: context
     )
     #expect(msg.contains("Guided target follow-up"))
+    #expect(msg.contains("Overall user goal"))
+    #expect(msg.contains("Guide me through the demo."))
+    #expect(msg.contains("Previous instruction"))
+    #expect(msg.contains("Click Add button."))
+    #expect(msg.contains("Completed guided steps"))
+    #expect(msg.contains("Add button"))
     #expect(msg.contains("clicked the guided target \"Add button\""))
     #expect(msg.contains("/tmp/shot.png (1600x1034 px)"))
     #expect(msg.contains("remaining click-to-advance turns after this response: 0"))
+    #expect(msg.contains("Look at the fresh screenshot above as truth"))
+    #expect(msg.contains("do not re-emit that same opener"))
     #expect(msg.contains("If another visible step is useful"))
     #expect(msg.contains("If the task is complete"))
     #expect(msg.contains("do not emit [TARGET] or [HOVER]"))
@@ -364,6 +377,61 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(logged.contains("first prepared turn"))
     #expect(lines.filter { $0.contains("thread/start") || $0.contains("thread\\/start") }.count == 1)
     #expect(lines.filter { $0.contains("turn/start") || $0.contains("turn\\/start") }.count == 1)
+}
+
+@Test func codexConversationAttachesLocalImagesToTurnStart() async throws {
+    let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-codex-local-image-\(UUID().uuidString).txt")
+    let scriptURL = try writeExecutableScript(
+        named: "fake-codex-local-image.zsh",
+        contents: """
+        #!/bin/zsh
+        set -eu
+        log_file='\(logURL.path)'
+        request_id() {
+          print -r -- "$1" | sed -n 's/.*"id":\\([0-9][0-9]*\\).*/\\1/p'
+        }
+        while IFS= read -r line; do
+          print -r -- "$line" >> "$log_file"
+          id="$(request_id "$line")"
+          if [[ "$line" == *'"method":"initialize"'* ]]; then
+            print -r -- '{"id":'${id}',"result":{}}'
+          elif [[ "$line" == *'thread/start'* || "$line" == *'thread\\/start'* ]]; then
+            print -r -- '{"id":'${id}',"result":{"thread":{"id":"THREAD-IMAGE"}}}'
+          elif [[ "$line" == *'turn/start'* || "$line" == *'turn\\/start'* ]]; then
+            print -r -- '{"id":'${id}',"result":{"turn":{"id":"TURN-IMAGE","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":0,"completedAt":null,"durationMs":null}}}'
+            print -r -- '{"method":"item/agentMessage/delta","params":{"threadId":"THREAD-IMAGE","turnId":"TURN-IMAGE","itemId":"ITEM-IMAGE","delta":"SEEN"}}'
+            print -r -- '{"method":"item/completed","params":{"threadId":"THREAD-IMAGE","turnId":"TURN-IMAGE","completedAtMs":0,"item":{"type":"agentMessage","id":"ITEM-IMAGE","text":"SEEN","phase":null,"memoryCitation":null}}}'
+            print -r -- '{"method":"turn/completed","params":{"threadId":"THREAD-IMAGE","turn":{"id":"TURN-IMAGE","items":[],"itemsView":"full","status":"completed","error":null,"startedAt":0,"completedAt":0,"durationMs":1}}}'
+          fi
+        done
+        """
+    )
+    defer {
+        try? FileManager.default.removeItem(at: scriptURL.deletingLastPathComponent())
+        try? FileManager.default.removeItem(at: logURL)
+    }
+
+    let conversation = CodexConversation(
+        binaryPath: scriptURL.path,
+        model: "gpt-5.5",
+        effort: "minimal",
+        workingDirectory: nil,
+        systemPrompt: nil,
+        diagnosticsLogURL: nil
+    )
+
+    let turn = await conversation.send("look at the screen", localImagePaths: ["/tmp/clippy-screen.jpg"])
+
+    #expect(turn.text == "SEEN")
+
+    let logged = try String(contentsOf: logURL, encoding: .utf8)
+    #expect(logged.contains(#""type":"text""#))
+    #expect(logged.contains(#""text":"look at the screen""#))
+    #expect(logged.contains(#""type":"localImage""#))
+    #expect(
+        logged.contains(#""path":"/tmp/clippy-screen.jpg""#)
+            || logged.contains(#""path":"\/tmp\/clippy-screen.jpg""#)
+    )
 }
 
 @Test func computerUseMCPConfigPrefersExplicitCuaDriver() throws {

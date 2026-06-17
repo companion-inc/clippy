@@ -89,8 +89,12 @@ public actor CodexConversation: AgentBrain {
     }
 
     public func send(_ message: String) async -> AgentTurn {
+        await send(message, localImagePaths: [])
+    }
+
+    public func send(_ message: String, localImagePaths: [String]) async -> AgentTurn {
         var partial = ""
-        for await chunk in stream(message) {
+        for await chunk in stream(message, localImagePaths: localImagePaths) {
             switch chunk {
             case .status:
                 break
@@ -107,9 +111,20 @@ public actor CodexConversation: AgentBrain {
     }
 
     public nonisolated func stream(_ message: String) -> AsyncStream<AgentStreamChunk> {
+        stream(message, localImagePaths: [])
+    }
+
+    public nonisolated func stream(_ message: String, localImagePaths: [String]) -> AsyncStream<AgentStreamChunk> {
         AsyncStream { continuation in
             let box = ProcessBox()
-            let work = Task { await self.runStreaming(message, continuation: continuation, process: box) }
+            let work = Task {
+                await self.runStreaming(
+                    message,
+                    localImagePaths: localImagePaths,
+                    continuation: continuation,
+                    process: box
+                )
+            }
             continuation.onTermination = { @Sendable _ in
                 work.cancel()
                 box.terminate()
@@ -119,6 +134,7 @@ public actor CodexConversation: AgentBrain {
 
     private func runStreaming(
         _ message: String,
+        localImagePaths: [String],
         continuation: AsyncStream<AgentStreamChunk>.Continuation,
         process box: ProcessBox
     ) async {
@@ -147,13 +163,7 @@ public actor CodexConversation: AgentBrain {
                 "turn/start",
                 params: [
                     "threadId": activeThreadID,
-                    "input": [
-                        [
-                            "type": "text",
-                            "text": message,
-                            "text_elements": [],
-                        ],
-                    ],
+                    "input": Self.turnInputItems(message: message, localImagePaths: localImagePaths),
                     "cwd": jsonValue(workingDirectory),
                     "approvalPolicy": "never",
                     "approvalsReviewer": NSNull(),
@@ -417,6 +427,23 @@ public actor CodexConversation: AgentBrain {
     private func jsonValue(_ value: String?) -> Any {
         guard let value, !value.isEmpty else { return NSNull() }
         return value
+    }
+
+    private static func turnInputItems(message: String, localImagePaths: [String]) -> [[String: Any]] {
+        var items: [[String: Any]] = [
+            [
+                "type": "text",
+                "text": message,
+                "text_elements": [],
+            ],
+        ]
+        for path in localImagePaths where !path.isEmpty {
+            items.append([
+                "type": "localImage",
+                "path": path,
+            ])
+        }
+        return items
     }
 
     private static func uniqueRuntimes(_ runtimes: [MCPServerRuntime]) -> [MCPServerRuntime] {
