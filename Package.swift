@@ -10,13 +10,19 @@ let package = Package(
         .executable(name: "ClippyMCP", targets: ["ClippyMCP"]),
         .library(name: "ClippyCore", targets: ["ClippyCore"]),
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.3"),
+    ],
     targets: [
         .target(
             name: "ClippyCore"
         ),
         .executableTarget(
             name: "Clippy",
-            dependencies: ["ClippyCore"]
+            dependencies: [
+                "ClippyCore",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ]
         ),
         .executableTarget(
             name: "ClippyMCP",

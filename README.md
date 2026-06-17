@@ -66,10 +66,14 @@ Open the DMG, drag `Clippy.app` into Applications, and launch it. When macOS
 blocks the first launch of a locally signed build, Control-click `Clippy.app`,
 choose `Open`, and approve the prompt once.
 
+Clippy checks for signed updates automatically in the background. You can also
+open the Clippy menu and choose **Check for Updates...**.
+
 Clippy asks for permissions only when the relevant feature needs them:
 
 - Microphone for push-to-talk voice input.
 - Screen Recording for screen grounding and pointing.
+- Full Disk Access for local app databases.
 - Accessibility for computer-use actions you approve.
 
 ## Requirements
@@ -154,6 +158,7 @@ start with `v` publish GitHub Release assets:
 - `Clippy-macOS.zip.sha256`
 - `SHA256SUMS.txt`
 - `Clippy-macOS.notarization.txt`
+- `appcast.xml` for Sparkle OTA updates
 
 ## Contributing
 

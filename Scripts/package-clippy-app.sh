@@ -5,14 +5,50 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 configuration="${1:-debug}"
 build_dir="$repo_root/.build/$configuration"
 app_dir="$build_dir/Clippy.app"
+version="${CLIPPY_VERSION:-}"
+if [ -z "$version" ]; then
+  ref_name="${GITHUB_REF_NAME:-}"
+  if [[ "$ref_name" == v* ]]; then
+    version="${ref_name#v}"
+  else
+    version="$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || true)"
+  fi
+fi
+version="${version:-0.1.0}"
+build_number="${CLIPPY_BUILD_NUMBER:-${GITHUB_RUN_NUMBER:-}}"
+if [ -z "$build_number" ]; then
+  build_number="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
+fi
+sparkle_feed_url="${CLIPPY_SPARKLE_FEED_URL:-https://github.com/companion-inc/clippy/releases/latest/download/appcast.xml}"
+sparkle_public_ed_key="${CLIPPY_SPARKLE_PUBLIC_ED_KEY:-p/STOfduNWVMNYn1sjYX3pbM5PnywVU/8WrGUJjpoAI=}"
 
 cd "$repo_root"
 swift build ${configuration:+--configuration "$configuration"}
 
 rm -rf "$app_dir"
-mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Helpers" "$app_dir/Contents/Resources/Characters"
+mkdir -p "$app_dir/Contents/MacOS" "$app_dir/Contents/Helpers" "$app_dir/Contents/Frameworks" "$app_dir/Contents/Resources/Characters"
 cp "$build_dir/Clippy" "$app_dir/Contents/MacOS/Clippy"
 cp "$build_dir/ClippyMCP" "$app_dir/Contents/MacOS/ClippyMCP"
+sparkle_framework=""
+for candidate in \
+  "$build_dir/Sparkle.framework" \
+  "$repo_root/.build/arm64-apple-macosx/$configuration/Sparkle.framework" \
+  "$repo_root/.build/x86_64-apple-macosx/$configuration/Sparkle.framework"
+do
+  if [ -d "$candidate" ]; then
+    sparkle_framework="$candidate"
+    break
+  fi
+done
+if [ -z "$sparkle_framework" ]; then
+  sparkle_framework="$(find "$repo_root/.build" -path '*/Sparkle.framework' -type d | head -n 1 || true)"
+fi
+if [ -z "$sparkle_framework" ] || [ ! -d "$sparkle_framework" ]; then
+  echo "ERROR: Sparkle.framework was not produced by SwiftPM." >&2
+  exit 1
+fi
+cp -R "$sparkle_framework" "$app_dir/Contents/Frameworks/Sparkle.framework"
+install_name_tool -add_rpath "@executable_path/../Frameworks" "$app_dir/Contents/MacOS/Clippy" 2>/dev/null || true
 cua_driver_source="${CLIPPY_CUA_DRIVER:-}"
 if [ -z "$cua_driver_source" ]; then
   for candidate in \
@@ -36,7 +72,7 @@ cp "$repo_root/Resources/Clippy.icns" "$app_dir/Contents/Resources/Clippy.icns"
 mkdir -p "$app_dir/Contents/Resources/Fonts"
 cp "$repo_root"/Resources/Fonts/*.ttf "$app_dir/Contents/Resources/Fonts/" 2>/dev/null || true
 
-cat > "$app_dir/Contents/Info.plist" <<'PLIST'
+cat > "$app_dir/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -58,9 +94,9 @@ cat > "$app_dir/Contents/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>$version</string>
   <key>CFBundleVersion</key>
-  <string>1</string>
+  <string>$build_number</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
   <key>LSUIElement</key>
@@ -77,6 +113,18 @@ cat > "$app_dir/Contents/Info.plist" <<'PLIST'
   <string>Clippy looks at your screen so it can point things out and help.</string>
   <key>NSAppleEventsUsageDescription</key>
   <string>Clippy uses Apple Events to help drive apps you ask it to operate.</string>
+  <key>SUFeedURL</key>
+  <string>$sparkle_feed_url</string>
+  <key>SUPublicEDKey</key>
+  <string>$sparkle_public_ed_key</string>
+  <key>SUEnableAutomaticChecks</key>
+  <true/>
+  <key>SUAutomaticallyUpdate</key>
+  <true/>
+  <key>SUVerifyUpdateBeforeExtraction</key>
+  <true/>
+  <key>SURequireSignedFeed</key>
+  <true/>
 </dict>
 </plist>
 PLIST
@@ -94,6 +142,13 @@ if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$codesign_id
   # entitlements re-grant the mic + Apple Events that hardened runtime would
   # otherwise block. (Ad-hoc identity "-" can't timestamp, so skip it there.)
   ts_flag="--timestamp"; [ "$codesign_identity" = "-" ] && ts_flag="--timestamp=none"
+  while IFS= read -r nested_bundle; do
+    codesign --force $ts_flag --options runtime --sign "$codesign_identity" "$nested_bundle"
+  done < <(find "$app_dir/Contents/Frameworks/Sparkle.framework" -depth \( -name '*.xpc' -o -name '*.app' \) -type d)
+  if [ -x "$app_dir/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate" ]; then
+    codesign --force $ts_flag --options runtime --sign "$codesign_identity" "$app_dir/Contents/Frameworks/Sparkle.framework/Versions/B/Autoupdate"
+  fi
+  codesign --force $ts_flag --options runtime --sign "$codesign_identity" "$app_dir/Contents/Frameworks/Sparkle.framework"
   codesign --force $ts_flag --options runtime --sign "$codesign_identity" "$app_dir/Contents/MacOS/ClippyMCP"
   codesign --force $ts_flag --options runtime \
     --identifier ai.companion.clippy \
@@ -101,7 +156,7 @@ if security find-identity -v -p codesigning 2>/dev/null | grep -qF "$codesign_id
   codesign --force $ts_flag --options runtime \
     --entitlements "$repo_root/Resources/Clippy.entitlements" \
     --sign "$codesign_identity" "$app_dir"
-  codesign --verify --strict "$app_dir"
+  codesign --verify --deep --strict "$app_dir"
   echo "signed with: $codesign_identity"
 else
   echo "WARNING: signing identity not found ('$codesign_identity') — leaving ad-hoc; TCC grants will NOT persist across rebuilds." >&2

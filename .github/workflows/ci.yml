@@ -133,6 +133,14 @@ jobs:
           shasum -a 256 Clippy.dmg > Clippy.dmg.sha256
           shasum -a 256 Clippy.dmg Clippy-macOS.zip > SHA256SUMS.txt
 
+      - name: Generate Sparkle appcast
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          test -n "$SPARKLE_ED_PRIVATE_KEY"
+          Scripts/generate-sparkle-appcast.sh Clippy-macOS.zip appcast.xml
+
       - name: Upload app artifact
         uses: actions/upload-artifact@v7
         with:
@@ -144,6 +152,7 @@ jobs:
             Clippy-macOS.zip.sha256
             SHA256SUMS.txt
             Clippy-macOS.notarization.txt
+            appcast.xml
           retention-days: 30
 
   release:
@@ -175,5 +184,6 @@ jobs:
             Clippy-macOS.zip.sha256 \
             SHA256SUMS.txt \
             Clippy-macOS.notarization.txt \
+            appcast.xml \
             --repo "$GITHUB_REPOSITORY" \
             --clobber

@@ -1,5 +1,6 @@
 import AppKit
 import ClippyCore
+import Sparkle
 
 @main
 @MainActor
@@ -21,6 +22,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var deepgramSTT: DeepgramVoiceCapture?
     private var tts: XAITTS?
     private var providerKeys: ProviderKeysController?
+    private lazy var updaterController = SPUStandardUpdaterController(
+        startingUpdater: true,
+        updaterDelegate: nil,
+        userDriverDelegate: nil
+    )
     private var isOnboardingActive = false
     private var usingDeepgram = false
     private var isVoiceCaptureActive = false
@@ -1670,6 +1676,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         items.append(.action("Configure API Key...") { [weak self] in
             self?.showProviderKeys()
         })
+        items.append(.action("Check for Updates...") { [weak self] in
+            self?.checkForUpdates()
+        })
 
         let permissionItems: [RetroMenuItem] = [
             .toggle("Accessibility", isOn: AccessibilityPermission.isTrusted) { [weak self] in
@@ -1819,6 +1828,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     @objc private func openProviderKeys() {
         showProviderKeys()
+    }
+
+    @objc private func checkForUpdates() {
+        NSApp.activate(ignoringOtherApps: true)
+        updaterController.checkForUpdates(nil)
     }
 
     private func showProviderKeys() {
