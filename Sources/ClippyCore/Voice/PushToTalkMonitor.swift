@@ -1,8 +1,7 @@
 import AppKit
 
 /// Fires begin/end when a held modifier chord (default ⌃⌥) is pressed anywhere —
-/// Clippy's push-to-talk trigger. Globe/fn is Clippy's default but is taken by
-/// Wispr Flow here, so Clippy uses Control+Option (see Docs/STATUS).
+/// Clippy's push-to-talk trigger.
 ///
 /// Uses `NSEvent` flags-changed monitors. The **global** monitor (events from other
 /// apps) requires Accessibility / Input Monitoring permission; without it, PTT only

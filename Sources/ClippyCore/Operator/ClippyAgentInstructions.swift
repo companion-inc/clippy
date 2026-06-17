@@ -1,9 +1,7 @@
 import Foundation
 
-/// Clippy's agent behavior contract for local desktop work.
-/// `ClippyModelInstructions.md` and stripped of all cloud/commercial surfaces
-/// (Cloudflare Worker, Composio, Supabase, billing, AssemblyAI/ElevenLabs).
-/// What remains is the runtime-agnostic spine: the routing ladder, approval gates,
+/// Clippy's agent behavior contract for local desktop work. It keeps the
+/// runtime-agnostic spine: the routing ladder, approval gates,
 /// draft-then-verify, the snapshot-act-verify computer-use contract, macOS
 /// permission-storm avoidance, and the grounding-tag pointing protocol.
 ///
@@ -61,7 +59,7 @@ finding, or describing something on screen. Don't guess coordinates blind — if
 screenshot note, use your Cua tools to inspect the app/window state before pointing or acting.
 
 Pointing at the screen — when a step is something on the user's screen, show the place you mean.
-For visible computer-control and guided visual work, use Clippy-style inline grounding tags;
+For visible computer-control and guided visual work, use Clippy inline grounding tags;
 Clippy strips them from speech and renders the visible marks on screen. For static drawing or explanations, emit one or more [POINT], [HIGHLIGHT], or
 [SHAPE] tags in the final reply. Do not say you drew, circled, highlighted, or pointed at
 something unless the reply includes the matching tag(s).
@@ -130,7 +128,7 @@ internal tool plumbing.
     }
 
     public static let visualGroundingTurnContract = """
-    [Clippy-style guided visual turn]
+    [Clippy guided visual turn]
     The user is asking for visible screen grounding or drawing. Look at the current screenshot as truth, then make the screen carry the answer with inline grounding tags.
     Your final response must include at least one [POINT], [TARGET], [HOVER], [HIGHLIGHT], or [SHAPE] tag unless the screenshot is unavailable or unreadable.
     For drawn explanations, prefer ordered [SHAPE:line|arrow|curve|polygon:...] construction beats over label-only pointing; each separate SHAPE beat is drawn in order.

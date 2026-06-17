@@ -132,7 +132,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         speaking: false,
         desktopContext: context,
         requiresVisualGrounding: true)
-    #expect(guided.contains("Clippy-style guided visual turn"))
+    #expect(guided.contains("Clippy guided visual turn"))
     #expect(guided.contains("Look at the current screenshot as truth"))
     #expect(guided.contains("Do not answer text-only"))
     #expect(guided.contains("[TARGET]"))
@@ -256,7 +256,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 @Test func computerUsePromptDisablesCuaCursorForVisibleActions() {
     #expect(ClippyAgentInstructions.systemPrompt.contains("Cua's own agent-cursor overlay is disabled in Clippy"))
     #expect(ClippyAgentInstructions.systemPrompt.contains("The visible cursor is Clippy's body"))
-    #expect(ClippyAgentInstructions.systemPrompt.contains("Clippy-style inline grounding tags"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("Clippy inline grounding tags"))
     #expect(ClippyAgentInstructions.systemPrompt.contains("Pythagorean") == false)
 }
 
@@ -452,10 +452,6 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(runtime?.enabledTools.contains("get_agent_cursor_state") == false)
     #expect(runtime?.enabledTools.contains("zoom") == true)
     #expect(runtime?.enabledTools.contains("screenshot") == false)
-    #expect(ComputerUseMCPConfig.clippyEnabledTools.contains("screenshot"))
-    #expect(ComputerUseMCPConfig.clippyEnabledTools.contains("drag") == false)
-    #expect(ComputerUseMCPConfig.clippyEnabledTools.contains("set_agent_cursor_enabled") == false)
-
     let overrides = ComputerUseMCPConfig.codexConfigOverrides(for: [try #require(runtime)])
     #expect(overrides.contains { $0.contains("mcp_servers.cua-driver.command") && $0.contains(cua.path) })
     #expect(overrides.contains { $0.contains("mcp_servers.cua-driver.enabled_tools") && $0.contains("get_window_state") })

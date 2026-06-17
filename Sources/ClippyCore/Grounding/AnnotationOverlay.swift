@@ -64,7 +64,7 @@ public final class AnnotationOverlayWindow {
         }
     }
 
-    /// Draw marks as Clippy-style visual beats: shape paths reveal over time, and
+    /// Draw marks as Clippy visual beats: shape paths reveal over time, and
     /// multiple marks arrive in order instead of appearing as one finished overlay.
     public func showSequence(_ marks: [AnnotationMark], on screen: NSScreen? = nil) {
         animationTimer?.invalidate()

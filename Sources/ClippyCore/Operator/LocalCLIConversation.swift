@@ -76,8 +76,8 @@ public actor LocalCLIConversation: AgentBrain {
         return (path?.isEmpty == false) ? path : nil
     }
 
-    /// `--allowedTools` args. Following Clippy's format: emote / point / highlight
-    /// are NOT tools — they're inline tags ([POINT]/[ACT]/…) that ride inside the
+    /// `--allowedTools` args. Emote / point / highlight are NOT tools —
+    /// they're inline tags ([POINT]/[ACT]/…) that ride inside the
     /// spoken reply so Clippy talks *while* it acts, in one model pass. MCP is
     /// reserved for the real computer-use lane (get_window_state / click / set_value),
     /// which is result-dependent and doesn't exist yet. So no `--mcp-config` here.

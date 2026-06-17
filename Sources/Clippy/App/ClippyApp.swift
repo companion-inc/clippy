@@ -453,7 +453,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         guard sttEnabled, conversation != nil else {
             return
         }
-        // Barge-in (the Clippy behavior): starting to talk interrupts whatever
+        // Barge-in: starting to talk interrupts whatever
         // Clippy is currently saying or still generating, instead of being blocked.
         interruptSpeechAndResponse()
         usingDeepgram = false

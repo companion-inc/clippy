@@ -26,8 +26,8 @@ public enum ScreenPointingDirection: Equatable, Sendable {
 /// gesture it should play. Pure geometry so it is unit-testable without a display.
 public enum GroundingDirector {
     /// Map a screenshot pixel coordinate (top-left origin, y-down, in image pixels)
-    /// into a global AppKit screen point (bottom-left origin, y-up). Mirrors the
-    /// flip + display-offset Clippy applies so the gesture lands in the right place.
+    /// into a global AppKit screen point (bottom-left origin, y-up), including the
+    /// flip + display offset needed for the gesture to land in the right place.
     public static func screenPoint(fromPixel pixel: CGPoint, imageSize: CGSize, display: CGRect) -> CGPoint {
         guard imageSize.width > 0, imageSize.height > 0 else { return display.origin }
         let scaleX = display.width / imageSize.width

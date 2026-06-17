@@ -2,7 +2,7 @@ import AVFoundation
 import Foundation
 
 /// Converts mic `AVAudioPCMBuffer`s to 16 kHz mono linear-PCM16 `Data` for the
-/// Deepgram websocket. Implemented for Clippy's BuddyPCM16AudioConverter.
+/// Deepgram websocket.
 final class PCM16AudioConverter {
     private let targetFormat: AVAudioFormat
     private var converter: AVAudioConverter?

@@ -1,6 +1,6 @@
 # Clippy Project Conventions
 
-## Response Format: CLIPPY
+## Response Format: Speech And Action Tags
 
 When Clippy speaks, one reply carries both speech and action in a single response:
 

@@ -3,8 +3,7 @@ import Foundation
 
 /// Push-to-talk voice capture backed by Deepgram Nova-3 streaming STT. Owns the
 /// mic (`AVAudioEngine`), converts to 16 kHz PCM16, streams over the websocket,
-/// and returns the final transcript. Implemented for Clippy's
-/// DeepgramStreamingTranscriptionProvider; needs only a Deepgram key (no cloud proxy).
+/// and returns the final transcript with only a Deepgram key configured locally.
 public final class DeepgramVoiceCapture {
     private let apiKey: String
     private let engine = AVAudioEngine()

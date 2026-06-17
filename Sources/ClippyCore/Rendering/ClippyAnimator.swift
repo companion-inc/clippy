@@ -1,11 +1,9 @@
 import Foundation
 import SpriteKit
 
-/// Frame stepper for Clippy-compatible animations, implemented with the Clippy animation
-/// animator, which preserves the original MS Agent semantics: weighted random
-/// frame branching, exit branches, and exit-branching animations that wait at
-/// their last frame until told to exit.
-/// Reference: Research/sources/repos/clippyjs-clippy.js/src/animator.js
+/// Frame stepper for Clippy-compatible animations. It preserves MS Agent-style
+/// weighted random frame branching, exit branches, and exit-branching animations
+/// that wait at their last frame until told to exit.
 @MainActor
 public final class ClippyAnimator {
     public enum AnimationEndState: Equatable {

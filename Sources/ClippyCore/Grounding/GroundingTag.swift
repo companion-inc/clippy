@@ -1,8 +1,8 @@
 import Foundation
 import CoreGraphics
 
-/// On-screen grounding directives the agent can emit inline in its reply, ported
-/// from Clippy's tag protocol. Clippy renders these by moving and gesturing with
+/// On-screen grounding directives the agent can emit inline in its reply.
+/// Clippy renders these by moving and gesturing with
 /// its own body (and drawing outline/highlight overlays) — there is no synthetic cursor.
 ///
 /// Tag formats:
@@ -105,7 +105,7 @@ public struct GroundingDirectives: Equatable, Sendable {
     }
 }
 
-/// Parses Clippy-style grounding tags out of an assistant reply.
+/// Parses Clippy grounding tags out of an assistant reply.
 public enum GroundingParser {
     public static func parse(_ text: String) -> GroundingDirectives {
         GroundingDirectives(spokenText: strip(text), tags: tags(in: text))

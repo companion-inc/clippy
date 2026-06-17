@@ -60,26 +60,6 @@ public enum ComputerUseMCPConfig {
         "zoom",
     ]
 
-    public static let clippyEnabledTools: [String] = [
-        "check_permissions",
-        "click",
-        "get_config",
-        "get_screen_size",
-        "get_window_state",
-        "hotkey",
-        "launch_app",
-        "list_apps",
-        "list_windows",
-        "page",
-        "press_key",
-        "right_click",
-        "screenshot",
-        "scroll",
-        "set_config",
-        "set_value",
-        "type_text",
-    ]
-
     public static let defaultEnabledTools = cuaDriverEnabledTools
 
     public static func cuaDriverArgs(
@@ -132,7 +112,6 @@ public enum ComputerUseMCPConfig {
             ("cua-driver", "\(workingDirectory)/.build/arm64-apple-macosx/debug/\(bundledHelperName)", args, cuaDriverEnabledTools),
             ("cua-driver", "\(home)/.local/bin/cua-driver", args, cuaDriverEnabledTools),
             ("cua-driver", "/Applications/CuaDriver.app/Contents/MacOS/cua-driver", args, cuaDriverEnabledTools),
-            ("computer-use", "/Applications/Clippy.app/Contents/Helpers/ClippyComputerUseRuntime", [], clippyEnabledTools),
         ]
 
         for candidate in candidates where !candidate.command.isEmpty {
