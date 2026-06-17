@@ -1432,7 +1432,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func showWelcomeStep() {
         showOnboardingStep(
-            "I'm Clippy. I can talk, see your screen, and help use apps.",
+            "Hey, I'm Clippy. I'm your new desktop buddy.",
             animation: "Greeting",
             choices: [
                 .init(title: "Next") { [weak self] in self?.showBrainChoiceStep() },
