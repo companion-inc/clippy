@@ -3,6 +3,7 @@ import CoreGraphics
 
 /// A resolved drawing instruction in global screen coordinates (y-up).
 public enum AnnotationMark: Equatable, Sendable {
+    case dot(center: CGPoint, progress: CGFloat)
     case ring(center: CGPoint, radius: CGFloat, kind: RingKind)
     case region(center: CGPoint, radius: CGFloat)
     case path(points: [CGPoint], shape: GroundingTag.ShapeKind)
@@ -11,21 +12,22 @@ public enum AnnotationMark: Equatable, Sendable {
     public enum RingKind: Equatable, Sendable { case target, hover }
 
     /// Build a mark from a grounding tag whose coordinates are already in screen space.
-    /// `POINT` produces no mark — Clippy's own body is the pointer.
+    /// `POINT` gets a small precision dot; Clippy's own body remains the pointer.
     public init?(tag: GroundingTag) {
         switch tag {
+        case let .point(p, _, _): self = .dot(center: p, progress: 1)
         case let .target(p, r, _, _): self = .ring(center: p, radius: CGFloat(r), kind: .target)
         case let .hover(p, r, _, _): self = .ring(center: p, radius: CGFloat(r), kind: .hover)
         case let .highlight(p, r, _, _): self = .region(center: p, radius: CGFloat(r))
         case let .shape(kind, pts, _, _): self = .path(points: pts, shape: kind)
-        case .point, .act: return nil   // body-only directives draw no on-screen mark
+        case .act: return nil
         }
     }
 }
 
 /// Borderless, transparent, click-through overlay that draws Clippy's on-screen marks
-/// (target/hover rings, highlight outlines, shape paths) in global screen coordinates.
-/// Clippy's body is the visible pointer; this overlay is only for marks that need ink.
+/// (point dots, target/hover rings, highlight outlines, shape paths) in global screen coordinates.
+/// Clippy's body is the visible pointer; this overlay provides precise Clippy-style ink.
 @MainActor
 public final class AnnotationOverlayWindow {
     private let window: NSWindow
@@ -197,6 +199,8 @@ public final class AnnotationOverlayWindow {
 extension AnnotationMark {
     public var visualBeatDuration: TimeInterval {
         switch self {
+        case .dot:
+            return 0.22
         case let .path(points, shape),
              let .partialPath(points, shape, _):
             let length = Self.pathLength(points, closesPath: shape == .polygon)
@@ -209,6 +213,8 @@ extension AnnotationMark {
     public func withDrawProgress(_ progress: CGFloat) -> AnnotationMark {
         let clamped = min(1, max(0, progress))
         switch self {
+        case let .dot(center, _):
+            return .dot(center: center, progress: clamped)
         case let .path(points, shape):
             return .partialPath(points: points, shape: shape, progress: clamped)
         case let .partialPath(points, shape, _):
@@ -251,6 +257,9 @@ final class AnnotationDrawView: NSView {
         let resolvedMarks = scene?.resolvedMarks(windowFrameProvider: { $0.currentFrame() }) ?? marks
         for mark in resolvedMarks {
             switch mark {
+            case let .dot(center, progress):
+                let c = local(center)
+                drawPointDot(ctx, center: c, palette: palette(around: [center]), progress: progress)
             case let .ring(center, radius, kind):
                 let c = local(center)
                 let scaledRadius = radius * markScale
@@ -363,6 +372,51 @@ final class AnnotationDrawView: NSView {
         } else {
             strokePath(ctx, path: path, color: palette.primary, width: 4 * markScale, dashed: dashed)
         }
+    }
+
+    private func drawPointDot(_ ctx: CGContext, center: CGPoint, palette: AnnotationPalette, progress: CGFloat) {
+        let clamped = min(1, max(0, progress))
+        let pulse = 1 - clamped
+        let outerRadius = (6 + 5 * pulse) * markScale
+        let innerRadius = 4 * markScale
+        let outer = CGRect(
+            x: center.x - outerRadius,
+            y: center.y - outerRadius,
+            width: outerRadius * 2,
+            height: outerRadius * 2
+        )
+
+        ctx.saveGState()
+        ctx.setAlpha(0.45 * pulse)
+        ctx.setFillColor(palette.primary.cgColor)
+        ctx.addEllipse(in: outer.standardized)
+        ctx.fillPath()
+        ctx.restoreGState()
+
+        let inner = CGRect(
+            x: center.x - innerRadius,
+            y: center.y - innerRadius,
+            width: innerRadius * 2,
+            height: innerRadius * 2
+        )
+        let innerPath = CGPath(ellipseIn: inner.standardized, transform: nil)
+        ctx.setFillColor(palette.primary.cgColor)
+        ctx.addPath(innerPath)
+        ctx.fillPath()
+
+        let outlineColor = palette.backing ?? .black
+        strokePath(ctx, path: innerPath, color: outlineColor, width: 2 * markScale)
+
+        let highlightRadius = max(1.5 * markScale, innerRadius * 0.38)
+        let highlight = CGRect(
+            x: center.x - innerRadius * 0.55,
+            y: center.y + innerRadius * 0.20,
+            width: highlightRadius * 2,
+            height: highlightRadius * 2
+        )
+        ctx.setFillColor(NSColor.white.withAlphaComponent(0.95).cgColor)
+        ctx.addEllipse(in: highlight)
+        ctx.fillPath()
     }
 
     private func drawRegion(_ ctx: CGContext, rect: CGRect, palette: AnnotationPalette, fill: Bool) {

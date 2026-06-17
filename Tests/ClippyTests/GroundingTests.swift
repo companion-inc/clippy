@@ -11,11 +11,19 @@ import Testing
 
 @Test func targetAndHoverCountAsRenderableVisualGuidance() {
     let tags: [GroundingTag] = [
+        .point(CGPoint(x: 20, y: 30), label: "menu", screen: nil),
         .target(CGPoint(x: 120, y: 210), radius: 40, label: "add modifier", screen: nil),
         .hover(CGPoint(x: 80, y: 90), radius: 24, label: "menu", screen: nil),
         .act(animation: "Explain"),
     ]
-    #expect(tags.map(\.isRenderableVisual) == [true, true, false])
+    #expect(tags.map(\.isRenderableVisual) == [true, true, true, false])
+}
+
+@Test func pointTagCreatesTinyPrecisionDot() {
+    let mark = AnnotationMark(tag: .point(CGPoint(x: 120, y: 210), label: "menu", screen: nil))
+    #expect(mark == .dot(center: CGPoint(x: 120, y: 210), progress: 1))
+    #expect(mark?.visualBeatDuration == 0.22)
+    #expect(mark?.withDrawProgress(0.5) == .dot(center: CGPoint(x: 120, y: 210), progress: 0.5))
 }
 
 @Test func parsesPointNoneAsNoDirective() {
@@ -112,6 +120,28 @@ import Testing
     #expect(scene.resolvedMarks(windowFrameProvider: { _ in moved }) == [
         .ring(center: CGPoint(x: 370, y: 540), radius: 24, kind: .target),
     ])
+}
+
+@Test func windowAnchoredDrawingSceneReprojectsPointDotsWhenWindowMoves() {
+    let anchor = DrawingWindowAnchor(
+        ownerProcessIdentifier: 42,
+        windowIdentifier: 7,
+        ownerName: "TestApp",
+        title: "Demo",
+        browserURL: nil,
+        initialFrame: CGRect(x: 100, y: 200, width: 400, height: 300)
+    )
+    let mark = AnnotationMark.dot(center: CGPoint(x: 150, y: 260), progress: 1)
+    let scene = DrawingScene(marks: [mark], anchor: .window(anchor))
+    let moved = CGRect(x: 320, y: 480, width: 400, height: 300)
+
+    #expect(scene.resolvedMarks(windowFrameProvider: { _ in moved }) == [
+        .dot(center: CGPoint(x: 370, y: 540), progress: 1),
+    ])
+    #expect(scene.withSequenceProgress(durations: [1], elapsed: 0.5)
+        .resolvedMarks(windowFrameProvider: { _ in moved }) == [
+            .dot(center: CGPoint(x: 370, y: 540), progress: 0.5),
+        ])
 }
 
 @Test func windowAnchoredDrawingSceneKeepsPathGeometryLocalToWindow() {

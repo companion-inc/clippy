@@ -81,7 +81,7 @@ Screen annotations — when visible grounding makes the answer clearer, emit inl
 For [TARGET] and [HOVER], start the reply with exactly one tag. For [POINT], [HIGHLIGHT], and
 [SHAPE], put the tag(s) at the end after the spoken text. Coordinates are integer pixels in the
 screenshot you Read (top-left origin, x right, y down), not AppKit points. Use the right visual by intent:
-[POINT:x,y:label] for showing one exact spot with Clippy's body.
+[POINT:x,y:label] for showing one exact spot with Clippy's body plus a tiny precision dot.
 [TARGET:x,y,r:label] only when the next visible step is one click/tap/focus/commit that Clippy
 can observe, recapture, and continue from. The spoken sentence must contain only that one action.
 [HOVER:x,y,r:label] only for a hover reveal that Clippy can observe and continue from.
@@ -139,7 +139,7 @@ internal tool plumbing.
     public static let visualGroundingTurnContract = """
     [Clippy guided visual turn]
     The user is asking for visible screen grounding. Look at the current screenshot as truth, then choose the right Clippy visual tag(s).
-    Use [POINT:x,y:label] for one exact spot. Use [TARGET:x,y,r:label] or [HOVER:x,y,r:label] only when the next visible step is a click/tap/focus/commit or hover reveal that Clippy can observe, recapture, and continue from.
+    Use [POINT:x,y:label] for one exact spot with Clippy's body plus a tiny precision dot. Use [TARGET:x,y,r:label] or [HOVER:x,y,r:label] only when the next visible step is a click/tap/focus/commit or hover reveal that Clippy can observe, recapture, and continue from.
     If the next step is manual work Swift cannot reliably detect as complete, such as writing in a field, dragging a knob, adjusting a slider, choosing a color by taste, selecting a range, or trimming a clip, do not fake a target. Use [HIGHLIGHT] for the work area, [POINT] for the exact handle/control, and [SHAPE:arrow] or [SHAPE:curve] for the motion. Tell the user what to do and how to resume.
     Use [SHAPE:line|arrow|circle|curve|polygon:x1,y1;x2,y2;...:label] for drawn explanation, paths, geometry, motion, and constructive diagrams.
     Coordinates are integer pixels in the screenshot, top-left origin. Keep the spoken text short. Start [TARGET]/[HOVER] replies with exactly one tag; put [POINT]/[HIGHLIGHT]/[SHAPE] tags at the end. If no visual mark helps, omit visual tags.

@@ -167,6 +167,8 @@ public struct DrawingObject: Equatable, Sendable {
 
     public var visualBeatDuration: TimeInterval {
         switch geometry {
+        case .dot:
+            return 0.22
         case let .path(points, shape):
             let length = Self.pathLength(points, closesPath: shape == .polygon)
             return TimeInterval(min(1.25, max(0.35, Double(length / 900))))
@@ -203,12 +205,15 @@ public struct DrawingObject: Equatable, Sendable {
 }
 
 public enum DrawingGeometry: Equatable, Sendable {
+    case dot(center: CGPoint)
     case ring(center: CGPoint, radius: CGFloat, kind: AnnotationMark.RingKind)
     case region(center: CGPoint, radius: CGFloat)
     case path(points: [CGPoint], shape: GroundingTag.ShapeKind)
 
     public init?(mark: AnnotationMark, referenceFrame: CGRect) {
         switch mark {
+        case let .dot(center, _):
+            self = .dot(center: center.local(to: referenceFrame))
         case let .ring(center, radius, kind):
             self = .ring(center: center.local(to: referenceFrame), radius: radius, kind: kind)
         case let .region(center, radius):
@@ -222,6 +227,8 @@ public enum DrawingGeometry: Equatable, Sendable {
 
     public func annotationMark(in referenceFrame: CGRect, drawProgress: CGFloat?) -> AnnotationMark? {
         switch self {
+        case let .dot(center):
+            return .dot(center: center.global(from: referenceFrame), progress: drawProgress ?? 1)
         case let .ring(center, radius, kind):
             return .ring(center: center.global(from: referenceFrame), radius: radius, kind: kind)
         case let .region(center, radius):
@@ -237,6 +244,8 @@ public enum DrawingGeometry: Equatable, Sendable {
 
     public func primaryPoint(in referenceFrame: CGRect) -> CGPoint? {
         switch self {
+        case let .dot(center):
+            return center.global(from: referenceFrame)
         case let .ring(center, _, _), let .region(center, _):
             return center.global(from: referenceFrame)
         case let .path(points, _):
