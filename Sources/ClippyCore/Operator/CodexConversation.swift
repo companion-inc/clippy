@@ -46,6 +46,9 @@ public actor CodexConversation: AgentBrain {
     }
 
     public static func locateBinary() -> String? {
+        if let managed = ClippyRuntimeLocator.codexExecutablePath() {
+            return managed
+        }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let candidates = [
             "\(home)/.local/bin/codex",

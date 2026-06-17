@@ -22,6 +22,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var deepgramSTT: DeepgramVoiceCapture?
     private var tts: XAITTS?
     private var providerKeys: ProviderKeysController?
+    private var setupProcess: Process?
+    private var setupOutputPipe: Pipe?
+    private var setupOutputHandle: FileHandle?
+    private var openedSetupURLs = Set<String>()
     private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: true,
         updaterDelegate: nil,
@@ -30,6 +34,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var isOnboardingActive = false
     private var usingDeepgram = false
     private var isVoiceCaptureActive = false
+    private var isPushToTalkHeld = false
+    private var voicePressID = 0
     private var voicePartialText = ""
     private var hideBubbleWhenSpeechFinishes = false
     private var spokenBubbleShownAt: Date?
@@ -175,6 +181,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         disarmGuidedTarget(reason: "terminate")
+        cancelSetupProcess()
         textInputShortcut?.stop()
         ptt?.stop()
         log("applicationWillTerminate")
@@ -342,18 +349,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         monitor.onBegin = { [weak self] in self?.beginVoiceTurn() }
         monitor.onEnd = { [weak self] in self?.endVoiceTurn() }
         self.ptt = monitor
-
-        // Deepgram needs only the mic; the Apple fallback also needs Speech Recognition.
-        let needsSpeechRecognition = (deepgramSTT == nil)
-        Task { [weak self] in
-            if needsSpeechRecognition {
-                _ = await SpeechCapture.requestAuthorization()
-            } else {
-                _ = await SpeechCapture.requestMicrophone()
-            }
-            await MainActor.run { self?.ptt?.start() }
-        }
-
+        monitor.start()
     }
 
     private func configureVoiceProviders() {
@@ -487,6 +483,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func beginVoiceTurn() {
+        isPushToTalkHeld = true
+        voicePressID += 1
+        let pressID = voicePressID
         if isClippyHidden {
             showClippy()
             log("wake shortcut: clippy shown")
@@ -495,6 +494,51 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         guard sttEnabled, conversation != nil else {
             return
         }
+        if needsVoicePermissionForCurrentProvider() {
+            requestVoicePermissionForPushToTalk(pressID: pressID)
+            return
+        }
+        startVoiceCapture()
+    }
+
+    private func needsVoicePermissionForCurrentProvider() -> Bool {
+        if deepgramSTT != nil {
+            return !MicrophonePermission.isGranted
+        }
+        return !MicrophonePermission.isGranted || SpeechCapture.speechAuthorizationStatus != .authorized
+    }
+
+    private func requestVoicePermissionForPushToTalk(pressID: Int) {
+        let needsSpeechRecognition = (deepgramSTT == nil)
+        if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
+        chatBubble?.showStatus("Allow microphone access, then hold Control+Option again.")
+        Task { [weak self] in
+            let granted: Bool
+            if needsSpeechRecognition {
+                granted = await SpeechCapture.requestAuthorization()
+            } else {
+                granted = await SpeechCapture.requestMicrophone()
+            }
+            await MainActor.run {
+                self?.finishVoicePermissionRequest(pressID: pressID, granted: granted)
+            }
+        }
+    }
+
+    private func finishVoicePermissionRequest(pressID: Int, granted: Bool) {
+        guard pressID == voicePressID else { return }
+        guard granted else {
+            log("ptt: voice permission denied")
+            chatBubble?.showReplyForReading("(Microphone access is off.)")
+            return
+        }
+        guard isPushToTalkHeld else {
+            return
+        }
+        startVoiceCapture()
+    }
+
+    private func startVoiceCapture() {
         // Barge-in: starting to talk interrupts whatever
         // Clippy is currently saying or still generating, instead of being blocked.
         interruptSpeechAndResponse()
@@ -533,6 +577,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func endVoiceTurn() {
+        isPushToTalkHeld = false
         guard isVoiceCaptureActive else { return }
         isVoiceCaptureActive = false
         if usingDeepgram, let deepgram = deepgramSTT {
@@ -2110,58 +2155,57 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func runCodexLogin() {
-        Self.runInTerminal(title: "ChatGPT Sign In", command: "codex login")
-        showRefreshAfterExternalSetup("Opened ChatGPT sign in. Finish there, then come back.", resume: { [weak self] in
-            self?.showCodexOnboarding()
-        })
+        runSetupProcess(
+            title: "ChatGPT Sign In",
+            executablePath: CodexConversation.locateBinary() ?? "codex",
+            arguments: ["login"],
+            startMessage: "Opening ChatGPT sign in. Finish in your browser, then press Refresh.",
+            successMessage: "ChatGPT sign in finished. Press Refresh.",
+            retry: { [weak self] in self?.runCodexLogin() },
+            resume: { [weak self] in self?.showCodexOnboarding() }
+        )
     }
 
     private func runCodexInstall() {
-        Self.runInTerminal(
+        if CodexConversation.locateBinary() != nil {
+            runCodexLogin()
+            return
+        }
+        runSetupShell(
             title: "Set Up ChatGPT",
-            command: """
-            if ! command -v npm >/dev/null 2>&1; then
-              echo "npm is required to install the ChatGPT connector."
-              exit 1
-            fi
-            npm install -g @openai/codex
-            codex login
-            """
+            command: Self.codexInstallCommand(),
+            startMessage: "Installing ChatGPT support in the background.",
+            successMessage: "ChatGPT support is installed. Press Refresh to sign in.",
+            retry: { [weak self] in self?.runCodexInstall() },
+            resume: { [weak self] in self?.showCodexOnboarding() }
         )
-        showRefreshAfterExternalSetup("Opened ChatGPT setup. Finish there, then come back.", resume: { [weak self] in
-            self?.showCodexOnboarding()
-        })
     }
 
     private func runClaudePlanLogin() {
-        Self.runInTerminal(title: "Claude Sign In", command: "claude auth login --claudeai")
-        showRefreshAfterExternalSetup("Opened Claude sign in. Finish there, then come back.", resume: { [weak self] in
-            self?.showClaudeOnboarding()
-        })
+        runSetupProcess(
+            title: "Claude Sign In",
+            executablePath: LocalCLIConversation.locateBinary() ?? "claude",
+            arguments: ["auth", "login", "--claudeai"],
+            startMessage: "Opening Claude sign in. Finish in your browser, then press Refresh.",
+            successMessage: "Claude sign in finished. Press Refresh.",
+            retry: { [weak self] in self?.runClaudePlanLogin() },
+            resume: { [weak self] in self?.showClaudeOnboarding() }
+        )
     }
 
     private func runClaudeInstall() {
-        Self.runInTerminal(
+        if LocalCLIConversation.locateBinary() != nil {
+            runClaudePlanLogin()
+            return
+        }
+        runSetupShell(
             title: "Set Up Claude",
-            command: """
-            if ! command -v npm >/dev/null 2>&1; then
-              echo "npm is required to install the Claude connector."
-              exit 1
-            fi
-            npm install -g @anthropic-ai/claude-code
-            claude auth login --claudeai
-            """
+            command: Self.claudeInstallCommand(),
+            startMessage: "Installing Claude support in the background.",
+            successMessage: "Claude support is installed. Press Refresh to sign in.",
+            retry: { [weak self] in self?.runClaudeInstall() },
+            resume: { [weak self] in self?.showClaudeOnboarding() }
         )
-        showRefreshAfterExternalSetup("Opened Claude setup. Finish there, then come back.", resume: { [weak self] in
-            self?.showClaudeOnboarding()
-        })
-    }
-
-    private func showRefreshAfterExternalSetup(_ message: String, resume: @escaping () -> Void) {
-        showOnboardingStep(message, animation: "Save", choices: [
-            .init(title: "Refresh") { resume() },
-            .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
-        ])
     }
 
     private func showOnboardingStep(
@@ -2182,52 +2226,353 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         _ = playOnce(name)
     }
 
-    private static func runInTerminal(title: String, command: String) {
+    private func runSetupShell(
+        title: String,
+        command: String,
+        startMessage: String,
+        successMessage: String,
+        retry: @escaping () -> Void,
+        resume: @escaping () -> Void
+    ) {
+        runSetupProcess(
+            title: title,
+            executablePath: "/bin/zsh",
+            arguments: ["-lc", command],
+            startMessage: startMessage,
+            successMessage: successMessage,
+            retry: retry,
+            resume: resume
+        )
+    }
+
+    private func runSetupProcess(
+        title: String,
+        executablePath: String,
+        arguments: [String],
+        startMessage: String,
+        successMessage: String,
+        retry: @escaping () -> Void,
+        resume: @escaping () -> Void
+    ) {
+        cancelSetupProcess()
+        let logURL: URL
         do {
-            let directory = try setupScriptDirectory()
-            let slug = title
-                .lowercased()
-                .replacingOccurrences(of: " ", with: "-")
-                .replacingOccurrences(of: "/", with: "-")
-            let scriptURL = directory.appendingPathComponent("\(slug)-\(Int(Date().timeIntervalSince1970)).command")
-            let script = """
-            #!/bin/zsh
-            clear
-            echo "Clippy setup: \(title)"
-            echo
-            (
-            \(command)
-            )
-            status=$?
-            echo
-            if [ $status -eq 0 ]; then
-              echo "Done. Return to Clippy and press Refresh."
-            else
-              echo "Setup exited with status $status."
-            fi
-            echo
-            read -k 1 "?Press any key to close this window..."
-            exit $status
-            """
-            try script.write(to: scriptURL, atomically: true, encoding: .utf8)
-            try FileManager.default.setAttributes(
-                [.posixPermissions: NSNumber(value: Int16(0o755))],
-                ofItemAtPath: scriptURL.path
-            )
-            NSWorkspace.shared.open(scriptURL)
+            logURL = try Self.setupLogURL(title: title)
+            let commandLine = ([executablePath] + arguments).joined(separator: " ")
+            try Self.writeSetupLogHeader(title: title, commandLine: commandLine, to: logURL)
         } catch {
-            NSSound.beep()
+            showOnboardingStep(
+                "I couldn't start setup because I couldn't create the log folder.",
+                animation: "GetAttention",
+                choices: [
+                    .init(title: "Retry") { retry() },
+                    .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
+                ]
+            )
+            return
+        }
+
+        let process = Process()
+        let pipe = Pipe()
+        let outputHandle: FileHandle
+        do {
+            outputHandle = try FileHandle(forWritingTo: logURL)
+            try outputHandle.seekToEnd()
+        } catch {
+            showOnboardingStep(
+                "I couldn't start setup because I couldn't write the setup log.",
+                animation: "GetAttention",
+                choices: [
+                    .init(title: "Retry") { retry() },
+                    .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
+                ]
+            )
+            return
+        }
+
+        if executablePath.hasPrefix("/") {
+            process.executableURL = URL(fileURLWithPath: executablePath)
+            process.arguments = arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [executablePath] + arguments
+        }
+        var environment = ProcessInfo.processInfo.environment
+        environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+        process.environment = environment
+        process.standardOutput = pipe
+        process.standardError = pipe
+        setupProcess = process
+        setupOutputPipe = pipe
+        setupOutputHandle = outputHandle
+        openedSetupURLs.removeAll()
+
+        pipe.fileHandleForReading.readabilityHandler = { [weak self, weak process] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else { return }
+            outputHandle.write(data)
+            guard
+                let text = String(data: data, encoding: .utf8),
+                let url = Self.firstSetupURL(in: text)
+            else { return }
+            Task { @MainActor [weak self, weak process] in
+                self?.openSetupURLIfNeeded(url, process: process)
+            }
+        }
+        process.terminationHandler = { [weak self, weak process] finishedProcess in
+            pipe.fileHandleForReading.readabilityHandler = nil
+            let remaining = pipe.fileHandleForReading.readDataToEndOfFile()
+            if !remaining.isEmpty {
+                outputHandle.write(remaining)
+            }
+            try? outputHandle.close()
+            Task { @MainActor [weak self, weak process] in
+                guard let process else { return }
+                self?.finishSetupProcess(
+                    process,
+                    logURL: logURL,
+                    successMessage: successMessage,
+                    retry: retry,
+                    resume: resume,
+                    status: finishedProcess.terminationStatus
+                )
+            }
+        }
+
+        showOnboardingStep(
+            startMessage,
+            animation: "GetTechy",
+            choices: [
+                .init(title: "Cancel") { [weak self] in
+                    self?.cancelSetupProcess()
+                    self?.showBrainChoiceStep()
+                },
+            ]
+        )
+
+        do {
+            try process.run()
+        } catch {
+            pipe.fileHandleForReading.readabilityHandler = nil
+            process.terminationHandler = nil
+            setupProcess = nil
+            setupOutputPipe = nil
+            setupOutputHandle = nil
+            try? outputHandle.close()
+            showSetupFailure(logURL: logURL, retry: retry)
         }
     }
 
-    private static func setupScriptDirectory() throws -> URL {
+    private func finishSetupProcess(
+        _ process: Process,
+        logURL: URL,
+        successMessage: String,
+        retry: @escaping () -> Void,
+        resume: @escaping () -> Void,
+        status: Int32
+    ) {
+        guard setupProcess === process else {
+            return
+        }
+        setupProcess = nil
+        setupOutputPipe = nil
+        setupOutputHandle = nil
+        openedSetupURLs.removeAll()
+
+        if status == 0 {
+            showOnboardingStep(
+                successMessage,
+                animation: "Save",
+                choices: [
+                    .init(title: "Refresh") { resume() },
+                    .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
+                ]
+            )
+        } else {
+            showSetupFailure(logURL: logURL, retry: retry)
+        }
+    }
+
+    private func showSetupFailure(logURL: URL, retry: @escaping () -> Void) {
+        showOnboardingStep(
+            "Setup hit an error. I saved the log.",
+            animation: "GetAttention",
+            choices: [
+                .init(title: "Retry") { retry() },
+                .init(title: "Open Log") { NSWorkspace.shared.open(logURL) },
+                .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
+            ]
+        )
+    }
+
+    private func cancelSetupProcess() {
+        setupOutputPipe?.fileHandleForReading.readabilityHandler = nil
+        setupProcess?.terminationHandler = nil
+        if let setupProcess, setupProcess.isRunning {
+            setupProcess.terminate()
+        }
+        try? setupOutputHandle?.close()
+        setupProcess = nil
+        setupOutputPipe = nil
+        setupOutputHandle = nil
+        openedSetupURLs.removeAll()
+    }
+
+    private func openSetupURLIfNeeded(_ url: URL, process: Process?) {
+        guard let process, setupProcess === process else {
+            return
+        }
+        let key = url.absoluteString
+        guard openedSetupURLs.insert(key).inserted else {
+            return
+        }
+        NSWorkspace.shared.open(url)
+    }
+
+    nonisolated private static func firstSetupURL(in text: String) -> URL? {
+        guard let range = text.range(of: #"https?://[^\s<>"']+"#, options: .regularExpression) else {
+            return nil
+        }
+        let raw = String(text[range]).trimmingCharacters(in: CharacterSet(charactersIn: ".,);]"))
+        return URL(string: raw)
+    }
+
+    private static func setupLogURL(title: String) throws -> URL {
+        let directory = try setupLogDirectory()
+        let slug = title
+            .lowercased()
+            .replacingOccurrences(of: " ", with: "-")
+            .replacingOccurrences(of: "/", with: "-")
+        return directory.appendingPathComponent("\(slug)-\(Int(Date().timeIntervalSince1970)).log")
+    }
+
+    private static func writeSetupLogHeader(title: String, commandLine: String, to url: URL) throws {
+        let header = """
+        Clippy setup: \(title)
+        Started: \(Date())
+        Command: \(commandLine)
+
+        """
+        try header.write(to: url, atomically: true, encoding: .utf8)
+    }
+
+    private static func setupLogDirectory() throws -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support", isDirectory: true)
         let directory = base
             .appendingPathComponent("Clippy", isDirectory: true)
+            .appendingPathComponent("Logs", isDirectory: true)
             .appendingPathComponent("Setup", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory
+    }
+
+    private static func codexInstallCommand() -> String {
+        """
+        set -eu
+        version="\(ClippyRuntimeLocator.codexVersion)"
+        arch="$(uname -m)"
+        case "$arch" in
+          arm64)
+            triple="aarch64-apple-darwin"
+            url="https://registry.npmjs.org/@openai/codex/-/codex-0.140.0-darwin-arm64.tgz"
+            expected="KDyQHsxdc8FHZKziSBXs82ABgben/8lLPdhi2Nu+wj6qs2RAp4k/IvE8foafVnp3OeGqhtEFbhlZp0H4Dg/Slg=="
+            ;;
+          x86_64)
+            triple="x86_64-apple-darwin"
+            url="https://registry.npmjs.org/@openai/codex/-/codex-0.140.0-darwin-x64.tgz"
+            expected="xA77AcKbP8BKxKqaJz8bqXtU1dUtanEKpWCMJ68LuYU054EC31BD7NftFe5/vpLUQR95fhRr7V9a91SLtCuLAg=="
+            ;;
+          *)
+            echo "Unsupported macOS architecture: $arch"
+            exit 1
+            ;;
+        esac
+        base="$HOME/Library/Application Support/Clippy/Runtimes/Codex/$version"
+        tmp="$(mktemp -d)"
+        cleanup() { rm -rf "$tmp"; }
+        trap cleanup EXIT
+
+        mkdir -p "$(dirname "$base")"
+        /usr/bin/curl -fsSL "$url" -o "$tmp/runtime.tgz"
+        actual="$(/usr/bin/openssl dgst -sha512 -binary "$tmp/runtime.tgz" | /usr/bin/openssl base64 -A)"
+        if [ "$actual" != "$expected" ]; then
+          echo "Downloaded ChatGPT connector did not pass verification."
+          exit 1
+        fi
+
+        mkdir -p "$tmp/extract"
+        /usr/bin/tar -xzf "$tmp/runtime.tgz" -C "$tmp/extract"
+        test -x "$tmp/extract/package/vendor/$triple/bin/codex"
+
+        rm -rf "$base"
+        mkdir -p "$base/bin"
+        cp -R "$tmp/extract/package/vendor" "$base/vendor"
+        cat > "$base/bin/codex" <<'CLIPPY_CODEX'
+        #!/bin/sh
+        set -eu
+        SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+        arch="$(uname -m)"
+        case "$arch" in
+          arm64) triple="aarch64-apple-darwin" ;;
+          x86_64) triple="x86_64-apple-darwin" ;;
+          *) echo "Unsupported macOS architecture: $arch" >&2; exit 1 ;;
+        esac
+        path_dir="$SCRIPT_DIR/../vendor/$triple/codex-path"
+        if [ -d "$path_dir" ]; then
+          export PATH="$path_dir:${PATH:-}"
+        fi
+        exec "$SCRIPT_DIR/../vendor/$triple/bin/codex" "$@"
+        CLIPPY_CODEX
+        chmod 755 "$base/bin/codex"
+        "$base/bin/codex" --help >/dev/null
+        echo "ChatGPT connector installed."
+        """
+    }
+
+    private static func claudeInstallCommand() -> String {
+        """
+        set -eu
+        version="\(ClippyRuntimeLocator.claudeVersion)"
+        arch="$(uname -m)"
+        case "$arch" in
+          arm64)
+            url="https://registry.npmjs.org/@anthropic-ai/claude-code-darwin-arm64/-/claude-code-darwin-arm64-2.1.181.tgz"
+            expected="nQlFIQyEIWQd7Pj4xET7+Kndm2kwp+kn9z9lbsS5CstMlYHs9ln9zpc/XYOYnsCcvwlSsVarYXQBREi6x/93ZA=="
+            ;;
+          x86_64)
+            url="https://registry.npmjs.org/@anthropic-ai/claude-code-darwin-x64/-/claude-code-darwin-x64-2.1.181.tgz"
+            expected="3u47rDjARgQboJ8HloeSHJrDphw9HbUV5YPWIi0ODM75Deyrh67GuXF/OroyQHiC4WwoqifGOhJu/KVDLPh5lA=="
+            ;;
+          *)
+            echo "Unsupported macOS architecture: $arch"
+            exit 1
+            ;;
+        esac
+        base="$HOME/Library/Application Support/Clippy/Runtimes/Claude/$version"
+        tmp="$(mktemp -d)"
+        cleanup() { rm -rf "$tmp"; }
+        trap cleanup EXIT
+
+        mkdir -p "$(dirname "$base")"
+        /usr/bin/curl -fsSL "$url" -o "$tmp/runtime.tgz"
+        actual="$(/usr/bin/openssl dgst -sha512 -binary "$tmp/runtime.tgz" | /usr/bin/openssl base64 -A)"
+        if [ "$actual" != "$expected" ]; then
+          echo "Downloaded Claude connector did not pass verification."
+          exit 1
+        fi
+
+        mkdir -p "$tmp/extract"
+        /usr/bin/tar -xzf "$tmp/runtime.tgz" -C "$tmp/extract"
+        test -x "$tmp/extract/package/claude"
+
+        rm -rf "$base"
+        mkdir -p "$base/bin"
+        cp "$tmp/extract/package/claude" "$base/bin/claude"
+        chmod 755 "$base/bin/claude"
+        "$base/bin/claude" --version >/dev/null
+        echo "Claude connector installed."
+        """
     }
 
     /// Show the focused permission helper: a Clippy tile + an "Open System Settings"

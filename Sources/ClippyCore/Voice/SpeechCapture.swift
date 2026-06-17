@@ -19,6 +19,10 @@ public final class SpeechCapture {
 
     public init() {}
 
+    public static var speechAuthorizationStatus: SFSpeechRecognizerAuthorizationStatus {
+        SFSpeechRecognizer.authorizationStatus()
+    }
+
     /// Requests Speech Recognition + Microphone access. Returns true only if both granted.
     public static func requestAuthorization() async -> Bool {
         let speechOK = await withCheckedContinuation { (continuation: CheckedContinuation<Bool, Never>) in

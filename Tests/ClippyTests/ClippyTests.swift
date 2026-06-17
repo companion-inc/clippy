@@ -33,6 +33,24 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(next?.id == second.id)
 }
 
+@Test func runtimeLocatorFindsClippyManagedExecutables() throws {
+    let base = FileManager.default.temporaryDirectory
+        .appendingPathComponent("clippy-runtimes-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: base) }
+
+    let codex = ClippyRuntimeLocator.codexExecutableURL(baseDirectory: base)
+    let claude = ClippyRuntimeLocator.claudeExecutableURL(baseDirectory: base)
+    try FileManager.default.createDirectory(at: codex.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: claude.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try "#!/bin/sh\nexit 0\n".write(to: codex, atomically: true, encoding: .utf8)
+    try "#!/bin/sh\nexit 0\n".write(to: claude, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: codex.path)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claude.path)
+
+    #expect(ClippyRuntimeLocator.codexExecutablePath(baseDirectory: base) == codex.path)
+    #expect(ClippyRuntimeLocator.claudeExecutablePath(baseDirectory: base) == claude.path)
+}
+
 @Test func voiceContextNoteReflectsSpokenInputAndSpokenOutput() {
     // Plain typed, bubble-only turn — no voice note at all.
     #expect(ClippyAgentInstructions.voiceContextNote(inputMode: .text, speaking: false) == nil)

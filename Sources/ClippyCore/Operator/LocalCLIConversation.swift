@@ -54,6 +54,9 @@ public actor LocalCLIConversation: AgentBrain {
 
     /// Best-effort discovery of the local CLI binary.
     public static func locateBinary() -> String? {
+        if let managed = ClippyRuntimeLocator.claudeExecutablePath() {
+            return managed
+        }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let candidates = [
             "\(home)/.local/bin/claude",
