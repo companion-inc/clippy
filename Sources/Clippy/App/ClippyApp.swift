@@ -73,6 +73,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var turnTimeoutItem: DispatchWorkItem?
     private var turnHasStreamingText = false
     private var ttsSpokenChars = 0   // how much of the streaming reply has been queued to TTS
+    private var streamingReplySegmentID: String?
     private var commandTimer: Timer?
     private var activeActivityState: AgentActivityState = .idle
     private var isClippyHidden = false
@@ -609,6 +610,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         isTurnRunning = true
         turnHasStreamingText = false
+        streamingReplySegmentID = nil
         cancelSpokenBubbleHide()
         hideBubbleWhenSpeechFinishes = false
         spokenBubbleShownAt = nil
@@ -682,11 +684,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                     switch chunk {
                     case .status(let status):
                         self?.showTurnProgress(status)
-                    case .partial(let partial):
-                        self?.showStreamingReply(partial)
-                        self?.speakStreaming(partial, final: false)
-                    case .final(let turn):
-                        self?.receiveReply(
+	                    case .partial(let partial):
+	                        self?.handleStreamingPartial(partial, segmentID: nil)
+	                    case .partialMessage(let partial, let id):
+	                        self?.handleStreamingPartial(partial, segmentID: id)
+	                    case .final(let turn):
+	                        self?.receiveReply(
                             turn,
                             visualGroundingContext: visualGroundingContext,
                             brain: brain
@@ -879,6 +882,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         hideBubbleWhenSpeechFinishes = false
         spokenBubbleShownAt = nil
         turnHasStreamingText = false
+        streamingReplySegmentID = nil
         isTurnRunning = false
     }
 
@@ -890,13 +894,23 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
 
+    private func handleStreamingPartial(_ text: String, segmentID: String?) {
+        if let segmentID, streamingReplySegmentID != segmentID {
+            streamingReplySegmentID = segmentID
+            ttsSpokenChars = 0
+            turnHasStreamingText = false
+        }
+        showStreamingReply(text)
+        speakStreaming(text, final: false)
+    }
+
     /// Live partial text while the reply streams in. Tags (even half-typed) are
     /// stripped before display so a bracket never flashes in the bubble.
     private func showStreamingReply(_ text: String) {
         guard isClippyHidden == false else { return }
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
         let display = ClippyUserFacingError.replacement(for: text, isError: false)
-            ?? VoiceSpeechTags.strip(GroundingParser.stripForStreaming(text))
+            ?? VoiceSpeechTags.stripForStreaming(GroundingParser.stripForStreaming(text))
         if !display.isEmpty {
             turnHasStreamingText = true
             cancelTurnProgressUpdates()
@@ -913,6 +927,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         cancelTurnTimeout()
         currentBrainTask = nil
         turnHasStreamingText = false
+        streamingReplySegmentID = nil
         isTurnRunning = false
         if isClippyHidden {
             log("clippy: \(turn.text.prefix(120))")
@@ -1393,11 +1408,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                     switch chunk {
                     case .status(let status):
                         self?.showTurnProgress(status)
-                    case .partial(let partial):
-                        self?.showStreamingReply(partial)
-                        self?.speakStreaming(partial, final: false)
-                    case .final(let turn):
-                        self?.receiveReply(turn)
+	                    case .partial(let partial):
+	                        self?.handleStreamingPartial(partial, segmentID: nil)
+	                    case .partialMessage(let partial, let id):
+	                        self?.handleStreamingPartial(partial, segmentID: id)
+	                    case .final(let turn):
+	                        self?.receiveReply(turn)
                     }
                 }
             }

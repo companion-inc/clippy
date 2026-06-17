@@ -17,6 +17,7 @@ public struct AgentTurn: Sendable {
 public enum AgentStreamChunk: Sendable {
     case status(String)
     case partial(String)
+    case partialMessage(text: String, id: String)
     case final(AgentTurn)
 }
 

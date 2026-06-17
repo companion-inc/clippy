@@ -61,4 +61,55 @@ public enum VoiceSpeechTags {
             .replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    public static func stripForStreaming(_ text: String) -> String {
+        tidy(removeTrailingPartialTag(from: strip(text)))
+    }
+
+    private static func removeTrailingPartialTag(from text: String) -> String {
+        let withoutBracketTag = removeTrailingPartialTag(
+            from: text,
+            opener: "[",
+            closer: "]",
+            allowedNames: instant.map { String($0.dropFirst().dropLast()) }
+        )
+        return removeTrailingPartialTag(
+            from: withoutBracketTag,
+            opener: "<",
+            closer: ">",
+            allowedNames: wrapping
+        )
+    }
+
+    private static func removeTrailingPartialTag(
+        from text: String,
+        opener: Character,
+        closer: Character,
+        allowedNames: [String]
+    ) -> String {
+        guard let start = text.lastIndex(of: opener) else {
+            return text
+        }
+        let suffix = text[start...]
+        guard suffix.contains(closer) == false else {
+            return text
+        }
+        var body = suffix.dropFirst()
+        if opener == "<", body.first == "/" {
+            body = body.dropFirst()
+        }
+        let lowerBody = body.lowercased()
+        guard lowerBody.allSatisfy({ $0.isLetter || $0 == "-" }),
+              allowedNames.contains(where: { $0.hasPrefix(lowerBody) })
+        else {
+            return text
+        }
+        return String(text[..<start])
+    }
+
+    private static func tidy(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: #"[ \t]{2,}"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }

@@ -634,7 +634,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         switch chunk {
         case .status(let status):
             statuses.append(status)
-        case .partial(let text):
+        case .partial(let text), .partialMessage(text: let text, id: _):
             firstPartial = text
             break streamLoop
         case .final:
@@ -647,6 +647,66 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(statuses.contains("Opening the Clippy thread"))
     #expect(statuses.contains("Sending the turn"))
     #expect(firstPartial == "EARLY ")
+}
+
+@Test func codexConversationStreamsEachAgentMessageItemSeparately() async throws {
+    let scriptURL = try writeExecutableScript(
+        named: "fake-codex-multi-message-stream.zsh",
+        contents: """
+        #!/bin/zsh
+        set -eu
+        request_id() {
+          print -r -- "$1" | sed -n 's/.*"id":\\([0-9][0-9]*\\).*/\\1/p'
+        }
+        while IFS= read -r line; do
+          id="$(request_id "$line")"
+          if [[ "$line" == *'"method":"initialize"'* ]]; then
+            print -r -- '{"id":'${id}',"result":{}}'
+          elif [[ "$line" == *'thread/start'* || "$line" == *'thread\\/start'* ]]; then
+            print -r -- '{"id":'${id}',"result":{"thread":{"id":"THREAD-MULTI"}}}'
+          elif [[ "$line" == *'turn/start'* || "$line" == *'turn\\/start'* ]]; then
+            print -r -- '{"id":'${id}',"result":{"turn":{"id":"TURN-MULTI","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":0,"completedAt":null,"durationMs":null}}}'
+            print -r -- '{"method":"item/agentMessage/delta","params":{"threadId":"THREAD-MULTI","turnId":"TURN-MULTI","itemId":"MSG-1","delta":"First "}}'
+            print -r -- '{"method":"item/agentMessage/delta","params":{"threadId":"THREAD-MULTI","turnId":"TURN-MULTI","itemId":"MSG-1","delta":"note."}}'
+            print -r -- '{"method":"item/completed","params":{"threadId":"THREAD-MULTI","turnId":"TURN-MULTI","completedAtMs":0,"item":{"type":"agentMessage","id":"MSG-1","text":"First note.","phase":null,"memoryCitation":null}}}'
+            print -r -- '{"method":"item/completed","params":{"threadId":"THREAD-MULTI","turnId":"TURN-MULTI","completedAtMs":0,"item":{"type":"toolCall","id":"TOOL-1","name":"observe.screen"}}}'
+            print -r -- '{"method":"item/agentMessage/delta","params":{"threadId":"THREAD-MULTI","turnId":"TURN-MULTI","itemId":"MSG-2","delta":"Second "}}'
+            print -r -- '{"method":"item/agentMessage/delta","params":{"threadId":"THREAD-MULTI","turnId":"TURN-MULTI","itemId":"MSG-2","delta":"note."}}'
+            print -r -- '{"method":"item/completed","params":{"threadId":"THREAD-MULTI","turnId":"TURN-MULTI","completedAtMs":0,"item":{"type":"agentMessage","id":"MSG-2","text":"Second note.","phase":null,"memoryCitation":null}}}'
+            print -r -- '{"method":"turn/completed","params":{"threadId":"THREAD-MULTI","turn":{"id":"TURN-MULTI","items":[],"itemsView":"full","status":"completed","error":null,"startedAt":0,"completedAt":0,"durationMs":1}}}'
+          fi
+        done
+        """
+    )
+    defer {
+        try? FileManager.default.removeItem(at: scriptURL.deletingLastPathComponent())
+    }
+
+    let conversation = CodexConversation(
+        binaryPath: scriptURL.path,
+        model: "gpt-5.5",
+        effort: "minimal",
+        workingDirectory: nil,
+        systemPrompt: nil,
+        diagnosticsLogURL: nil
+    )
+
+    var partials: [(String, String)] = []
+    var finalText: String?
+    for await chunk in conversation.stream("stream separately") {
+        switch chunk {
+        case .status, .partial:
+            break
+        case .partialMessage(text: let text, id: let id):
+            partials.append((id, text))
+        case .final(let turn):
+            finalText = turn.text
+        }
+    }
+
+    #expect(partials.map(\.0) == ["MSG-1", "MSG-1", "MSG-2", "MSG-2"])
+    #expect(partials.map(\.1) == ["First ", "First note.", "Second ", "Second note."])
+    #expect(finalText == "Second note.")
 }
 
 @Test func codexConversationStreamCancellationTerminatesTheChildProcess() async throws {
@@ -1391,6 +1451,10 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 @Test func xaiSpeechTagsAreRemovedFromDisplayText() {
     let text = "[chuckle] <whisper>that worked</whisper> [pause]"
     #expect(VoiceSpeechTags.strip(text) == "that worked")
+    #expect(VoiceSpeechTags.stripForStreaming("Ready [chuc") == "Ready")
+    #expect(VoiceSpeechTags.stripForStreaming("<laugh-spe") == "")
+    #expect(VoiceSpeechTags.stripForStreaming("<laugh-speak>That worked</laugh-spe") == "That worked")
+    #expect(VoiceSpeechTags.stripForStreaming("array[0") == "array[0")
     #expect(VoiceSpeechTags.instruction.contains("[chuckle]"))
     #expect(VoiceSpeechTags.instruction.contains("<whisper>"))
     #expect(VoiceSpeechTags.instruction.contains("avoid deep"))

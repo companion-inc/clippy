@@ -98,7 +98,7 @@ public actor CodexConversation: AgentBrain {
             switch chunk {
             case .status:
                 break
-            case .partial(let text):
+            case .partial(let text), .partialMessage(text: let text, id: _):
                 partial = text
             case .final(let turn):
                 return turn
@@ -139,6 +139,7 @@ public actor CodexConversation: AgentBrain {
         process box: ProcessBox
     ) async {
         var accumulated = ""
+        var agentMessageTextByID: [String: String] = [:]
         var finalText: String?
         var isError = false
         var finalError: String?
@@ -197,14 +198,17 @@ public actor CodexConversation: AgentBrain {
                 let params = object["params"] as? [String: Any]
 
                 switch method {
-                case "item/agentMessage/delta":
-                    guard Self.threadID(from: params) == activeThreadID,
-                          Self.turnID(from: params).map({ $0 == activeTurnID }) ?? true,
-                          let delta = params?["delta"] as? String,
-                          !delta.isEmpty
-                    else { continue }
-                    accumulated += delta
-                    continuation.yield(.partial(accumulated))
+	                case "item/agentMessage/delta":
+	                    guard Self.threadID(from: params) == activeThreadID,
+	                          Self.turnID(from: params).map({ $0 == activeTurnID }) ?? true,
+	                          let itemID = Self.itemID(from: params),
+	                          let delta = params?["delta"] as? String,
+	                          !delta.isEmpty
+	                    else { continue }
+	                    accumulated += delta
+	                    let itemText = (agentMessageTextByID[itemID] ?? "") + delta
+	                    agentMessageTextByID[itemID] = itemText
+	                    continuation.yield(.partialMessage(text: itemText, id: itemID))
 
                 case "item/completed":
                     guard Self.threadID(from: params) == activeThreadID,
@@ -543,6 +547,10 @@ public actor CodexConversation: AgentBrain {
 
     private static func turnID(from params: [String: Any]?) -> String? {
         params?["turnId"] as? String
+    }
+
+    private static func itemID(from params: [String: Any]?) -> String? {
+        params?["itemId"] as? String
     }
 
     private static func threadID(fromThreadStartResponse object: [String: Any]) -> String? {
