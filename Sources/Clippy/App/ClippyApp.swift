@@ -267,9 +267,21 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         deepgramSTT?.cancel()
         tts?.stop()
         deepgramSTT = DeepgramVoiceCapture()
-        tts = XAITTS(voiceID: selectedVoice.id)
+        tts = nil
         speech = deepgramSTT == nil ? SpeechCapture() : nil
-        log("voice: deepgram STT=\(deepgramSTT != nil) xAI TTS=\(tts != nil)")
+        log("voice: deepgram STT=\(deepgramSTT != nil) xAI TTS key=\(ClippySecrets.xaiAPIKey != nil)")
+    }
+
+    private func activeTTS() -> XAITTS? {
+        guard ttsEnabled else { return nil }
+        if let tts {
+            return tts
+        }
+        guard let tts = XAITTS(voiceID: selectedVoice.id) else {
+            return nil
+        }
+        self.tts = tts
+        return tts
     }
 
     private func beginVoiceTurn() {
@@ -536,7 +548,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     /// trailing partial sentence. Brains that only produce a final result still speak
     /// the whole reply here.
     private func speakStreaming(_ text: String, final: Bool) {
-        guard ttsEnabled, let tts else { return }
+        guard let tts = activeTTS() else { return }
         let ns = text as NSString
         if ttsSpokenChars > ns.length { ttsSpokenChars = ns.length }
         let terminators = CharacterSet(charactersIn: ".!?\n")
@@ -1378,7 +1390,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         tts?.voiceID = id
         log("voice: \(id)")
         guard isClippyHidden == false else { return }
-        tts?.speak("It looks like you changed my voice. [chuckle] How's this?")
+        activeTTS()?.speak("It looks like you changed my voice. [chuckle] How's this?")
     }
 
     @objc private func selectModel(_ sender: NSMenuItem) {
