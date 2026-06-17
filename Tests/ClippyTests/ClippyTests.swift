@@ -1164,12 +1164,14 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 }
 
 @Test func clippyVoiceCatalogUsesOnlyLiveXAIWomanAndManVoices() {
-    #expect(ClippyVoice.default.id == "eve")
-    #expect(ClippyVoice.all.map(\.id) == ["eve", "leo"])
-    #expect(ClippyVoice.eve.displayName == "Eve")
-    #expect(ClippyVoice.eve.detail == "Female · Multilingual")
-    #expect(ClippyVoice.leo.displayName == "Leo")
-    #expect(ClippyVoice.leo.detail == "Male · Multilingual")
+    #expect(ClippyVoice.default.id == "ara")
+    #expect(ClippyVoice.all.map(\.id) == ["ara", "rex"])
+    #expect(ClippyVoice.ara.displayName == "Ara")
+    #expect(ClippyVoice.ara.detail == "Female · Multilingual")
+    #expect(ClippyVoice.rex.displayName == "Rex")
+    #expect(ClippyVoice.rex.detail == "Male · Multilingual")
+    #expect(ClippyVoice.by(id: "eve") == nil)
+    #expect(ClippyVoice.by(id: "leo") == nil)
     #expect(ClippyVoice.by(id: "grace") == nil)
     #expect(ClippyVoice.by(id: "daniel") == nil)
 }

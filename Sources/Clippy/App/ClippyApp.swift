@@ -41,8 +41,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         return BrainDiscovery.defaultModel()
     }()
     private var selectedVoice: ClippyVoice = {
-        let id = UserDefaults.standard.string(forKey: "ClippyVoiceID")
-        return id.flatMap(ClippyVoice.by(id:)) ?? .default
+        let defaults = UserDefaults.standard
+        if let id = defaults.string(forKey: "ClippyVoiceID"),
+           let saved = ClippyVoice.by(id: id) {
+            return saved
+        }
+        defaults.set(ClippyVoice.default.id, forKey: "ClippyVoiceID")
+        return .default
     }()
     private var bodyScale: ClippyBodyScale = {
         let defaults = UserDefaults.standard
