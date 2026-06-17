@@ -3,8 +3,8 @@ import ClippyCore
 
 @MainActor
 final class ProviderKeysController: NSWindowController {
-    private let sttField = NSSecureTextField()
-    private let ttsField = NSSecureTextField()
+    private let sttField = APIKeyField(placeholder: "DEEPGRAM_API_KEY")
+    private let ttsField = APIKeyField(placeholder: "XAI_API_KEY")
     private let onSave: () -> Void
 
     init(onSave: @escaping () -> Void) {
@@ -62,14 +62,14 @@ final class ProviderKeysController: NSWindowController {
 }
 
 private final class APIKeyPanel: NSView {
-    private let sttField: NSSecureTextField
-    private let ttsField: NSSecureTextField
+    private let sttField: APIKeyField
+    private let ttsField: APIKeyField
     private let save: () -> Void
     private let cancel: () -> Void
 
     init(
-        sttField: NSSecureTextField,
-        ttsField: NSSecureTextField,
+        sttField: APIKeyField,
+        ttsField: APIKeyField,
         save: @escaping () -> Void,
         cancel: @escaping () -> Void
     ) {
@@ -135,7 +135,7 @@ private final class APIKeyPanel: NSView {
         title: String,
         provider: String,
         placeholder: String,
-        field: NSSecureTextField,
+        field: APIKeyField,
         y: CGFloat
     ) {
         addSubview(label(title, x: 24, y: y, width: 100, height: 18, bold: true))
@@ -143,18 +143,9 @@ private final class APIKeyPanel: NSView {
         providerLabel.textColor = RetroPalette.grayText
         addSubview(providerLabel)
 
-        let shell = RetroFieldShell(frame: NSRect(x: 24, y: y + 22, width: 452, height: 26))
-        addSubview(shell)
-
-        field.isBordered = false
-        field.isBezeled = false
-        field.drawsBackground = false
-        field.font = RetroFont.ui(12)
-        field.textColor = RetroPalette.text
-        field.placeholderString = placeholder
-        field.focusRingType = .none
-        field.frame = NSRect(x: 5, y: 4, width: 442, height: 18)
-        shell.addSubview(field)
+        field.placeholder = placeholder
+        field.frame = NSRect(x: 24, y: y + 22, width: 452, height: 26)
+        addSubview(field)
     }
 
     private func label(
@@ -171,6 +162,78 @@ private final class APIKeyPanel: NSView {
         field.textColor = RetroPalette.text
         field.frame = NSRect(x: x, y: y, width: width, height: height)
         return field
+    }
+}
+
+private final class APIKeyField: NSView {
+    private let secureField = NSSecureTextField()
+    private let plainField = NSTextField()
+    private let revealButton = RetroButton(title: "Show")
+    private var isRevealed = false
+
+    var placeholder: String {
+        didSet {
+            secureField.placeholderString = placeholder
+            plainField.placeholderString = placeholder
+        }
+    }
+
+    var stringValue: String {
+        get { currentField.stringValue }
+        set {
+            secureField.stringValue = newValue
+            plainField.stringValue = newValue
+        }
+    }
+
+    private var currentField: NSTextField {
+        isRevealed ? plainField : secureField
+    }
+
+    init(placeholder: String) {
+        self.placeholder = placeholder
+        super.init(frame: NSRect(x: 0, y: 0, width: 452, height: 26))
+        build()
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override var isFlipped: Bool { true }
+
+    private func build() {
+        let shell = RetroFieldShell(frame: NSRect(x: 0, y: 0, width: 372, height: 26))
+        addSubview(shell)
+
+        [secureField, plainField].forEach { field in
+            field.isBordered = false
+            field.isBezeled = false
+            field.drawsBackground = false
+            field.font = RetroFont.ui(12)
+            field.textColor = RetroPalette.text
+            field.placeholderString = placeholder
+            field.focusRingType = .none
+            field.frame = NSRect(x: 5, y: 4, width: 362, height: 18)
+            shell.addSubview(field)
+        }
+        plainField.isHidden = true
+
+        revealButton.frame = NSRect(x: 382, y: 1, width: 70, height: 23)
+        revealButton.onClick = { [weak self] in self?.toggleReveal() }
+        addSubview(revealButton)
+    }
+
+    private func toggleReveal() {
+        let value = currentField.stringValue
+        isRevealed.toggle()
+        secureField.stringValue = value
+        plainField.stringValue = value
+        secureField.isHidden = isRevealed
+        plainField.isHidden = !isRevealed
+        revealButton.title = isRevealed ? "Hide" : "Show"
+        window?.makeFirstResponder(currentField)
     }
 }
 
