@@ -778,6 +778,13 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(veryLong == 24.0)
 }
 
+@Test func spokenBubbleKeepsAVisibleGraceAfterSpeechEnds() {
+    #expect(ClippyBubbleController.spokenAutoHideDelay(visibleFor: 0) == 4.0)
+    #expect(ClippyBubbleController.spokenAutoHideDelay(visibleFor: 1.5) == 2.5)
+    #expect(ClippyBubbleController.spokenAutoHideDelay(visibleFor: 4.0) == 2.0)
+    #expect(ClippyBubbleController.spokenAutoHideDelay(visibleFor: 20.0) == 2.0)
+}
+
 @Test func bubbleChoiceKeyboardShortcutsSelectAndActivateChoices() {
     #expect(ClippyChoiceKeyboard.action(
         keyCode: 36,

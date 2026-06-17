@@ -25,6 +25,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var isVoiceCaptureActive = false
     private var voicePartialText = ""
     private var hideBubbleWhenSpeechFinishes = false
+    private var spokenBubbleShownAt: Date?
+    private var spokenBubbleHide: DispatchWorkItem?
     private var codexComputerControlConversation: (any AgentBrain)?
     private var sttEnabled = UserDefaults.standard.object(forKey: "ClippySTTEnabled") as? Bool ?? true
     private var ttsEnabled = UserDefaults.standard.object(forKey: "ClippyTTSEnabled") as? Bool ?? true
@@ -299,8 +301,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func configureVoiceProviders() {
         deepgramSTT?.cancel()
         tts?.stop()
+        cancelSpokenBubbleHide()
         isVoiceCaptureActive = false
         usingDeepgram = false
+        hideBubbleWhenSpeechFinishes = false
+        spokenBubbleShownAt = nil
         deepgramSTT = DeepgramVoiceCapture()
         tts = nil
         speech = deepgramSTT == nil ? SpeechCapture() : nil
@@ -355,17 +360,52 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func handleTTSActivity(_ speaking: Bool) {
         if speaking {
             pendingIdle?.cancel()
+            cancelSpokenBubbleHide()
             return
         }
         if hideBubbleWhenSpeechFinishes {
-            hideBubbleWhenSpeechFinishes = false
             if isClippyHidden == false, !isTurnRunning {
-                chatBubble?.hide()
+                scheduleSpokenBubbleHideAfterSpeech()
             }
         }
         if !isTurnRunning {
             scheduleNextIdle()
         }
+    }
+
+    private func showSpokenReplyBubble(_ text: String) {
+        hideBubbleWhenSpeechFinishes = true
+        spokenBubbleShownAt = Date()
+        cancelSpokenBubbleHide()
+        chatBubble?.showReply(text)
+    }
+
+    private func scheduleSpokenBubbleHideAfterSpeech() {
+        cancelSpokenBubbleHide()
+        let visibleFor = spokenBubbleShownAt.map { Date().timeIntervalSince($0) } ?? 0
+        let delay = ClippyBubbleController.spokenAutoHideDelay(visibleFor: visibleFor)
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.spokenBubbleHide = nil
+            guard self.hideBubbleWhenSpeechFinishes,
+                  self.isClippyHidden == false,
+                  !self.isTurnRunning,
+                  !(self.tts?.isSpeaking ?? false)
+            else {
+                return
+            }
+            self.hideBubbleWhenSpeechFinishes = false
+            self.spokenBubbleShownAt = nil
+            self.chatBubble?.hide()
+            self.scheduleNextIdle()
+        }
+        spokenBubbleHide = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func cancelSpokenBubbleHide() {
+        spokenBubbleHide?.cancel()
+        spokenBubbleHide = nil
     }
 
     private func beginVoiceTurn() {
@@ -481,6 +521,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         isTurnRunning = true
         turnHasStreamingText = false
+        cancelSpokenBubbleHide()
+        hideBubbleWhenSpeechFinishes = false
+        spokenBubbleShownAt = nil
         cancelTurnProgressUpdates()
         pendingIdle?.cancel()
         log("user: \(text)")
@@ -665,10 +708,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         currentBrainTask?.cancel()
         currentBrainTask = nil
         tts?.stop()
+        cancelSpokenBubbleHide()
         cancelTurnProgressUpdates()
         cancelTurnTimeout()
         isVoiceCaptureActive = false
         hideBubbleWhenSpeechFinishes = false
+        spokenBubbleShownAt = nil
         turnHasStreamingText = false
         isTurnRunning = false
     }
@@ -727,8 +772,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if spoken.isEmpty {
             chatBubble?.hide()
         } else if replyTTS != nil {
-            hideBubbleWhenSpeechFinishes = true
-            chatBubble?.showReply(spoken)
+            showSpokenReplyBubble(spoken)
         } else {
             chatBubble?.showReplyForReading(spoken)
         }
@@ -736,6 +780,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         // sentence-by-sentence; any non-streaming fallback speaks the whole reply here.
         if turn.isError == false {
             speakStreaming(replyText, final: true)
+        }
+        if replyTTS?.isSpeaking == false {
+            scheduleSpokenBubbleHideAfterSpeech()
         }
         log("clippy: \(turn.text.prefix(120))")
 
@@ -1166,6 +1213,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         isVoiceCaptureActive = false
         voicePartialText = ""
         hideBubbleWhenSpeechFinishes = false
+        spokenBubbleShownAt = nil
+        cancelSpokenBubbleHide()
         _ = speech?.stop()
         tts?.stop()
         clippy?.windowController.hide()
@@ -1405,7 +1454,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     @objc private func toggleTTS() {
         ttsEnabled.toggle()
         UserDefaults.standard.set(ttsEnabled, forKey: "ClippyTTSEnabled")
-        if !ttsEnabled { tts?.stop() }
+        if !ttsEnabled {
+            hideBubbleWhenSpeechFinishes = false
+            spokenBubbleShownAt = nil
+            cancelSpokenBubbleHide()
+            tts?.stop()
+        }
     }
 
     private func adjustBodyScale(by steps: Int) {

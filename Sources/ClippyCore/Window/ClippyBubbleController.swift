@@ -602,6 +602,12 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         return min(24.0, max(3.5, readTime + sentencePauses + 1.5))
     }
 
+    public static func spokenAutoHideDelay(visibleFor seconds: TimeInterval) -> TimeInterval {
+        let minimumVisibleDuration = 4.0
+        let finishedSpeakingGrace = 2.0
+        return max(finishedSpeakingGrace, minimumVisibleDuration - max(0, seconds))
+    }
+
     // MARK: - Click-away dismissal
 
     public func windowDidResignKey(_ notification: Notification) {
