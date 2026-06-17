@@ -139,6 +139,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(guided.contains("missing construction"))
     #expect(guided.contains("[SHAPE:polygon:...] beats for regions/areas"))
     #expect(guided.contains("Do not merely underline existing labels"))
+    #expect(guided.contains("[TARGET:x,y,r:label]"))
     #expect(guided.contains("subject-specific template"))
     #expect(guided.contains("Pythagorean") == false)
 }
@@ -168,6 +169,34 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(msg.contains("Pythagorean") == false)
 }
 
+@Test func guidedTargetFollowUpMessageMatchesClickToAdvanceContract() {
+    let context = DesktopContextSnapshot(
+        app: .init(name: "Google Chrome", bundleIdentifier: "com.google.Chrome", processIdentifier: 123),
+        window: nil,
+        screen: nil,
+        browser: .init(title: "Demo", url: "http://127.0.0.1/demo")
+    )
+    let msg = ClippyAgentInstructions.guidedTargetFollowUpMessage(
+        label: "Add button",
+        trigger: "clicked",
+        triggerPointX: 420,
+        triggerPointY: 360,
+        round: 2,
+        remainingRounds: 0,
+        screenshotPath: "/tmp/shot.png",
+        screenshotPixelWidth: 1600,
+        screenshotPixelHeight: 1034,
+        desktopContext: context
+    )
+    #expect(msg.contains("Guided target follow-up"))
+    #expect(msg.contains("clicked the guided target \"Add button\""))
+    #expect(msg.contains("/tmp/shot.png (1600x1034 px)"))
+    #expect(msg.contains("remaining click-to-advance turns after this response: 0"))
+    #expect(msg.contains("If another visible step is useful"))
+    #expect(msg.contains("If the task is complete"))
+    #expect(msg.contains("do not emit [TARGET] or [HOVER]"))
+}
+
 @Test func screenshotPolicyCapturesEveryTurn() {
     #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "Say exactly: perf ok.", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "what's on my screen", inputMode: .text))
@@ -181,6 +210,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "fill it out right away", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "apply to this job in the browser", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "click the blue button", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "Guide me to click the Start demo button. Mark it as the click target and continue after I click it.", inputMode: .text) == false)
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "type this into the page", inputMode: .voice))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "hover over that menu", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "hover a ring over this button", inputMode: .text) == false)
@@ -196,10 +226,12 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw", inputMode: .voice))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "point at the menu", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "circle this", inputMode: .voice))
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "Guide me to click the Start demo button. Mark it as the click target and continue after I click it.", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw a logo", inputMode: .text) == false)
 
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "highlight this button", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "Can you draw my screen to explain this?", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "show me where to click", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "fill out this form", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "summarize the docs", inputMode: .text) == false)
 }

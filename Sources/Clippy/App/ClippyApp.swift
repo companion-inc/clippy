@@ -50,11 +50,19 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var lastShot: ScreenPerception.Screenshot?
     private var overlayDismiss: DispatchWorkItem?
     private var turnProgressItems: [DispatchWorkItem] = []
+    private var turnTimeoutItem: DispatchWorkItem?
     private var turnHasStreamingText = false
     private var ttsSpokenChars = 0   // how much of the streaming reply has been queued to TTS
     private var commandTimer: Timer?
     private var activeActivityState: AgentActivityState = .idle
     private var isClippyHidden = false
+    private var guidedTarget: GuidedTarget?
+    private var guidedTargetClickMonitor: Any?
+    private var guidedTargetHoverMonitor: Any?
+    private var guidedTargetExpiry: DispatchWorkItem?
+    private var guidedHoverRest: DispatchWorkItem?
+    private var nextGuidedTargetRound = 0
+    private let guidedTargetMaxRounds = 4
 
     private struct VisualGroundingContext: Sendable {
         let originalUserText: String
@@ -62,6 +70,16 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let screenshotPixelWidth: Int
         let screenshotPixelHeight: Int
         let desktopContext: DesktopContextSnapshot?
+    }
+
+    private struct GuidedTarget: Sendable {
+        enum Kind: Sendable, Equatable { case click, hover }
+
+        let kind: Kind
+        let center: CGPoint
+        let radius: CGFloat
+        let label: String
+        let round: Int
     }
 
     static func main() {
@@ -76,6 +94,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        disarmGuidedTarget(reason: "terminate")
         log("applicationWillTerminate")
     }
 
@@ -383,6 +402,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             chatBubble.showThinking(shot == nil ? "Starting the brain" : "Sending the screen")
         }
         scheduleTurnProgressUpdates(wantsScreen: wantsScreen, attachedScreenshot: shot != nil)
+        scheduleTurnTimeout(reason: needsAnnotationTool ? "visual-grounding" : "message")
         playActivityState(.thinking)
         // Tell the brain how this turn arrives and leaves: spoken-and-transcribed input
         // (read past STT typos) and/or spoken output (write for the ear).
@@ -458,6 +478,27 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         turnProgressItems.removeAll()
     }
 
+    private func scheduleTurnTimeout(reason: String) {
+        turnTimeoutItem?.cancel()
+        let timeout = DispatchWorkItem { [weak self] in
+            guard let self, self.isTurnRunning else { return }
+            self.log("turn-timeout: reason=\(reason)")
+            self.currentBrainTask?.cancel()
+            self.currentBrainTask = nil
+            self.receiveReply(AgentTurn(
+                text: "Codex model stream timed out before a final response.",
+                isError: true
+            ))
+        }
+        turnTimeoutItem = timeout
+        DispatchQueue.main.asyncAfter(deadline: .now() + 50, execute: timeout)
+    }
+
+    private func cancelTurnTimeout() {
+        turnTimeoutItem?.cancel()
+        turnTimeoutItem = nil
+    }
+
     private func captureCleanTurnScreenshot(screen targetScreen: NSScreen?) -> ScreenPerception.Screenshot? {
         let clippyWindow = clippy?.windowController.window
         let bubbleWindow = chatBubble?.window
@@ -530,6 +571,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         currentBrainTask = nil
         tts?.stop()
         cancelTurnProgressUpdates()
+        cancelTurnTimeout()
         turnHasStreamingText = false
         isTurnRunning = false
     }
@@ -562,6 +604,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         brain: (any AgentBrain)? = nil
     ) {
         cancelTurnProgressUpdates()
+        cancelTurnTimeout()
         currentBrainTask = nil
         turnHasStreamingText = false
         isTurnRunning = false
@@ -650,6 +693,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         ttsSpokenChars = 0
         syncBubbleAnchorToClippy()
         chatBubble?.showThinking("Adding screen marks")
+        scheduleTurnTimeout(reason: "visual-grounding-repair")
         playActivityState(.thinking)
         let repairMessage = ClippyAgentInstructions.visualGroundingRepairMessage(
             originalUserText: context.originalUserText,
@@ -692,6 +736,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         log("grounding-beats: \(groundingBeatSummary(tags))")
         let marks = tags.compactMap(AnnotationMark.init(tag:))
         overlay?.showSequence(marks, on: screen)
+        armGuidedTarget(from: tags)
         // Auto-dismiss the marks so they don't linger on screen forever.
         overlayDismiss?.cancel()
         if !marks.isEmpty {
@@ -750,6 +795,199 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 return "act(\(animation))"
             }
         }.joined(separator: " | ")
+    }
+
+    private func armGuidedTarget(from tags: [GroundingTag]) {
+        let round = nextGuidedTargetRound
+        nextGuidedTargetRound = 0
+        guard let target = firstGuidedTarget(in: tags, round: round) else {
+            disarmGuidedTarget(reason: "no-target")
+            return
+        }
+        guard target.round < guidedTargetMaxRounds else {
+            disarmGuidedTarget(reason: "max-round")
+            log("guided target suppress max-round label=\(target.label) round=\(target.round)")
+            return
+        }
+
+        disarmGuidedTarget(reason: "rearm")
+        guidedTarget = target
+        log("guided target arm label=\(target.label) x=\(Int(target.center.x)) y=\(Int(target.center.y)) radius=\(Int(target.radius)) round=\(target.round) hover=\(target.kind == .hover)")
+
+        switch target.kind {
+        case .click:
+            guidedTargetClickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown]) { [weak self] _ in
+                let point = NSEvent.mouseLocation
+                Task { @MainActor [weak self] in
+                    self?.handleGuidedTargetClick(at: point)
+                }
+            }
+        case .hover:
+            guidedTargetHoverMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved]) { [weak self] _ in
+                let point = NSEvent.mouseLocation
+                Task { @MainActor [weak self] in
+                    self?.handleGuidedTargetHover(at: point)
+                }
+            }
+        }
+
+        let expiry = DispatchWorkItem { [weak self] in
+            guard let self, let guidedTarget = self.guidedTarget else { return }
+            self.log("guided target expired label=\(guidedTarget.label)")
+            self.disarmGuidedTarget(reason: "expired")
+        }
+        guidedTargetExpiry = expiry
+        DispatchQueue.main.asyncAfter(deadline: .now() + 90, execute: expiry)
+    }
+
+    private func firstGuidedTarget(in tags: [GroundingTag], round: Int) -> GuidedTarget? {
+        for tag in tags {
+            switch tag {
+            case let .target(center, radius, label, _):
+                return GuidedTarget(kind: .click, center: center, radius: CGFloat(radius), label: label, round: round)
+            case let .hover(center, radius, label, _):
+                return GuidedTarget(kind: .hover, center: center, radius: CGFloat(radius), label: label, round: round)
+            case .point, .highlight, .shape, .act:
+                continue
+            }
+        }
+        return nil
+    }
+
+    private func disarmGuidedTarget(reason: String) {
+        guidedHoverRest?.cancel()
+        guidedHoverRest = nil
+        guidedTargetExpiry?.cancel()
+        guidedTargetExpiry = nil
+        if let monitor = guidedTargetClickMonitor {
+            NSEvent.removeMonitor(monitor)
+            guidedTargetClickMonitor = nil
+        }
+        if let monitor = guidedTargetHoverMonitor {
+            NSEvent.removeMonitor(monitor)
+            guidedTargetHoverMonitor = nil
+        }
+        if let target = guidedTarget, reason != "no-target" {
+            log("guided target disarm label=\(target.label) round=\(target.round) reason=\(reason)")
+        }
+        guidedTarget = nil
+    }
+
+    private func handleGuidedTargetClick(at point: CGPoint) {
+        guard let target = guidedTarget, target.kind == .click else { return }
+        let distance = guidedTargetDistance(from: point, to: target.center)
+        guard distance <= target.radius else {
+            log("guided target off-target click label=\(target.label) distance=\(Int(distance))")
+            return
+        }
+        log("guided target hit label=\(target.label) distance=\(Int(distance)) hoverRest=false")
+        disarmGuidedTarget(reason: "hit")
+        overlay?.clear()
+        startGuidedTargetFollowUp(target: target, trigger: "clicked", point: point)
+    }
+
+    private func handleGuidedTargetHover(at point: CGPoint) {
+        guard let target = guidedTarget, target.kind == .hover else { return }
+        let distance = guidedTargetDistance(from: point, to: target.center)
+        if distance > target.radius {
+            guidedHoverRest?.cancel()
+            guidedHoverRest = nil
+            return
+        }
+        guard guidedHoverRest == nil else { return }
+        let rest = DispatchWorkItem { [weak self] in
+            guard let self, let current = self.guidedTarget, current.kind == .hover else { return }
+            let currentPoint = NSEvent.mouseLocation
+            let currentDistance = self.guidedTargetDistance(from: currentPoint, to: current.center)
+            guard currentDistance <= current.radius else {
+                self.guidedHoverRest = nil
+                return
+            }
+            self.log("guided target hit label=\(current.label) distance=\(Int(currentDistance)) hoverRest=true")
+            self.disarmGuidedTarget(reason: "hover")
+            self.overlay?.clear()
+            self.startGuidedTargetFollowUp(target: current, trigger: "hovered over", point: currentPoint)
+        }
+        guidedHoverRest = rest
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: rest)
+    }
+
+    private func guidedTargetDistance(from point: CGPoint, to center: CGPoint) -> CGFloat {
+        hypot(point.x - center.x, point.y - center.y)
+    }
+
+    private func startGuidedTargetFollowUp(target: GuidedTarget, trigger: String, point: CGPoint) {
+        guard !isTurnRunning else {
+            log("guided target follow-up skipped label=\(target.label) reason=turn-running")
+            return
+        }
+        guard target.round + 1 <= guidedTargetMaxRounds else {
+            log("guided target follow-up skipped label=\(target.label) reason=max-round")
+            return
+        }
+        guard let brain = computerControlBrain() ?? conversation else {
+            log("guided target follow-up skipped label=\(target.label) reason=no-brain")
+            return
+        }
+
+        isTurnRunning = true
+        turnHasStreamingText = false
+        cancelTurnProgressUpdates()
+        pendingIdle?.cancel()
+        ttsSpokenChars = 0
+
+        let nextRound = target.round + 1
+        let remainingRounds = max(0, guidedTargetMaxRounds - nextRound)
+        nextGuidedTargetRound = nextRound
+        log("guided target follow-up start label=\(target.label) round=\(nextRound) \(trigger)X=\(Int(point.x)) \(trigger)Y=\(Int(point.y))")
+
+        let desktopContext = DesktopContextSnapshot.capture()
+        log("desktop-context: \(desktopContext.logSummary)")
+        let screenshotScreen = desktopContext.targetScreen() ?? screenForClippy()
+        let shot = captureCleanTurnScreenshot(screen: screenshotScreen)
+        lastShot = shot
+        if let shot {
+            log("screen-capture: index=\(shot.screenIndex) frame=\(shot.screenFrame) pixels=\(Int(shot.pixelSize.width))x\(Int(shot.pixelSize.height))")
+        } else {
+            log("screen-capture: unavailable")
+        }
+
+        if isClippyHidden == false {
+            syncBubbleAnchorToClippy()
+            chatBubble?.showThinking("Checking that step")
+        }
+        scheduleTurnProgressUpdates(wantsScreen: true, attachedScreenshot: shot != nil)
+        scheduleTurnTimeout(reason: "guided-target-follow-up")
+        playActivityState(.thinking)
+
+        let message = ClippyAgentInstructions.guidedTargetFollowUpMessage(
+            label: target.label,
+            trigger: trigger,
+            triggerPointX: Int(point.x),
+            triggerPointY: Int(point.y),
+            round: nextRound,
+            remainingRounds: remainingRounds,
+            screenshotPath: shot?.path,
+            screenshotPixelWidth: Int(shot?.pixelSize.width ?? 0),
+            screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
+            desktopContext: desktopContext
+        )
+        currentBrainTask = Task { [weak self] in
+            for await chunk in brain.stream(message) {
+                if Task.isCancelled { break }
+                await MainActor.run {
+                    switch chunk {
+                    case .status(let status):
+                        self?.showTurnProgress(status)
+                    case .partial(let partial):
+                        self?.showStreamingReply(partial)
+                        self?.speakStreaming(partial, final: false)
+                    case .final(let turn):
+                        self?.receiveReply(turn)
+                    }
+                }
+            }
+        }
     }
 
     private func screenForLastShot() -> NSScreen? {
@@ -1198,7 +1436,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     // MARK: - Debug instrumentation
 
     /// With CLIPPY_CMD_FILE set, polls a command file so the app can be driven
-    /// headlessly: `ask:<text>`, `open`, `snapshot`, `move:`, `park:`, `state:`.
+    /// headlessly: `ask:<text>`, `askfront:<bundle>|<url>|<text>`, `open`,
+    /// `snapshot`, `move:`, `park:`, `state:`.
     private func startCommandChannel() {
         // Always on: the local MCP server (ClippyMCP) relays the model's tool calls
         // into this file, and debug commands use it too. Env var overrides the path.
@@ -1232,6 +1471,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             let command = line.trimmingCharacters(in: .whitespaces)
             if command.hasPrefix("ask:") {
                 sendMessage(String(command.dropFirst(4)))
+            } else if command.hasPrefix("askfront:") {
+                askFront(command: String(command.dropFirst("askfront:".count)))
             } else if command == "open" {
                 if isClippyHidden {
                     showClippy()
@@ -1266,6 +1507,66 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 presentGrounding([.act(animation: String(command.dropFirst(4)).trimmingCharacters(in: .whitespaces))])
             }
         }
+    }
+
+    private func askFront(command: String) {
+        let parts = command.split(separator: "|", maxSplits: 2, omittingEmptySubsequences: false).map(String.init)
+        guard parts.count == 3 else {
+            log("askfront: invalid command")
+            return
+        }
+        let bundleID = parts[0].trimmingCharacters(in: .whitespaces)
+        let url = parts[1].trimmingCharacters(in: .whitespaces)
+        let prompt = parts[2].trimmingCharacters(in: .whitespaces)
+        guard !bundleID.isEmpty, !prompt.isEmpty else {
+            log("askfront: missing bundle or prompt")
+            return
+        }
+        activateApp(bundleIdentifier: bundleID, url: url.isEmpty ? nil : url)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.8) { [weak self] in
+            self?.activateApp(bundleIdentifier: bundleID, url: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.sendMessage(prompt)
+            }
+        }
+    }
+
+    private func activateApp(bundleIdentifier: String, url: String?) {
+        if let url, bundleIdentifier == "com.google.Chrome" {
+            let escaped = url.replacingOccurrences(of: "\"", with: "\\\"")
+            runAppleScript("""
+            tell application id "com.google.Chrome"
+              activate
+              set testWindow to make new window
+              set URL of active tab of testWindow to "\(escaped)"
+              set index of testWindow to 1
+              delay 0.2
+              reload active tab of testWindow
+            end tell
+            """)
+            return
+        }
+        if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier).first {
+            app.activate(options: [.activateIgnoringOtherApps])
+        } else if let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.openApplication(at: appURL, configuration: config)
+        } else {
+            log("askfront: app not found bundle=\(bundleIdentifier)")
+        }
+    }
+
+    @discardableResult
+    private func runAppleScript(_ source: String) -> Bool {
+        var error: NSDictionary?
+        let script = NSAppleScript(source: source)
+        _ = script?.executeAndReturnError(&error)
+        if let error {
+            log("applescript error: \(error)")
+            return false
+        }
+        return true
     }
 
     private func applyBodySizeCommand(_ raw: String) {

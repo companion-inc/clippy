@@ -135,6 +135,7 @@ internal tool plumbing.
     For drawn explanations, prefer ordered [SHAPE:line|arrow|curve|polygon:...] construction beats over label-only pointing; each separate SHAPE beat is drawn in order.
     For math, diagram, spatial, or area explanations, draw the missing construction when that is what teaches the concept: use [SHAPE:polygon:...] beats for regions/areas and [SHAPE:line]/[SHAPE:arrow] beats for edges or direction.
     Do not merely underline existing labels when the requested explanation depends on constructed shapes or regions.
+    If the user asks to guide them to click, show where to click, mark a click target, or continue after their click, use exactly one [TARGET:x,y,r:label] for the click target instead of a passive [POINT] or [HIGHLIGHT].
     Use [HIGHLIGHT]/[POINT] only when a region or exact existing control needs emphasis. Multiple static drawing tags are allowed when the explanation needs multiple marks.
     Do not answer text-only, and do not claim something was drawn, circled, highlighted, or pointed at unless the reply includes the tag(s) that render it.
     Derive the marks, labels, and coordinates from the screenshot and the user's goal; do not use a subject-specific template.
@@ -170,6 +171,40 @@ internal tool plumbing.
         \(previousAssistantText)
 
         Now produce the corrected final response. Read the screenshot path above, derive coordinates from that image, and include renderable [POINT], [HIGHLIGHT], or [SHAPE] tags. Keep the spoken text short. Do not use a subject-specific template.
+        """)
+        return blocks.joined(separator: "\n\n")
+    }
+
+    public static func guidedTargetFollowUpMessage(
+        label: String,
+        trigger: String,
+        triggerPointX: Int,
+        triggerPointY: Int,
+        round: Int,
+        remainingRounds: Int,
+        screenshotPath: String?,
+        screenshotPixelWidth: Int,
+        screenshotPixelHeight: Int,
+        desktopContext: DesktopContextSnapshot?
+    ) -> String {
+        var blocks: [String] = []
+        if let desktopContext {
+            blocks.append(desktopContext.promptBlock)
+        }
+        if let screenshotPath {
+            blocks.append(screenshotPromptBlock(
+                path: screenshotPath,
+                pixelWidth: screenshotPixelWidth,
+                pixelHeight: screenshotPixelHeight
+            ))
+        }
+        blocks.append("""
+        [Guided target follow-up]
+        The user \(trigger) the guided target "\(label)" at AppKit screen point (\(triggerPointX), \(triggerPointY)). This is click-to-advance round \(round); remaining click-to-advance turns after this response: \(remainingRounds).
+        Read the fresh screenshot above and decide whether another visible step is actually useful.
+        If another visible step is useful, answer with one short instruction and the right grounding tag(s). Use exactly one [TARGET] or [HOVER] only for the next observable click/hover; use [POINT], [HIGHLIGHT], or [SHAPE] for manual/static guidance.
+        If the task is complete or no next click is useful, answer with one short completion or handoff sentence and no visual tag.
+        If remaining click-to-advance turns is 0, do not emit [TARGET] or [HOVER].
         """)
         return blocks.joined(separator: "\n\n")
     }
@@ -211,6 +246,9 @@ internal tool plumbing.
         inputMode: AssistantInputMode
     ) -> Bool {
         let lower = text.lowercased()
+        if shouldUseGuidedTargetGrounding(text: text) {
+            return true
+        }
         let words = lower
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
@@ -249,6 +287,9 @@ internal tool plumbing.
         inputMode: AssistantInputMode
     ) -> Bool {
         let lower = text.lowercased()
+        if shouldUseGuidedTargetGrounding(text: text) {
+            return false
+        }
         let controlPhrases = [
             "click",
             "double click",
@@ -294,6 +335,28 @@ internal tool plumbing.
             if words.contains(where: actionWords.contains) { return true }
         }
         return false
+    }
+
+    private static func shouldUseGuidedTargetGrounding(text: String) -> Bool {
+        let lower = text.lowercased()
+        let hasClick = lower.contains("click") || lower.contains("press") || lower.contains("tap")
+        guard hasClick else { return false }
+        let guidancePhrases = [
+            "guide me",
+            "show me where",
+            "show where",
+            "where to click",
+            "where should i click",
+            "mark the click target",
+            "mark it as the click target",
+            "mark as the click target",
+            "click target",
+            "continue after i click",
+            "continue after my click",
+            "after i click it",
+            "walk me through",
+        ]
+        return guidancePhrases.contains { lower.contains($0) }
     }
 
     /// A per-turn note telling the model how this turn arrives and leaves. Spoken input was
