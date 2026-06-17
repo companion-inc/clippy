@@ -527,10 +527,10 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         }
     }
 
-    #expect(statuses.contains("Starting Codex"))
+    #expect(statuses.contains("Starting ChatGPT"))
     #expect(statuses.contains("Opening the Clippy thread"))
     #expect(statuses.contains("Sending the turn"))
-    #expect(statuses.contains("Waiting for Codex"))
+    #expect(statuses.contains("Waiting for ChatGPT"))
     #expect(firstPartial == "EARLY ")
 }
 
@@ -751,12 +751,12 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 
     #expect(spec.animation(for: .idle) == nil)
     #expect(spec.balloon.tailHeight == 17)
-    #expect(spec.balloon.cornerRadius == 11)
-    #expect(spec.balloon.minWidth == 300)
+    #expect(spec.balloon.cornerRadius == 10)
+    #expect(spec.balloon.minWidth == 220)
     #expect(spec.balloon.shadowOffset == .zero)
-    #expect(spec.balloon.maxWidth == 330)
-    #expect(spec.balloon.messageFontSize == 19)
-    #expect(spec.balloon.inputFontSize == 19)
+    #expect(spec.balloon.maxWidth == 285)
+    #expect(spec.balloon.messageFontSize == 13)
+    #expect(spec.balloon.inputFontSize == 13)
     let balloonLayer = ClippyBalloonStyle.makeShapeLayer(spec: spec.balloon)
     #expect(balloonLayer.allowsEdgeAntialiasing)
     #expect(balloonLayer.lineJoin == .round)
@@ -992,14 +992,31 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 
 @Test func credentialCatalogRecordsLocalSourcesWithoutValues() throws {
     let catalog = CredentialCatalog()
+    let anthropic = try #require(catalog.descriptor(for: .anthropic))
     let openAI = try #require(catalog.descriptor(for: .openAI))
     let deepgram = try #require(catalog.descriptor(for: .deepgram))
     let xai = try #require(catalog.descriptor(for: .xAI))
 
+    #expect(anthropic.environmentVariable == "ANTHROPIC_API_KEY")
+    #expect(anthropic.sources.contains {
+        $0.kind == .clippySecretsJSON &&
+            $0.path == CredentialCatalog.clippySecretsPath &&
+            $0.keyPath == "anthropicAPIKey"
+    })
+    #expect(anthropic.sources.contains {
+        $0.kind == .irisSettingsJSON &&
+            $0.path == CredentialCatalog.irisSettingsPath &&
+            $0.keyPath == "providerKeys.anthropicApiKey"
+    })
     #expect(openAI.environmentVariable == "OPENAI_API_KEY")
     #expect(openAI.sources.contains {
         $0.kind == .environment &&
             $0.keyPath == "OPENAI_API_KEY"
+    })
+    #expect(openAI.sources.contains {
+        $0.kind == .clippySecretsJSON &&
+            $0.path == CredentialCatalog.clippySecretsPath &&
+            $0.keyPath == "openAIAPIKey"
     })
     #expect(deepgram.sources.contains {
         $0.kind == .irisSettingsJSON &&
@@ -1022,8 +1039,41 @@ private func writeExecutableScript(named name: String, contents: String) throws 
             $0.path == CredentialCatalog.irisNativePreferencesPath &&
             $0.keyPath == "providerKeys.xai-api-key"
     })
+    #expect(CredentialCatalog.clippySecretsPath.hasSuffix("/Library/Application Support/Clippy/Secrets.json"))
     #expect(CredentialCatalog.irisSettingsPath.hasSuffix("/Library/Application Support/Iris/settings.json"))
     #expect(CredentialCatalog.irisNativePreferencesPath.hasSuffix("/Library/Preferences/ai.companion.iris.mac.plist"))
+}
+
+@Test func localBrainAPIKeysAreInjectedFromClippyAndIrisStores() throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let secretsURL = directory.appendingPathComponent("Secrets.json")
+    let irisURL = directory.appendingPathComponent("settings.json")
+    try """
+    {
+      "anthropicAPIKey": "anthropic-from-clippy",
+      "openAIAPIKey": ""
+    }
+    """.write(to: secretsURL, atomically: true, encoding: .utf8)
+    try """
+    {
+      "providerKeys": {
+        "openaiApiKey": "openai-from-iris"
+      }
+    }
+    """.write(to: irisURL, atomically: true, encoding: .utf8)
+
+    let environment = ClippySecrets.environmentByAddingLocalAPIKeys(
+        to: [
+            "ANTHROPIC_API_KEY": "",
+        ],
+        secretsFileURL: secretsURL,
+        irisSettingsURL: irisURL,
+        nativePreferenceReader: { _ in nil }
+    )
+
+    #expect(environment["ANTHROPIC_API_KEY"] == "anthropic-from-clippy")
+    #expect(environment["OPENAI_API_KEY"] == "openai-from-iris")
 }
 
 @Test func voiceSidecarReportsOnlyPresenceForEnvironment() throws {

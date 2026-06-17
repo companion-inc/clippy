@@ -10,6 +10,7 @@ public enum CredentialProvider: String, CaseIterable, Codable, Equatable, Sendab
 
 public enum CredentialSourceKind: String, Codable, Equatable, Sendable {
     case environment
+    case clippySecretsJSON
     case irisSettingsJSON
     case nativePreferences
 }
@@ -59,6 +60,10 @@ public extension CredentialCatalog {
         "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Application Support/Iris/settings.json"
     }
 
+    static var clippySecretsPath: String {
+        "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Application Support/Clippy/Secrets.json"
+    }
+
     static var irisNativePreferencesPath: String {
         "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/Preferences/ai.companion.iris.mac.plist"
     }
@@ -69,6 +74,9 @@ public extension CredentialCatalog {
             environmentVariable: "ANTHROPIC_API_KEY",
             sources: [
                 CredentialSourceDescriptor(kind: .environment, keyPath: "ANTHROPIC_API_KEY"),
+                CredentialSourceDescriptor(kind: .clippySecretsJSON, path: clippySecretsPath, keyPath: "anthropicAPIKey"),
+                CredentialSourceDescriptor(kind: .irisSettingsJSON, path: irisSettingsPath, keyPath: "providerKeys.anthropicApiKey"),
+                CredentialSourceDescriptor(kind: .nativePreferences, path: irisNativePreferencesPath, keyPath: "providerKeys.anthropic-api-key"),
             ]
         ),
         CredentialDescriptor(
@@ -76,6 +84,7 @@ public extension CredentialCatalog {
             environmentVariable: "DEEPGRAM_API_KEY",
             sources: [
                 CredentialSourceDescriptor(kind: .environment, keyPath: "DEEPGRAM_API_KEY"),
+                CredentialSourceDescriptor(kind: .clippySecretsJSON, path: clippySecretsPath, keyPath: "sttAPIKey"),
                 CredentialSourceDescriptor(kind: .irisSettingsJSON, path: irisSettingsPath, keyPath: "providerKeys.deepgramApiKey"),
                 CredentialSourceDescriptor(kind: .nativePreferences, path: irisNativePreferencesPath, keyPath: "providerKeys.deepgram-api-key"),
             ]
@@ -93,7 +102,9 @@ public extension CredentialCatalog {
             environmentVariable: "OPENAI_API_KEY",
             sources: [
                 CredentialSourceDescriptor(kind: .environment, keyPath: "OPENAI_API_KEY"),
+                CredentialSourceDescriptor(kind: .clippySecretsJSON, path: clippySecretsPath, keyPath: "openAIAPIKey"),
                 CredentialSourceDescriptor(kind: .irisSettingsJSON, path: irisSettingsPath, keyPath: "providerKeys.openaiApiKey"),
+                CredentialSourceDescriptor(kind: .nativePreferences, path: irisNativePreferencesPath, keyPath: "providerKeys.openai-api-key"),
             ]
         ),
         CredentialDescriptor(
@@ -101,6 +112,7 @@ public extension CredentialCatalog {
             environmentVariable: "XAI_API_KEY",
             sources: [
                 CredentialSourceDescriptor(kind: .environment, keyPath: "XAI_API_KEY"),
+                CredentialSourceDescriptor(kind: .clippySecretsJSON, path: clippySecretsPath, keyPath: "ttsAPIKey"),
                 CredentialSourceDescriptor(kind: .irisSettingsJSON, path: irisSettingsPath, keyPath: "providerKeys.xaiApiKey"),
                 CredentialSourceDescriptor(kind: .nativePreferences, path: irisNativePreferencesPath, keyPath: "providerKeys.xai-api-key"),
             ]

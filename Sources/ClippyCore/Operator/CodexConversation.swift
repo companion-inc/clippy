@@ -103,7 +103,7 @@ public actor CodexConversation: AgentBrain {
         if !partial.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return AgentTurn(text: partial.trimmingCharacters(in: .whitespacesAndNewlines), isError: false)
         }
-        return AgentTurn(text: "Codex returned nothing (model \(model)).", isError: true)
+        return AgentTurn(text: "ChatGPT returned nothing (model \(model)).", isError: true)
     }
 
     public nonisolated func stream(_ message: String) -> AsyncStream<AgentStreamChunk> {
@@ -129,7 +129,7 @@ public actor CodexConversation: AgentBrain {
 
         do {
             let hasRunningServer = appServer?.process.isRunning == true
-            continuation.yield(.status(hasRunningServer ? "Reusing Codex" : "Starting Codex"))
+            continuation.yield(.status(hasRunningServer ? "Reusing ChatGPT" : "Starting ChatGPT"))
             let connection = try ensureAppServer(process: box)
             let hasOpenThread = threadID?.isEmpty == false && connection.process.isRunning
             continuation.yield(.status(hasOpenThread ? "Using the open thread" : "Opening the Clippy thread"))
@@ -180,7 +180,7 @@ public actor CodexConversation: AgentBrain {
                         throw AppServerError(error)
                     }
                     activeTurnID = Self.turnID(fromTurnStartResponse: object) ?? activeTurnID
-                    continuation.yield(.status("Waiting for Codex"))
+                    continuation.yield(.status("Waiting for ChatGPT"))
                     continue
                 }
 
@@ -239,7 +239,7 @@ public actor CodexConversation: AgentBrain {
 
             if !sawTurnCompletion && !Task.isCancelled {
                 isError = true
-                finalError = "Codex app-server closed before the turn completed."
+                finalError = "The ChatGPT connection closed before the turn completed."
             }
         } catch is CancellationError {
             appServer = nil
@@ -248,14 +248,14 @@ public actor CodexConversation: AgentBrain {
             return
         } catch {
             isError = true
-            finalError = "I couldn't stream from Codex: \(error.localizedDescription)"
+            finalError = "I couldn't stream from ChatGPT: \(error.localizedDescription)"
         }
 
         let text = (finalText?.isEmpty == false ? finalText! : accumulated)
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty {
             continuation.yield(.final(AgentTurn(
-                text: finalError ?? "Codex returned nothing (model \(model)).",
+                text: finalError ?? "ChatGPT returned nothing (model \(model)).",
                 isError: true
             )))
         } else {
@@ -290,7 +290,7 @@ public actor CodexConversation: AgentBrain {
         if let workingDirectory {
             process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
         }
-        process.environment = ProcessInfo.processInfo.environment
+        process.environment = ClippySecrets.environmentByAddingLocalAPIKeys()
 
         let inputPipe = Pipe()
         let outputPipe = Pipe()

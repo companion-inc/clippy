@@ -8,6 +8,16 @@ import AppKit
 /// click away and it disappears. Type face is Microsoft Sans Serif (the modern
 /// name for the MS Sans Serif the original balloon used).
 public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindowDelegate {
+    public struct Choice {
+        public let title: String
+        public let action: () -> Void
+
+        public init(title: String, action: @escaping () -> Void) {
+            self.title = title
+            self.action = action
+        }
+    }
+
     private final class KeyPanel: NSPanel {
         override var canBecomeKey: Bool { true }
     }
@@ -29,7 +39,73 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         }
     }
 
-    private enum Mode { case message, input }
+    private final class BalloonChoiceButton: NSView {
+        var title: String { didSet { needsDisplay = true } }
+        var onClick: (() -> Void)?
+        private var pressed = false
+
+        override var isFlipped: Bool { true }
+
+        init(title: String) {
+            self.title = title
+            super.init(frame: NSRect(x: 0, y: 0, width: 180, height: 18))
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        override func draw(_ dirtyRect: NSRect) {
+            let offset = pressed ? CGFloat(1) : 0
+            let bulletRect = NSRect(x: 2 + offset, y: 4 + offset, width: 8, height: 8)
+            NSColor.white.setFill()
+            NSBezierPath(ovalIn: bulletRect).fill()
+            NSColor.black.setStroke()
+            let outline = NSBezierPath(ovalIn: bulletRect)
+            outline.lineWidth = 1
+            outline.stroke()
+            NSColor(srgbRed: 0.0, green: 0.12, blue: 0.72, alpha: 1).setFill()
+            NSBezierPath(ovalIn: bulletRect.insetBy(dx: 2, dy: 2)).fill()
+
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineBreakMode = .byWordWrapping
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: RetroFont.ui(11),
+                .foregroundColor: RetroPalette.text,
+                .paragraphStyle: paragraph,
+            ]
+            let label = title as NSString
+            let textSize = label.size(withAttributes: attrs)
+            let textRect = NSRect(
+                x: 16 + offset,
+                y: max(0, (bounds.height - textSize.height) / 2) + offset,
+                width: bounds.width - 16,
+                height: textSize.height
+            )
+            label.draw(in: textRect, withAttributes: attrs)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            pressed = true
+            needsDisplay = true
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            let inside = bounds.contains(convert(event.locationInWindow, from: nil))
+            if inside != pressed {
+                pressed = inside
+                needsDisplay = true
+            }
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            let fire = pressed && bounds.contains(convert(event.locationInWindow, from: nil))
+            pressed = false
+            needsDisplay = true
+            if fire { onClick?() }
+        }
+    }
+
+    private enum Mode { case message, input, choices }
 
     private func uiFont(_ size: CGFloat, bold: Bool = false) -> NSFont {
         ClippyBalloonStyle.font(size, bold: bold, spec: spec.balloon)
@@ -37,11 +113,13 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     public let window: NSPanel
     private let spec: ClippySpec
+    private let root = NSView()
     private let balloonLayer: CAShapeLayer
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
     private let inputScrollView = NSScrollView()
     private let inputTextView = InputTextView(frame: .zero)
     private let inputPlaceholderView = NSTextView(frame: .zero)
+    private var choiceButtons: [BalloonChoiceButton] = []
 
     private var mode: Mode = .message
     private var messageText = ""
@@ -49,6 +127,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private var anchorFrame: CGRect = .zero
     private weak var anchorWindow: NSWindow?
     private var autoHideTimer: Timer?
+    private var typingTimer: Timer?
 
     public init(spec: ClippySpec = .current) {
         self.spec = spec
@@ -61,7 +140,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         )
         super.init()
 
-        let root = NSView(frame: window.frame)
+        root.frame = window.frame
         root.wantsLayer = true
         root.layer?.addSublayer(balloonLayer)
 
@@ -153,7 +232,9 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     /// A passive one-line message (greeting, reply). Doesn't steal focus.
     public func showMessage(_ text: String, autoHide: TimeInterval? = nil) {
+        stopTyping()
         stopThinking()
+        clearChoices()
         messageText = text
         mode = .message
         relayout()
@@ -168,8 +249,10 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     /// Double-click Clippy: show only the input, focused. Click-away dismisses it.
     public func openInput() {
+        stopTyping()
         stopThinking()
         cancelAutoHide()
+        clearChoices()
         mode = .input
         inputTextView.string = ""
         relayout()
@@ -190,7 +273,9 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     /// Reply arrived — show just the reply.
     public func showReply(_ text: String, autoHide: TimeInterval? = nil) {
+        stopTyping()
         stopThinking()
+        clearChoices()
         messageText = text
         mode = .message
         relayout()
@@ -207,7 +292,57 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         showReply(text)
     }
 
+    public func showChoices(_ prompt: String, choices: [Choice]) {
+        stopTyping()
+        stopThinking()
+        cancelAutoHide()
+        clearChoices()
+        messageText = prompt
+        mode = .choices
+        choiceButtons = choices.map { choice in
+            let button = BalloonChoiceButton(title: choice.title)
+            button.onClick = choice.action
+            root.addSubview(button)
+            return button
+        }
+        relayout()
+        attachToAnchorWindow()
+        window.orderFrontRegardless()
+    }
+
+    public func showChoicesTyping(_ prompt: String, choices: [Choice]) {
+        stopTyping()
+        stopThinking()
+        cancelAutoHide()
+        clearChoices()
+        messageText = ""
+        mode = .message
+        relayout()
+        attachToAnchorWindow()
+        window.orderFrontRegardless()
+
+        var index = prompt.startIndex
+        typingTimer = Timer.scheduledTimer(withTimeInterval: 0.012, repeats: true) { [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
+            }
+            if index == prompt.endIndex {
+                timer.invalidate()
+                self.typingTimer = nil
+                self.showChoices(prompt, choices: choices)
+                return
+            }
+            let nextIndex = prompt.index(after: index)
+            self.messageText = String(prompt[..<nextIndex])
+            self.mode = .message
+            self.relayout()
+            index = nextIndex
+        }
+    }
+
     public func hide() {
+        stopTyping()
         stopThinking()
         cancelAutoHide()
         if let anchorWindow, window.parent === anchorWindow {
@@ -259,15 +394,21 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         thinkingTimer = nil
     }
 
+    private func stopTyping() {
+        typingTimer?.invalidate()
+        typingTimer = nil
+    }
+
     // MARK: - Layout (one active region; bubble grows to fit)
 
     private func relayout() {
         let contentWidth = measuredContentWidth()
         let shapeWidth = contentWidth + spec.balloon.pad * 2
 
-        messageLabel.isHidden = mode != .message
+        messageLabel.isHidden = mode == .input
         inputScrollView.isHidden = mode != .input
         inputPlaceholderView.isHidden = mode != .input || !inputTextView.string.isEmpty
+        choiceButtons.forEach { $0.isHidden = mode != .choices }
 
         var contentHeight: CGFloat = 0
         switch mode {
@@ -275,6 +416,10 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             contentHeight = measuredInputHeight(width: contentWidth)
         case .message:
             contentHeight = measuredLabelHeight(messageText.isEmpty ? "…" : messageText, width: contentWidth)
+        case .choices:
+            let promptHeight = measuredLabelHeight(messageText.isEmpty ? "…" : messageText, width: contentWidth)
+            let buttonsHeight = choiceButtons.isEmpty ? 0 : CGFloat(choiceButtons.count) * 20 - 2
+            contentHeight = promptHeight + (choiceButtons.isEmpty ? 0 : 7 + buttonsHeight)
         }
 
         let shapeHeight = spec.balloon.tailHeight + spec.balloon.pad + contentHeight + spec.balloon.pad
@@ -308,6 +453,20 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         case .message:
             messageLabel.frame = contentRect
             messageLabel.stringValue = messageText
+        case .choices:
+            let promptHeight = measuredLabelHeight(messageText.isEmpty ? "…" : messageText, width: contentWidth)
+            messageLabel.frame = CGRect(
+                x: contentRect.minX,
+                y: contentRect.maxY - promptHeight,
+                width: contentRect.width,
+                height: promptHeight
+            )
+            messageLabel.stringValue = messageText
+            var y = contentRect.maxY - promptHeight - 7 - 18
+            for button in choiceButtons {
+                button.frame = CGRect(x: contentRect.minX + 2, y: y, width: contentRect.width - 4, height: 18)
+                y -= 20
+            }
         }
 
         positionWindow()
@@ -350,6 +509,9 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         case .message:
             text = messageText.isEmpty ? "…" : messageText
             fontSize = spec.balloon.messageFontSize
+        case .choices:
+            text = ([messageText] + choiceButtons.map(\.title)).joined(separator: "\n")
+            fontSize = spec.balloon.messageFontSize
         }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         let longest = lines.map { String($0) }.max { $0.count < $1.count } ?? text
@@ -368,6 +530,13 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
         return ceil(rect.height) + 2
+    }
+
+    private func clearChoices() {
+        for button in choiceButtons {
+            button.removeFromSuperview()
+        }
+        choiceButtons = []
     }
 
     private func measuredInputHeight(width: CGFloat) -> CGFloat {

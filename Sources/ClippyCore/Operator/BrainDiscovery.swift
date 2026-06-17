@@ -46,7 +46,7 @@ public enum BrainDiscovery {
 
     private static func claudeSignedIn(binaryPath: String?) -> Bool {
         guard binaryPath != nil else { return false }
-        if ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]?.isEmpty == false { return true }
+        if ClippySecrets.anthropicAPIKey != nil { return true }
         return anyFileExists([".claude/.credentials.json", ".claude.json"])
     }
 
@@ -56,7 +56,7 @@ public enum BrainDiscovery {
 
     private static func codexSignedIn(binaryPath: String?) -> Bool {
         guard binaryPath != nil else { return false }
-        if ProcessInfo.processInfo.environment["OPENAI_API_KEY"]?.isEmpty == false { return true }
+        if ClippySecrets.openAIAPIKey != nil { return true }
         return anyFileExists([".codex/auth.json"])
     }
 

@@ -116,7 +116,7 @@ public actor LocalCLIConversation: AgentBrain {
             process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
         }
         // The CLI's own permission alias must not leak in; pass a clean-ish env.
-        var environment = ProcessInfo.processInfo.environment
+        var environment = ClippySecrets.environmentByAddingLocalAPIKeys()
         environment["CLAUDE_CODE_ENTRYPOINT"] = "clippy"
         process.environment = environment
 
@@ -197,7 +197,7 @@ public actor LocalCLIConversation: AgentBrain {
         if let workingDirectory {
             process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
         }
-        var environment = ProcessInfo.processInfo.environment
+        var environment = ClippySecrets.environmentByAddingLocalAPIKeys()
         environment["CLAUDE_CODE_ENTRYPOINT"] = "clippy"
         process.environment = environment
 

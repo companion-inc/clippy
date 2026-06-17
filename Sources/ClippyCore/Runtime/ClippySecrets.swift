@@ -5,6 +5,16 @@ import Foundation
 /// Iris' local settings/preferences so installed apps can share already-entered
 /// provider keys without copying them by hand.
 public enum ClippySecrets {
+    /// Anthropic key — lets Claude Code run from a local API key when OAuth is not set up.
+    public static var anthropicAPIKey: String? {
+        resolve(
+            fileKeys: ["anthropicAPIKey", "anthropicApiKey"],
+            environmentKeys: ["ANTHROPIC_API_KEY"],
+            irisSettingsKeyPath: "providerKeys.anthropicApiKey",
+            irisNativePreferenceKey: "providerKeys.anthropic-api-key"
+        )
+    }
+
     /// Deepgram key — used for streaming speech-to-text.
     public static var deepgramAPIKey: String? {
         resolve(
@@ -12,6 +22,16 @@ public enum ClippySecrets {
             environmentKeys: ["DEEPGRAM_API_KEY"],
             irisSettingsKeyPath: "providerKeys.deepgramApiKey",
             irisNativePreferenceKey: "providerKeys.deepgram-api-key"
+        )
+    }
+
+    /// OpenAI key — lets Codex run from a local API key when ChatGPT sign-in is not set up.
+    public static var openAIAPIKey: String? {
+        resolve(
+            fileKeys: ["openAIAPIKey", "openAIApiKey", "openaiAPIKey", "openaiApiKey"],
+            environmentKeys: ["OPENAI_API_KEY"],
+            irisSettingsKeyPath: "providerKeys.openaiApiKey",
+            irisNativePreferenceKey: "providerKeys.openai-api-key"
         )
     }
 
@@ -40,6 +60,17 @@ public enum ClippySecrets {
         return names
     }
 
+    public static func environmentByAddingLocalAPIKeys(
+        to environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> [String: String] {
+        environmentByAddingLocalAPIKeys(
+            to: environment,
+            secretsFileURL: secretsFileURL,
+            irisSettingsURL: irisSettingsURL,
+            nativePreferenceReader: readNativePreference
+        )
+    }
+
     public static func saveVoiceAPIKeys(sttAPIKey: String?, ttsAPIKey: String?) throws {
         var object = readObject(at: secretsFileURL) as? [String: Any] ?? [:]
         set(sttAPIKey, for: "sttAPIKey", in: &object)
@@ -56,14 +87,54 @@ public enum ClippySecrets {
         try data.write(to: secretsFileURL, options: [.atomic])
     }
 
-    private static func resolve(
+    static func environmentByAddingLocalAPIKeys(
+        to environment: [String: String],
+        secretsFileURL: URL,
+        irisSettingsURL: URL,
+        nativePreferenceReader: (String) -> String?
+    ) -> [String: String] {
+        var merged = environment
+        if isMissing(merged["ANTHROPIC_API_KEY"]),
+           let key = resolve(
+            fileKeys: ["anthropicAPIKey", "anthropicApiKey"],
+            environmentKeys: ["ANTHROPIC_API_KEY"],
+            irisSettingsKeyPath: "providerKeys.anthropicApiKey",
+            irisNativePreferenceKey: "providerKeys.anthropic-api-key",
+            environment: environment,
+            secretsFileURL: secretsFileURL,
+            irisSettingsURL: irisSettingsURL,
+            nativePreferenceReader: nativePreferenceReader
+           ) {
+            merged["ANTHROPIC_API_KEY"] = key
+        }
+        if isMissing(merged["OPENAI_API_KEY"]),
+           let key = resolve(
+            fileKeys: ["openAIAPIKey", "openAIApiKey", "openaiAPIKey", "openaiApiKey"],
+            environmentKeys: ["OPENAI_API_KEY"],
+            irisSettingsKeyPath: "providerKeys.openaiApiKey",
+            irisNativePreferenceKey: "providerKeys.openai-api-key",
+            environment: environment,
+            secretsFileURL: secretsFileURL,
+            irisSettingsURL: irisSettingsURL,
+            nativePreferenceReader: nativePreferenceReader
+           ) {
+            merged["OPENAI_API_KEY"] = key
+        }
+        return merged
+    }
+
+    static func resolve(
         fileKeys: [String],
         environmentKeys: [String],
         irisSettingsKeyPath: String,
-        irisNativePreferenceKey: String
+        irisNativePreferenceKey: String,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        secretsFileURL: URL = ClippySecrets.secretsFileURL,
+        irisSettingsURL: URL = ClippySecrets.irisSettingsURL,
+        nativePreferenceReader: (String) -> String? = ClippySecrets.readNativePreference
     ) -> String? {
         for key in environmentKeys {
-            if let value = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+            if let value = environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
                !value.isEmpty {
                 return value
             }
@@ -82,7 +153,7 @@ public enum ClippySecrets {
             return value
         }
 
-        if let value = readNativePreference(key: irisNativePreferenceKey) {
+        if let value = nativePreferenceReader(irisNativePreferenceKey) {
             return value
         }
         return nil
@@ -136,5 +207,9 @@ public enum ClippySecrets {
             return nil
         }
         return value
+    }
+
+    private static func isMissing(_ value: String?) -> Bool {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
     }
 }

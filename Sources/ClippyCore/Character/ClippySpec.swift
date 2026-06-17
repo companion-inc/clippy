@@ -51,8 +51,8 @@ public struct ClippyBalloonSpec {
         maxInputHeight: CGFloat = 112,
         shadowOffset: CGSize = CGSize(width: 3, height: -3),
         shadowColor: NSColor = NSColor(calibratedRed: 0.8, green: 0.8, blue: 0.6, alpha: 1),
-        messageFontSize: CGFloat = 19,
-        inputFontSize: CGFloat = 19,
+        messageFontSize: CGFloat = 13,
+        inputFontSize: CGFloat = 13,
         regularFontName: String = "MS Sans Serif",
         boldFontName: String = "MS Sans Serif Bold"
     ) {
@@ -82,14 +82,14 @@ public struct ClippyBalloonSpec {
     public static let current = ClippyBalloonSpec(
         fillColor: NSColor(calibratedRed: 1.0, green: 1.0, blue: 0.8, alpha: 1),
         strokeColor: .black,
-        cornerRadius: 11,
+        cornerRadius: 10,
         tailHeight: 17,
         tailHalfWidth: 9,
         tailTipOffset: -11,
-        minWidth: 300,
-        maxWidth: 330,
-        approvalWidth: 300,
-        pad: 13,
+        minWidth: 220,
+        maxWidth: 285,
+        approvalWidth: 285,
+        pad: 10,
         shadowOffset: .zero
     )
 }

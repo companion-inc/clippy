@@ -38,10 +38,11 @@ The product path is local-first:
 
 - The visible app, speech bubble, permissions UI, annotation overlay, character
   renderer, and app packaging live in this repository.
-- The assistant brain runs through locally installed CLI sessions: Claude Code
-  through `claude`, or Codex through `codex app-server`.
-- First launch opens a retro setup screen that detects Codex, Claude Code, voice
-  keys, and Mac permissions, then guides install/sign-in for the missing pieces.
+- The assistant brain runs through locally installed ChatGPT or Claude
+  connectors. Existing local OpenAI/Anthropic API keys are offered in setup when
+  account sign-in is not set up.
+- First launch runs guided setup in Clippy's own speech bubble: choose ChatGPT
+  or Claude, accept or replace discovered API keys, and grant Mac permissions.
 - Voice input uses Deepgram when `DEEPGRAM_API_KEY` is configured, with the
   Apple speech stack as the local fallback. Spoken replies use xAI TTS.
 - Computer-use calls run through the Clippy-bundled Cua helper in packaged
@@ -74,14 +75,14 @@ Clippy asks for permissions only when the relevant feature needs them:
 ## Requirements
 
 - macOS 13 or newer.
-- One local brain CLI signed in:
-  - `claude` for Claude Code.
-  - `codex` for Codex app-server.
+- One local account connector signed in, or installed with its matching local API key:
+  - Claude through `claude`.
+  - ChatGPT through `codex`.
 - Optional: `DEEPGRAM_API_KEY` for streaming speech-to-text.
 - Optional: `XAI_API_KEY` for spoken replies.
 
 API keys can be supplied through the environment, Iris local settings, Clippy's
-`Configure API Key...` screen, or this local file:
+`Configure API Key...` screen for voice keys, or this local file:
 
 ```text
 ~/Library/Application Support/Clippy/Secrets.json
@@ -89,6 +90,8 @@ API keys can be supplied through the environment, Iris local settings, Clippy's
 
 ```json
 {
+  "anthropicAPIKey": "...",
+  "openAIAPIKey": "...",
   "sttAPIKey": "...",
   "ttsAPIKey": "..."
 }
