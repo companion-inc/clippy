@@ -278,7 +278,16 @@ internal tool plumbing.
     /// behind one function so tests and callers agree on the privacy/perf trade.
     public static func shouldAttachScreenshot(
         text _: String,
-        inputMode _: AssistantInputMode
+        inputMode _: AssistantInputMode,
+        desktopContext _: DesktopContextSnapshot? = nil
+    ) -> Bool {
+        true
+    }
+
+    public static func shouldShareDesktopContext(
+        text _: String,
+        inputMode _: AssistantInputMode,
+        desktopContext _: DesktopContextSnapshot?
     ) -> Bool {
         true
     }

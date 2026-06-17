@@ -141,7 +141,7 @@ public enum GroundingParser {
     /// optional partial `:args`, with no `]` yet), then strips any complete tags.
     public static func stripForStreaming(_ text: String) -> String {
         let withoutInProgress = text.replacingOccurrences(
-            of: #"\s*\[[A-Za-z]*(?::[^\]]*)?$"#, with: "", options: .regularExpression)
+            of: #"\s*[\[<][A-Za-z]*(?::[^\]>]*)?$"#, with: "", options: .regularExpression)
         return strip(withoutInProgress)
     }
 
@@ -213,12 +213,12 @@ public enum GroundingParser {
 
     // MARK: - Patterns
 
-    private static let pointRegex = re(#"\[POINT:\s*(?:none|(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)(?:\s*:\s*([^\]:]*?))?(?:\s*:\s*screen\s*(\d+))?)\s*\]"#)
-    private static let finalPointRegex = re(#"\[POINT:\s*(?:none|(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)(?:\s*:\s*([^\]:]*?))?(?:\s*:\s*screen\s*(\d+))?)\s*\]\s*$"#)
-    private static let regionRegex = re(#"\[(TARGET|HOVER|HIGHLIGHT):\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*:\s*([^\]:]*?)(?:\s*:\s*screen\s*(\d+))?\s*\]"#)
-    private static let shapeRegex = re(#"\[SHAPE:\s*(line|arrow|circle|curve|polygon)\s*:\s*([-0-9.,;\s]+?)\s*:\s*([^\]:]*?)(?:\s*:\s*screen\s*(\d+))?\s*\]"#)
-    private static let actRegex = re(#"\[ACT:\s*([A-Za-z0-9_]+)\s*\]"#)
-    private static let sanitizer = re(#"\[(?:POINT|HIGHLIGHT|SHAPE|TARGET|HOVER|ACT):[^\]]*\]"#)
+    private static let pointRegex = re(#"[\[<]POINT:\s*(?:none|(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)(?:\s*:\s*([^\]:>\]]*?))?(?:\s*:\s*screen\s*(\d+))?)\s*[\]>]"#)
+    private static let finalPointRegex = re(#"[\[<]POINT:\s*(?:none|(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)(?:\s*:\s*([^\]:>\]]*?))?(?:\s*:\s*screen\s*(\d+))?)\s*[\]>]\s*$"#)
+    private static let regionRegex = re(#"[\[<](TARGET|HOVER|HIGHLIGHT):\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*:\s*([^\]:>\]]*?)(?:\s*:\s*screen\s*(\d+))?\s*[\]>]"#)
+    private static let shapeRegex = re(#"[\[<]SHAPE:\s*(line|arrow|circle|curve|polygon)\s*:\s*([-0-9.,;\s]+?)\s*:\s*([^\]:>\]]*?)(?:\s*:\s*screen\s*(\d+))?\s*[\]>]"#)
+    private static let actRegex = re(#"[\[<]ACT:\s*([A-Za-z0-9_]+)\s*[\]>]"#)
+    private static let sanitizer = re(#"[\[<](?:POINT|HIGHLIGHT|SHAPE|TARGET|HOVER|ACT):[^\]>]*[\]>]"#)
 
     private static func re(_ pattern: String) -> NSRegularExpression {
         // Patterns are fixed literals; a failure here is a programming error.

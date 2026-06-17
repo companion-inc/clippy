@@ -82,7 +82,7 @@ cat > "$app_dir/Contents/Info.plist" <<'PLIST'
 PLIST
 
 # Code signing. A STABLE signing identity is what makes macOS keep TCC grants
-# (Screen Recording, Microphone, Accessibility) across rebuilds. Ad-hoc signatures
+# (Accessibility, Screen Recording, Full Disk Access, Microphone) across rebuilds. Ad-hoc signatures
 # key on the cdhash, which changes every build, so the OS forgets the grant and
 # re-prompts forever. Signing with the Developer ID (stable, keyed to the Team ID)
 # fixes that: grant once, it sticks. Override with CODESIGN_IDENTITY=… if needed;

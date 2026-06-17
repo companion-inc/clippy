@@ -116,12 +116,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private enum OnboardingPermission: CaseIterable {
         case accessibility
         case screenRecording
+        case fullDiskAccess
         case microphone
 
         var name: String {
             switch self {
             case .accessibility: "Accessibility"
             case .screenRecording: "Screen Recording"
+            case .fullDiskAccess: "Full Disk Access"
             case .microphone: "Microphone"
             }
         }
@@ -130,6 +132,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             switch self {
             case .accessibility: "Privacy_Accessibility"
             case .screenRecording: "Privacy_ScreenCapture"
+            case .fullDiskAccess: "Privacy_AllFiles"
             case .microphone: "Privacy_Microphone"
             }
         }
@@ -138,6 +141,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             switch self {
             case .accessibility: AccessibilityPermission.isTrusted
             case .screenRecording: ScreenPerception.hasPermission
+            case .fullDiskAccess: FullDiskAccessPermission.isGranted
             case .microphone: MicrophonePermission.isGranted
             }
         }
@@ -146,6 +150,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             switch self {
             case .accessibility: "GetAttention"
             case .screenRecording: "Explain"
+            case .fullDiskAccess: "Processing"
             case .microphone: "Alert"
             }
         }
@@ -630,7 +635,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         log("desktop-context: \(desktopContext.logSummary)")
         // Give Clippy eyes on every turn so short phrases like "do this" and
         // typed bubble turns still carry the real app/window context underneath.
-        let wantsScreen = ClippyAgentInstructions.shouldAttachScreenshot(text: text, inputMode: inputMode)
+        let wantsScreen = ClippyAgentInstructions.shouldAttachScreenshot(
+            text: text,
+            inputMode: inputMode,
+            desktopContext: desktopContext
+        )
         let screenshotScreen = desktopContext.targetScreen() ?? screenForClippy()
         let shots = wantsScreen ? captureTurnScreenshots(primaryScreen: screenshotScreen) : []
         let shot = primaryShot(in: shots, primaryScreen: screenshotScreen)
@@ -1669,6 +1678,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             .toggle("Screen Recording", isOn: ScreenPerception.hasPermission) { [weak self] in
                 self?.grantScreenRecording()
             },
+            .toggle("Full Disk Access", isOn: FullDiskAccessPermission.isGranted) { [weak self] in
+                self?.grantFullDiskAccess()
+            },
             .toggle("Microphone", isOn: MicrophonePermission.isGranted) { [weak self] in
                 self?.grantMicrophone()
             },
@@ -1794,6 +1806,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     @objc private func grantScreenRecording() {
         _ = ScreenPerception.requestPermission()
         showPermissionDialog(permission: .screenRecording)
+    }
+
+    @objc private func grantFullDiskAccess() {
+        showPermissionDialog(permission: .fullDiskAccess)
     }
 
     @objc private func grantMicrophone() {
@@ -2011,7 +2027,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func showPermissionStep() {
         showOnboardingStep(
-            "Last step. I need a few Mac permissions: Microphone to hear you, Screen Recording to see your screen, and Accessibility to click for you.",
+            "Last step. I need Mac permissions: Accessibility to click, Screen Recording to see, Full Disk Access to read local app databases, and Microphone to hear you.",
             animation: "GetAttention",
             choices: [
                 .init(title: "Grant Permissions") { [weak self] in self?.startPermissionWalkthrough() },
@@ -2035,6 +2051,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             _ = AccessibilityPermission.requestIfNeeded(prompt: true)
         case .screenRecording:
             _ = ScreenPerception.requestPermission()
+        case .fullDiskAccess:
+            break
         case .microphone:
             Task { _ = await SpeechCapture.requestMicrophone() }
         }
@@ -2070,6 +2088,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let permissions = [
             ("Accessibility", AccessibilityPermission.isTrusted),
             ("Screen Recording", ScreenPerception.hasPermission),
+            ("Full Disk Access", FullDiskAccessPermission.isGranted),
             ("Microphone", MicrophonePermission.isGranted),
         ]
         let missing = permissions.filter { !$0.1 }.map(\.0)

@@ -7,6 +7,11 @@ import Testing
     let parsed = GroundingParser.parse(reply)
     #expect(parsed.spokenText == "Click the add button to continue.")
     #expect(parsed.tags == [.target(CGPoint(x: 120, y: 210), radius: 40, label: "add modifier", screen: nil)])
+
+    let angleReply = "<TARGET:942,695,38:Continue>Click the white Continue button right here."
+    let angleParsed = GroundingParser.parse(angleReply)
+    #expect(angleParsed.spokenText == "Click the white Continue button right here.")
+    #expect(angleParsed.tags == [.target(CGPoint(x: 942, y: 695), radius: 38, label: "Continue", screen: nil)])
 }
 
 @Test func targetAndHoverCountAsRenderableVisualGuidance() {
@@ -55,6 +60,8 @@ import Testing
     #expect(GroundingParser.stripForStreaming("Look up there [POIN") == "Look up there")
     #expect(GroundingParser.stripForStreaming("Look up there [POINT:600,40") == "Look up there")
     #expect(GroundingParser.stripForStreaming("Look up there [") == "Look up there")
+    #expect(GroundingParser.stripForStreaming("<TARGET:942,695,38:Continue>Click") == "Click")
+    #expect(GroundingParser.stripForStreaming("<TARGET:942,695") == "")
     // A complete tag plus a half-typed one after it.
     #expect(GroundingParser.stripForStreaming("Hi [ACT:Wave] and [HOV") == "Hi and")
     // A non-tag bracket is left alone (not every "[" is a tag).

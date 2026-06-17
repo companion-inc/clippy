@@ -256,12 +256,63 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(msg.contains("Do not emit [POINT:none]"))
 }
 
-@Test func screenshotPolicyCapturesEveryTurn() {
+@Test func screenshotPolicyCapturesEveryTurnIncludingSensitiveApps() {
     #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "Say exactly: perf ok.", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "what's on my screen", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "highlight this button", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "fix that", inputMode: .voice))
     #expect(ClippyAgentInstructions.shouldAttachScreenshot(text: "summarize the docs", inputMode: .voice))
+
+    let messagesContext = DesktopContextSnapshot(
+        app: .init(name: "Messages", bundleIdentifier: "com.apple.MobileSMS", processIdentifier: 123),
+        window: .init(
+            title: nil,
+            ownerName: "Messages",
+            ownerProcessIdentifier: 123,
+            windowIdentifier: 456,
+            bounds: CGRect(x: 0, y: 0, width: 900, height: 700)
+        ),
+        screen: nil,
+        browser: nil
+    )
+    #expect(ClippyAgentInstructions.shouldAttachScreenshot(
+        text: "its in my downloads now can u do it",
+        inputMode: .text,
+        desktopContext: messagesContext
+    ))
+    #expect(ClippyAgentInstructions.shouldShareDesktopContext(
+        text: "its in my downloads now can u do it",
+        inputMode: .text,
+        desktopContext: messagesContext
+    ))
+    #expect(ClippyAgentInstructions.shouldAttachScreenshot(
+        text: "do this",
+        inputMode: .text,
+        desktopContext: messagesContext
+    ))
+    #expect(ClippyAgentInstructions.shouldShareDesktopContext(
+        text: "this document is in downloads now",
+        inputMode: .text,
+        desktopContext: messagesContext
+    ))
+    #expect(ClippyAgentInstructions.shouldAttachScreenshot(
+        text: "what's on my screen",
+        inputMode: .text,
+        desktopContext: messagesContext
+    ))
+    #expect(ClippyAgentInstructions.shouldShareDesktopContext(
+        text: "point to the send button",
+        inputMode: .text,
+        desktopContext: messagesContext
+    ))
+}
+
+@Test func fullDiskAccessProbeTargetsLocalAppDatabases() {
+    let home = URL(fileURLWithPath: "/Users/example")
+    let paths = FullDiskAccessPermission.databaseProbeURLs(home: home).map(\.path)
+    #expect(paths.contains("/Users/example/Library/Messages/chat.db"))
+    #expect(paths.contains("/Users/example/Library/Safari/History.db"))
+    #expect(paths.contains("/Users/example/Library/Application Support/com.apple.TCC/TCC.db"))
 }
 
 @Test func computerControlPolicyRoutesGuiWorkToCodexLane() {
