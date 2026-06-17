@@ -1321,11 +1321,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         items.append(.submenu("Model", detail: selectedModel.displayName, items: modelItems))
 
         let voiceItems = ClippyVoice.all.map { voice in
-            RetroMenuItem.choice(voice.displayName, isSelected: voice.id == selectedVoice.id) { [weak self] in
+            RetroMenuItem.choice(voice.displayName, detail: voice.gender, isSelected: voice.id == selectedVoice.id) { [weak self] in
                 self?.selectVoice(id: voice.id)
             }
         }
-        items.append(.submenu("Voice", detail: selectedVoice.id, items: voiceItems))
+        items.append(.submenu("Voice", detail: selectedVoice.gender, items: voiceItems))
 
         items.append(.separator())
         items.append(.action("Setup...") { [weak self] in

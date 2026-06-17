@@ -1120,7 +1120,10 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 @Test func clippyVoiceDefaultUsesBrightEveVoice() {
     #expect(ClippyVoice.default.id == "eve")
     #expect(ClippyVoice.all.first?.id == "eve")
-    #expect(ClippyVoice.default.displayName == "Clippy - bright")
+    #expect(ClippyVoice.default.displayName == "Energetic, upbeat")
+    #expect(ClippyVoice.default.gender == "Female")
+    #expect(ClippyVoice.rex.displayName == "Confident, clear")
+    #expect(ClippyVoice.rex.gender == "Male")
 }
 
 @Test func computerUseRoutePolicyRequiresFreshWindowSnapshot() async throws {

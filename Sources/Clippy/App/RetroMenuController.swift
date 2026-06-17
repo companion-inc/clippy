@@ -25,8 +25,8 @@ struct RetroMenuItem {
         RetroMenuItem(title: title, detail: nil, role: .toggle(isOn: isOn), action: action)
     }
 
-    static func choice(_ title: String, isSelected: Bool, _ action: @escaping () -> Void) -> Self {
-        RetroMenuItem(title: title, detail: nil, role: .choice(isSelected: isSelected), action: action)
+    static func choice(_ title: String, detail: String? = nil, isSelected: Bool, _ action: @escaping () -> Void) -> Self {
+        RetroMenuItem(title: title, detail: detail, role: .choice(isSelected: isSelected), action: action)
     }
 
     static func submenu(_ title: String, detail: String? = nil, items: [RetroMenuItem]) -> Self {
