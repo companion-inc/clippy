@@ -1442,7 +1442,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func showBrainChoiceStep() {
         showOnboardingStep(
-            "Which account should I use?",
+            "Ooh, first things first — who should be my brain? Pick an account!",
             animation: "GetAttention",
             choices: [
                 .init(title: "ChatGPT") { [weak self] in self?.showCodexOnboarding() },
@@ -1456,51 +1456,35 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let codex = BrainDiscovery.codexStatus()
         let claude = BrainDiscovery.claudeStatus()
         let prompt = """
-        Here's what I found:
+        Here's what I dug up:
         ChatGPT: \(codex.statusText)
         Claude: \(claude.statusText)
 
-        Pick the account you want Clippy to use.
+        Pick whichever one you'd like me to think with!
         """
         showOnboardingStep(prompt, animation: "CheckingSomething", choices: [
             .init(title: "ChatGPT") { [weak self] in self?.showCodexOnboarding() },
             .init(title: "Claude") { [weak self] in self?.showClaudeOnboarding() },
-            .init(title: "Skip") { [weak self] in self?.showVoiceKeyStep() },
+            .init(title: "Skip") { [weak self] in self?.showListeningStep() },
         ])
     }
 
     private func showCodexOnboarding() {
         let status = BrainDiscovery.codexStatus()
         if status.signedIn {
-            if ClippySecrets.openAIAPIKey != nil && !fileExistsInHome(".codex/auth.json") {
-                showOnboardingStep(
-                    "I found an OpenAI API key locally. Use it for ChatGPT?",
-                    animation: "GetTechy",
-                    choices: [
-                        .init(title: "Use Found Key") { [weak self] in
-                            self?.selectOnboardingModel(.gpt55)
-                        },
-                        .init(title: "Sign In Instead") { [weak self] in
-                            self?.runCodexLogin()
-                        },
-                        .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
-                    ]
-                )
-            } else {
-                showOnboardingStep(
-                    "ChatGPT is ready. Use this account for Clippy?",
-                    animation: "GetTechy",
-                    choices: [
-                        .init(title: "Use ChatGPT") { [weak self] in
-                            self?.selectOnboardingModel(.gpt55)
-                        },
-                        .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
-                    ]
-                )
-            }
+            showOnboardingStep(
+                "ChatGPT's all warmed up and signed in! Want me to run on this account?",
+                animation: "GetTechy",
+                choices: [
+                    .init(title: "Use ChatGPT") { [weak self] in
+                        self?.selectOnboardingModel(.gpt55)
+                    },
+                    .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
+                ]
+            )
         } else if status.isInstalled {
             showOnboardingStep(
-                "ChatGPT can connect here, but you still need to sign in.",
+                "ChatGPT's almost there — you just need to sign in first!",
                 animation: "GetTechy",
                 choices: [
                     .init(title: "Sign In") { [weak self] in self?.runCodexLogin() },
@@ -1509,7 +1493,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             )
         } else {
             showOnboardingStep(
-                "ChatGPT is not set up here yet.",
+                "Hmm, no ChatGPT here just yet. Want me to set it up?",
                 animation: "GetTechy",
                 choices: [
                     .init(title: "Set Up ChatGPT") { [weak self] in self?.runCodexInstall() },
@@ -1522,45 +1506,28 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func showClaudeOnboarding() {
         let status = BrainDiscovery.claudeStatus()
         if status.signedIn {
-            if ClippySecrets.anthropicAPIKey != nil && !fileExistsInHome(".claude/.credentials.json") && !fileExistsInHome(".claude.json") {
-                showOnboardingStep(
-                    "I found an Anthropic API key locally. Use it for Claude?",
-                    animation: "GetWizardy",
-                    choices: [
-                        .init(title: "Use Found Key") { [weak self] in
-                            self?.selectOnboardingModel(.opus48)
-                        },
-                        .init(title: "Sign In Instead") { [weak self] in
-                            self?.runClaudePlanLogin()
-                        },
-                        .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
-                    ]
-                )
-            } else {
-                showOnboardingStep(
-                    "Claude is ready. Use this account for Clippy?",
-                    animation: "GetWizardy",
-                    choices: [
-                        .init(title: "Use Claude") { [weak self] in
-                            self?.selectOnboardingModel(.opus48)
-                        },
-                        .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
-                    ]
-                )
-            }
+            showOnboardingStep(
+                "Claude's all warmed up and signed in! Want me to run on this account?",
+                animation: "GetWizardy",
+                choices: [
+                    .init(title: "Use Claude") { [weak self] in
+                        self?.selectOnboardingModel(.opus48)
+                    },
+                    .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
+                ]
+            )
         } else if status.isInstalled {
             showOnboardingStep(
-                "Claude can connect here, but you still need to sign in.",
+                "Claude's almost there — you just need to sign in first!",
                 animation: "GetWizardy",
                 choices: [
                     .init(title: "Sign In") { [weak self] in self?.runClaudePlanLogin() },
-                    .init(title: "Use API Key") { [weak self] in self?.runClaudeConsoleLogin() },
                     .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
                 ]
             )
         } else {
             showOnboardingStep(
-                "Claude is not set up here yet.",
+                "Hmm, no Claude here just yet. Want me to set it up?",
                 animation: "GetWizardy",
                 choices: [
                     .init(title: "Set Up Claude") { [weak self] in self?.runClaudeInstall() },
@@ -1570,50 +1537,65 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func showVoiceKeyStep() {
-        let deepgramReady = ClippySecrets.deepgramAPIKey != nil
-        let xaiReady = ClippySecrets.xaiAPIKey != nil
-        if deepgramReady && xaiReady {
+    // Listening (me hearing you) and my own voice (me talking back) are two different
+    // things, so they get two separate steps: Deepgram powers my ears, xAI powers my mouth.
+    private func showListeningStep() {
+        if ClippySecrets.deepgramAPIKey != nil {
             showOnboardingStep(
-                "I found your Deepgram and xAI keys locally. Want me to use those for voice?",
-                animation: "SendMail",
+                "Ooh, I found your Deepgram key! Want me to listen when you talk to me?",
+                animation: "Hearing_1",
                 choices: [
-                    .init(title: "Use Found Keys") { [weak self] in
+                    .init(title: "Yes, Listen") { [weak self] in
+                        self?.configureVoiceProviders()
+                        self?.showVoiceStep()
+                    },
+                    .init(title: "Not Now") { [weak self] in self?.showVoiceStep() },
+                ]
+            )
+        } else {
+            showOnboardingStep(
+                "Want me to hear you when you talk? I'll need a Deepgram key for my ears!",
+                animation: "Hearing_1",
+                choices: [
+                    .init(title: "Add Listening Key") { [weak self] in self?.showProviderKeys() },
+                    .init(title: "Not Now") { [weak self] in self?.showVoiceStep() },
+                ]
+            )
+        }
+    }
+
+    private func showVoiceStep() {
+        if ClippySecrets.xaiAPIKey != nil {
+            showOnboardingStep(
+                "And I found my voice — an xAI key! Want me to talk back out loud?",
+                animation: "Wave",
+                choices: [
+                    .init(title: "Yes, Talk") { [weak self] in
                         self?.configureVoiceProviders()
                         self?.showPermissionStep()
                     },
-                    .init(title: "Different Keys") { [weak self] in
-                        self?.showProviderKeys()
-                    },
-                    .init(title: "Skip Voice") { [weak self] in self?.showPermissionStep() },
+                    .init(title: "Stay Quiet") { [weak self] in self?.showPermissionStep() },
                 ]
             )
-            return
+        } else {
+            showOnboardingStep(
+                "Want me to talk back out loud? I'll need an xAI key for my voice!",
+                animation: "Wave",
+                choices: [
+                    .init(title: "Add Voice Key") { [weak self] in self?.showProviderKeys() },
+                    .init(title: "Stay Quiet") { [weak self] in self?.showPermissionStep() },
+                ]
+            )
         }
-
-        let missing = [
-            deepgramReady ? nil : "Deepgram for listening",
-            xaiReady ? nil : "xAI for speaking",
-        ].compactMap { $0 }
-        showOnboardingStep(
-            "Voice is optional. I still need \(missing.joined(separator: " and ")).",
-            animation: "SendMail",
-            choices: [
-                .init(title: "Configure Keys") { [weak self] in
-                    self?.showProviderKeys()
-                },
-                .init(title: "Skip Voice") { [weak self] in self?.showPermissionStep() },
-            ]
-        )
     }
 
     private func showAPIKeyOnboarding() {
-        showVoiceKeyStep()
+        showListeningStep()
     }
 
     private func showPermissionStep() {
         showOnboardingStep(
-            "Last step: Mac permissions. I need Microphone for voice, Screen Recording to see what you're asking about, and Accessibility to click things for you.",
+            "Almost there! One last thing — I need a few Mac permissions: a Microphone to hear you, Screen Recording so I can see what you mean, and Accessibility so I can click around for you.",
             animation: "GetAttention",
             choices: [
                 .init(title: "Grant Permissions") { [weak self] in self?.startPermissionWalkthrough() },
@@ -1651,7 +1633,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(model.id, forKey: "ClippySelectedModelID")
         setUpBrain()
         log("model selected: \(model.id)")
-        showVoiceKeyStep()
+        showListeningStep()
     }
 
     private func finishBubbleOnboarding() {
@@ -1662,7 +1644,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             setUpBrain()
         }
         playOnboardingAnimation("Congratulate")
-        chatBubble?.showReplyForReading("All set. Click me when you want to type, or hold Control+Option to talk.")
+        chatBubble?.showReplyForReading("All set — this is going to be fun! Click me to type, or hold Control+Option to talk.")
     }
 
     private func voiceKeyStatusText() -> String {
@@ -1682,7 +1664,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func runCodexLogin() {
         Self.runInTerminal(title: "ChatGPT Sign In", command: "codex login")
-        showRefreshAfterExternalSetup("I opened ChatGPT sign in. Finish there, then come back here.", resume: { [weak self] in
+        showRefreshAfterExternalSetup("I popped open ChatGPT sign in for you! Finish up there, then come right back.", resume: { [weak self] in
             self?.showCodexOnboarding()
         })
     }
@@ -1699,21 +1681,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             codex login
             """
         )
-        showRefreshAfterExternalSetup("I opened ChatGPT setup. Finish there, then come back here.", resume: { [weak self] in
+        showRefreshAfterExternalSetup("I popped open ChatGPT setup for you! Finish up there, then come right back.", resume: { [weak self] in
             self?.showCodexOnboarding()
         })
     }
 
     private func runClaudePlanLogin() {
         Self.runInTerminal(title: "Claude Sign In", command: "claude auth login --claudeai")
-        showRefreshAfterExternalSetup("I opened Claude sign in. Finish there, then come back here.", resume: { [weak self] in
-            self?.showClaudeOnboarding()
-        })
-    }
-
-    private func runClaudeConsoleLogin() {
-        Self.runInTerminal(title: "Claude API Key Sign In", command: "claude auth login --console")
-        showRefreshAfterExternalSetup("I opened Claude API key sign in. Finish there, then come back here.", resume: { [weak self] in
+        showRefreshAfterExternalSetup("I popped open Claude sign in for you! Finish up there, then come right back.", resume: { [weak self] in
             self?.showClaudeOnboarding()
         })
     }
@@ -1730,7 +1705,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             claude auth login --claudeai
             """
         )
-        showRefreshAfterExternalSetup("I opened Claude setup. Finish there, then come back here.", resume: { [weak self] in
+        showRefreshAfterExternalSetup("I popped open Claude setup for you! Finish up there, then come right back.", resume: { [weak self] in
             self?.showClaudeOnboarding()
         })
     }
@@ -1758,12 +1733,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             return
         }
         _ = playOnce(name)
-    }
-
-    private func fileExistsInHome(_ relativePath: String) -> Bool {
-        FileManager.default.fileExists(
-            atPath: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(relativePath).path
-        )
     }
 
     private static func runInTerminal(title: String, command: String) {

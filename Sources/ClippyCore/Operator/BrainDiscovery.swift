@@ -3,12 +3,15 @@ import Foundation
 /// Figures out which AI subscription the user actually has signed in locally, so
 /// Clippy can default to the right brain out of the box instead of assuming one.
 ///
-/// "Signed in" = the CLI binary is installed AND its login artifact is on disk:
+/// "Signed in" = the CLI binary is installed AND its subscription login artifact is
+/// on disk:
 ///   • Claude Code → `~/.claude/.credentials.json` or `~/.claude.json` (its config,
-///     written once you've set it up), or an `ANTHROPIC_API_KEY` in the environment.
+///     written once you've signed in to your Claude subscription).
 ///   • Codex (GPT) → `~/.codex/auth.json` (the OAuth token it writes on login).
-/// We deliberately check files, not the Keychain, so detection never pops a
-/// "Clippy wants to use a credential" prompt.
+/// We intentionally do NOT treat a loose `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` as
+/// "signed in": Clippy runs on the user's subscription, so a key-only setup should
+/// still walk the user through signing in. We check files, not the Keychain, so
+/// detection never pops a "Clippy wants to use a credential" prompt.
 public enum BrainDiscovery {
     public struct Status: Equatable, Sendable {
         public let backend: ClippyModel.Backend
@@ -46,7 +49,6 @@ public enum BrainDiscovery {
 
     private static func claudeSignedIn(binaryPath: String?) -> Bool {
         guard binaryPath != nil else { return false }
-        if ClippySecrets.anthropicAPIKey != nil { return true }
         return anyFileExists([".claude/.credentials.json", ".claude.json"])
     }
 
@@ -56,7 +58,6 @@ public enum BrainDiscovery {
 
     private static func codexSignedIn(binaryPath: String?) -> Bool {
         guard binaryPath != nil else { return false }
-        if ClippySecrets.openAIAPIKey != nil { return true }
         return anyFileExists([".codex/auth.json"])
     }
 
