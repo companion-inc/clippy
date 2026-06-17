@@ -19,7 +19,16 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     }
 
     private final class KeyPanel: NSPanel {
+        var onKeyDown: ((NSEvent) -> Bool)?
+
         override var canBecomeKey: Bool { true }
+
+        override func keyDown(with event: NSEvent) {
+            if onKeyDown?(event) == true {
+                return
+            }
+            super.keyDown(with: event)
+        }
     }
 
     private final class InputTextView: NSTextView {
@@ -42,6 +51,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private final class BalloonChoiceButton: NSView {
         var title: String { didSet { needsDisplay = true } }
         var onClick: (() -> Void)?
+        var isKeyboardFocused = false { didSet { needsDisplay = true } }
         private var pressed = false
 
         override var isFlipped: Bool { true }
@@ -82,6 +92,17 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
                 height: textSize.height
             )
             label.draw(in: textRect, withAttributes: attrs)
+
+            if isKeyboardFocused {
+                RetroPalette.frame.setStroke()
+                let focus = NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 1.5))
+                let dash: [CGFloat] = [1, 2]
+                dash.withUnsafeBufferPointer { buffer in
+                    focus.setLineDash(buffer.baseAddress, count: buffer.count, phase: 0)
+                }
+                focus.lineWidth = 1
+                focus.stroke()
+            }
         }
 
         override func mouseDown(with event: NSEvent) {
@@ -120,6 +141,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private let inputTextView = InputTextView(frame: .zero)
     private let inputPlaceholderView = NSTextView(frame: .zero)
     private var choiceButtons: [BalloonChoiceButton] = []
+    private var selectedChoiceIndex: Int?
 
     private var mode: Mode = .message
     private var messageText = ""
@@ -139,6 +161,10 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             defer: false
         )
         super.init()
+
+        (window as? KeyPanel)?.onKeyDown = { [weak self] event in
+            self?.handleKeyDown(event) ?? false
+        }
 
         root.frame = window.frame
         root.wantsLayer = true
@@ -305,9 +331,11 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             root.addSubview(button)
             return button
         }
+        selectedChoiceIndex = choices.isEmpty ? nil : 0
         relayout()
         attachToAnchorWindow()
-        window.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
     }
 
     public func showChoicesTyping(_ prompt: String, choices: [Choice]) {
@@ -463,7 +491,8 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             )
             messageLabel.stringValue = messageText
             var y = contentRect.maxY - promptHeight - 7 - 18
-            for button in choiceButtons {
+            for (index, button) in choiceButtons.enumerated() {
+                button.isKeyboardFocused = index == selectedChoiceIndex
                 button.frame = CGRect(x: contentRect.minX + 2, y: y, width: contentRect.width - 4, height: 18)
                 y -= 20
             }
@@ -534,9 +563,11 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     private func clearChoices() {
         for button in choiceButtons {
+            button.isKeyboardFocused = false
             button.removeFromSuperview()
         }
         choiceButtons = []
+        selectedChoiceIndex = nil
     }
 
     private func measuredInputHeight(width: CGFloat) -> CGFloat {
@@ -591,4 +622,88 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         if !text.isEmpty { onSend?(text) }
     }
 
+    private func handleKeyDown(_ event: NSEvent) -> Bool {
+        guard mode == .choices else {
+            return false
+        }
+        guard let action = ClippyChoiceKeyboard.action(
+            keyCode: event.keyCode,
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+            selectedIndex: selectedChoiceIndex,
+            choiceCount: choiceButtons.count
+        ) else {
+            return false
+        }
+        switch action {
+        case .select(let index):
+            selectedChoiceIndex = index
+            relayout()
+        case .activate(let index):
+            activateChoice(at: index)
+        case .cancel:
+            hide()
+        }
+        return true
+    }
+
+    private func activateChoice(at index: Int) {
+        guard choiceButtons.indices.contains(index) else {
+            return
+        }
+        choiceButtons[index].onClick?()
+    }
+
+}
+
+enum ClippyChoiceKeyboardAction: Equatable {
+    case select(Int)
+    case activate(Int)
+    case cancel
+}
+
+enum ClippyChoiceKeyboard {
+    static func action(
+        keyCode: UInt16,
+        charactersIgnoringModifiers: String?,
+        selectedIndex: Int?,
+        choiceCount: Int
+    ) -> ClippyChoiceKeyboardAction? {
+        guard choiceCount > 0 else {
+            return nil
+        }
+        if let numberIndex = choiceNumberIndex(charactersIgnoringModifiers, choiceCount: choiceCount) {
+            return .activate(numberIndex)
+        }
+        switch keyCode {
+        case 36, 49, 76:
+            return .activate(selectedIndex ?? 0)
+        case 48, 125:
+            return .select(wrappedIndex(after: selectedIndex, delta: 1, count: choiceCount))
+        case 126:
+            return .select(wrappedIndex(after: selectedIndex, delta: -1, count: choiceCount))
+        case 53:
+            return .cancel
+        default:
+            return nil
+        }
+    }
+
+    private static func choiceNumberIndex(_ characters: String?, choiceCount: Int) -> Int? {
+        guard let character = characters?.first,
+              character >= "1",
+              character <= "9",
+              let value = character.wholeNumberValue
+        else {
+            return nil
+        }
+        let index = value - 1
+        return index < choiceCount ? index : nil
+    }
+
+    private static func wrappedIndex(after selectedIndex: Int?, delta: Int, count: Int) -> Int {
+        guard let selectedIndex else {
+            return delta >= 0 ? 0 : count - 1
+        }
+        return (selectedIndex + delta + count) % count
+    }
 }

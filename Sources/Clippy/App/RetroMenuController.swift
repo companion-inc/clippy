@@ -140,9 +140,11 @@ final class RetroMenuController {
 
     private func installCloseMonitors() {
         localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .keyDown]) { [weak self] event in
-            if event.type == .keyDown, event.keyCode == 53 {
-                self?.close()
-                return nil
+            if event.type == .keyDown {
+                if self?.handleKeyDown(event) == true {
+                    return nil
+                }
+                return event
             }
             if
                 event.type != .keyDown,
@@ -155,6 +157,39 @@ final class RetroMenuController {
         }
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
             self?.close()
+        }
+    }
+
+    private func handleKeyDown(_ event: NSEvent) -> Bool {
+        guard let menu = windows.last?.contentView as? RetroMenuView else {
+            return false
+        }
+        switch event.keyCode {
+        case 36, 49, 76:
+            menu.activateSelectedRow()
+            return true
+        case 53:
+            close()
+            return true
+        case 123:
+            if windows.count > 1 {
+                windows.last?.orderOut(nil)
+                windows.removeLast()
+            } else {
+                close()
+            }
+            return true
+        case 124:
+            _ = menu.openSelectedSubmenu()
+            return true
+        case 125:
+            menu.moveSelection(delta: 1)
+            return true
+        case 126:
+            menu.moveSelection(delta: -1)
+            return true
+        default:
+            return false
         }
     }
 }
@@ -177,6 +212,8 @@ private final class RetroMenuView: NSView {
     private let dismiss: () -> Void
     private let openSubmenu: ([RetroMenuItem], NSView, Int) -> Void
     private let closeSubmenus: (Int) -> Void
+    private var rows: [RetroMenuRowView] = []
+    private var selectedRowIndex: Int?
 
     init(
         items: [RetroMenuItem],
@@ -219,11 +256,71 @@ private final class RetroMenuView: NSView {
                 level: level,
                 dismiss: dismiss,
                 openSubmenu: openSubmenu,
-                closeSubmenus: closeSubmenus
+                closeSubmenus: closeSubmenus,
+                selectRow: { [weak self] row in
+                    self?.selectRow(row)
+                }
             )
             row.frame = NSRect(x: Metrics.pad, y: y, width: bounds.width - Metrics.pad * 2, height: height)
             addSubview(row)
+            rows.append(row)
             y += height
+        }
+    }
+
+    func moveSelection(delta: Int) {
+        let selectable = selectableRowIndices
+        guard selectable.isEmpty == false else { return }
+        let nextIndex: Int
+        if let selectedRowIndex,
+           let current = selectable.firstIndex(of: selectedRowIndex) {
+            nextIndex = selectable[(current + delta + selectable.count) % selectable.count]
+        } else {
+            nextIndex = delta >= 0 ? selectable[0] : selectable[selectable.count - 1]
+        }
+        setSelectedRowIndex(nextIndex)
+    }
+
+    func activateSelectedRow() {
+        guard let row = selectedOrDefaultRow() else { return }
+        row.activate()
+    }
+
+    func openSelectedSubmenu() -> Bool {
+        guard let row = selectedOrDefaultRow() else { return false }
+        return row.openSubmenuIfAvailable()
+    }
+
+    private var selectableRowIndices: [Int] {
+        rows.indices.filter { rows[$0].isSelectable }
+    }
+
+    private func selectRow(_ row: RetroMenuRowView) {
+        guard let index = rows.firstIndex(where: { $0 === row }),
+              rows[index].isSelectable
+        else {
+            return
+        }
+        setSelectedRowIndex(index)
+    }
+
+    private func selectedOrDefaultRow() -> RetroMenuRowView? {
+        if let selectedRowIndex,
+           rows.indices.contains(selectedRowIndex),
+           rows[selectedRowIndex].isSelectable {
+            return rows[selectedRowIndex]
+        }
+        guard let first = selectableRowIndices.first else {
+            return nil
+        }
+        setSelectedRowIndex(first)
+        return rows[first]
+    }
+
+    private func setSelectedRowIndex(_ index: Int) {
+        selectedRowIndex = index
+        for (rowIndex, row) in rows.enumerated() {
+            row.isKeyboardSelected = rowIndex == index
         }
     }
 
@@ -245,21 +342,25 @@ private final class RetroMenuRowView: NSView {
     private let dismiss: () -> Void
     private let openSubmenu: ([RetroMenuItem], NSView, Int) -> Void
     private let closeSubmenus: (Int) -> Void
+    private let selectRow: (RetroMenuRowView) -> Void
     private var isHovered = false
     private var tracking: NSTrackingArea?
+    var isKeyboardSelected = false { didSet { needsDisplay = true } }
 
     init(
         item: RetroMenuItem,
         level: Int,
         dismiss: @escaping () -> Void,
         openSubmenu: @escaping ([RetroMenuItem], NSView, Int) -> Void,
-        closeSubmenus: @escaping (Int) -> Void
+        closeSubmenus: @escaping (Int) -> Void,
+        selectRow: @escaping (RetroMenuRowView) -> Void
     ) {
         self.item = item
         self.level = level
         self.dismiss = dismiss
         self.openSubmenu = openSubmenu
         self.closeSubmenus = closeSubmenus
+        self.selectRow = selectRow
         super.init(frame: .zero)
     }
 
@@ -287,6 +388,7 @@ private final class RetroMenuRowView: NSView {
     override func mouseEntered(with event: NSEvent) {
         guard isEnabledRow else { return }
         isHovered = true
+        selectRow(self)
         needsDisplay = true
         if case .submenu(let items) = item.role {
             openSubmenu(items, self, level + 1)
@@ -310,6 +412,27 @@ private final class RetroMenuRowView: NSView {
         }
         dismiss()
         item.action?()
+    }
+
+    var isSelectable: Bool {
+        isEnabledRow
+    }
+
+    func activate() {
+        guard isEnabledRow else { return }
+        if openSubmenuIfAvailable() {
+            return
+        }
+        dismiss()
+        item.action?()
+    }
+
+    func openSubmenuIfAvailable() -> Bool {
+        guard case .submenu(let items) = item.role else {
+            return false
+        }
+        openSubmenu(items, self, level + 1)
+        return true
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -347,19 +470,20 @@ private final class RetroMenuRowView: NSView {
     }
 
     private func drawRow(icon: RetroMenuIcon?, mark: String?, showsArrow: Bool = false) {
-        if isHovered {
+        let isHighlighted = isHovered || isKeyboardSelected
+        if isHighlighted {
             RetroPalette.selection.setFill()
             bounds.fill()
         }
 
-        let textColor = isHovered ? RetroPalette.captionText : RetroPalette.text
+        let textColor = isHighlighted ? RetroPalette.captionText : RetroPalette.text
         let attrs: [NSAttributedString.Key: Any] = [
             .font: RetroFont.ui(11),
             .foregroundColor: textColor,
         ]
         let detailAttrs: [NSAttributedString.Key: Any] = [
             .font: RetroFont.ui(10),
-            .foregroundColor: isHovered ? RetroPalette.captionText : RetroPalette.grayText,
+            .foregroundColor: isHighlighted ? RetroPalette.captionText : RetroPalette.grayText,
         ]
 
         if let mark {
@@ -369,9 +493,16 @@ private final class RetroMenuRowView: NSView {
         }
 
         let arrowWidth: CGFloat = showsArrow ? 18 : 0
-        let detailWidth: CGFloat = item.detail == nil ? 0 : 74
+        let rightInset = CGFloat(8) + arrowWidth
+        let detailWidth = detailColumnWidth(attributes: detailAttrs)
+        let detailSpacing: CGFloat = detailWidth > 0 ? 6 : 0
         (item.title as NSString).draw(
-            in: NSRect(x: 26, y: 4, width: bounds.width - 34 - detailWidth - arrowWidth, height: 15),
+            in: NSRect(
+                x: 26,
+                y: 4,
+                width: max(20, bounds.width - 26 - rightInset - detailWidth - detailSpacing),
+                height: 15
+            ),
             withAttributes: attrs
         )
         if let detail = item.detail {
@@ -380,13 +511,19 @@ private final class RetroMenuRowView: NSView {
             var rightAttrs = detailAttrs
             rightAttrs[.paragraphStyle] = para
             (detail as NSString).draw(
-                in: NSRect(x: bounds.width - detailWidth - 8, y: 5, width: detailWidth, height: 14),
+                in: NSRect(x: bounds.width - rightInset - detailWidth, y: 5, width: detailWidth, height: 14),
                 withAttributes: rightAttrs
             )
         }
         if showsArrow {
             drawArrow(color: textColor, rect: NSRect(x: bounds.width - 16, y: 6, width: 8, height: 10))
         }
+    }
+
+    private func detailColumnWidth(attributes: [NSAttributedString.Key: Any]) -> CGFloat {
+        guard let detail = item.detail else { return 0 }
+        let measured = ceil((detail as NSString).size(withAttributes: attributes).width) + 8
+        return min(max(74, measured), 128)
     }
 
     private func drawArrow(color: NSColor, rect: NSRect) {

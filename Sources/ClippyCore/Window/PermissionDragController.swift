@@ -40,10 +40,11 @@ public final class PermissionDragController {
             doneButtonTitle: doneButtonTitle
         )
         let size = NSSize(width: 404, height: 248)
-        window = NSWindow(
+        let keyWindow = RetroPermissionWindow(
             contentRect: NSRect(origin: .zero, size: size),
             styleMask: .borderless, backing: .buffered, defer: false
         )
+        window = keyWindow
         window.isOpaque = true
         window.backgroundColor = RetroPalette.face
         window.hasShadow = true
@@ -55,12 +56,15 @@ public final class PermissionDragController {
             self?.hide()
             onDone?()
         }
+        keyWindow.onKeyDown = { [weak panel] event in
+            panel?.handleKeyDown(event) ?? false
+        }
     }
 
     public func show(autoHideAfter seconds: TimeInterval = 180) {
         recenter()
-        window.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
         hideWork?.cancel()
         let work = DispatchWorkItem { [weak self] in self?.hide() }
         hideWork = work
@@ -80,6 +84,19 @@ public final class PermissionDragController {
             x: screen.midX - f.width / 2,
             y: screen.midY - f.height / 2 + 70
         ))
+    }
+}
+
+private final class RetroPermissionWindow: NSWindow {
+    var onKeyDown: ((NSEvent) -> Bool)?
+
+    override var canBecomeKey: Bool { true }
+
+    override func keyDown(with event: NSEvent) {
+        if onKeyDown?(event) == true {
+            return
+        }
+        super.keyDown(with: event)
     }
 }
 
@@ -186,6 +203,31 @@ final class RetroPermissionPanel: NSView {
     private func openSettings() {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(settingsAnchor)") {
             NSWorkspace.shared.open(url)
+        }
+    }
+
+    func handleKeyDown(_ event: NSEvent) -> Bool {
+        switch event.keyCode {
+        case 36, 76:
+            openSettings()
+            return true
+        case 53:
+            onClose?()
+            return true
+        default:
+            guard let character = event.charactersIgnoringModifiers?.lowercased().first else {
+                return false
+            }
+            switch character {
+            case "d":
+                onDone?()
+                return true
+            case "o":
+                openSettings()
+                return true
+            default:
+                return false
+            }
         }
     }
 }

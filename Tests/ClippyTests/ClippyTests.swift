@@ -778,6 +778,45 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(veryLong == 24.0)
 }
 
+@Test func bubbleChoiceKeyboardShortcutsSelectAndActivateChoices() {
+    #expect(ClippyChoiceKeyboard.action(
+        keyCode: 36,
+        charactersIgnoringModifiers: "\r",
+        selectedIndex: 1,
+        choiceCount: 3
+    ) == .activate(1))
+    #expect(ClippyChoiceKeyboard.action(
+        keyCode: 18,
+        charactersIgnoringModifiers: "1",
+        selectedIndex: 2,
+        choiceCount: 3
+    ) == .activate(0))
+    #expect(ClippyChoiceKeyboard.action(
+        keyCode: 20,
+        charactersIgnoringModifiers: "3",
+        selectedIndex: 0,
+        choiceCount: 3
+    ) == .activate(2))
+    #expect(ClippyChoiceKeyboard.action(
+        keyCode: 125,
+        charactersIgnoringModifiers: nil,
+        selectedIndex: 2,
+        choiceCount: 3
+    ) == .select(0))
+    #expect(ClippyChoiceKeyboard.action(
+        keyCode: 126,
+        charactersIgnoringModifiers: nil,
+        selectedIndex: nil,
+        choiceCount: 3
+    ) == .select(2))
+    #expect(ClippyChoiceKeyboard.action(
+        keyCode: 53,
+        charactersIgnoringModifiers: "\u{1B}",
+        selectedIndex: 0,
+        choiceCount: 3
+    ) == .cancel)
+}
+
 @Test func annotationPaletteUsesSingleYellowStrokeUnlessBackgroundIsLight() {
     #expect(AnnotationPalette.backingTone(luminance: 0.12, fallbackAppearance: .init(named: .darkAqua)!) == nil)
     #expect(AnnotationPalette.backingTone(luminance: 0.55, fallbackAppearance: .init(named: .darkAqua)!) == nil)
