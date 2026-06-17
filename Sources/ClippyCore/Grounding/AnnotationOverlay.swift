@@ -31,6 +31,7 @@ public final class AnnotationOverlayWindow {
     private let window: NSWindow
     private let drawView: AnnotationDrawView
     private var animationTimer: Timer?
+    private var trackingTimer: Timer?
 
     public init() {
         let frame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
@@ -47,49 +48,66 @@ public final class AnnotationOverlayWindow {
 
     /// Draw `marks` (global screen coordinates). Empty clears and hides the overlay.
     public func show(_ marks: [AnnotationMark], on screen: NSScreen? = nil) {
+        show(DrawingScene(marks: marks), on: screen)
+    }
+
+    /// Draw a spatial scene. Empty clears and hides the overlay.
+    public func show(_ scene: DrawingScene, on screen: NSScreen? = nil) {
         animationTimer?.invalidate()
         animationTimer = nil
+        trackingTimer?.invalidate()
+        trackingTimer = nil
         let frame = (screen ?? NSScreen.main)?.frame ?? window.frame
         window.orderOut(nil)
         window.setFrame(frame, display: false)
         drawView.frame = CGRect(origin: .zero, size: frame.size)
         drawView.screenOrigin = frame.origin
-        drawView.backgroundSampler = marks.isEmpty ? nil : AnnotationBackgroundSampler(screen: screen ?? NSScreen.main)
-        drawView.marks = marks
+        drawView.backgroundSampler = scene.isEmpty ? nil : AnnotationBackgroundSampler(screen: screen ?? NSScreen.main)
+        drawView.scene = scene
+        drawView.marks = []
         drawView.needsDisplay = true
-        if marks.isEmpty {
+        if scene.isEmpty {
             window.orderOut(nil)
         } else {
-            window.orderFrontRegardless()
+            updateWindowVisibility(for: scene)
+            startTrackingIfNeeded(for: scene)
         }
     }
 
     /// Draw marks as Clippy visual beats: shape paths reveal over time, and
     /// multiple marks arrive in order instead of appearing as one finished overlay.
     public func showSequence(_ marks: [AnnotationMark], on screen: NSScreen? = nil) {
+        showSequence(DrawingScene(marks: marks), on: screen)
+    }
+
+    /// Draw a spatial scene as Clippy visual beats.
+    public func showSequence(_ scene: DrawingScene, on screen: NSScreen? = nil) {
         animationTimer?.invalidate()
         animationTimer = nil
+        trackingTimer?.invalidate()
+        trackingTimer = nil
 
         let frame = (screen ?? NSScreen.main)?.frame ?? window.frame
         window.orderOut(nil)
         window.setFrame(frame, display: false)
         drawView.frame = CGRect(origin: .zero, size: frame.size)
         drawView.screenOrigin = frame.origin
-        drawView.backgroundSampler = marks.isEmpty ? nil : AnnotationBackgroundSampler(screen: screen ?? NSScreen.main)
+        drawView.backgroundSampler = scene.isEmpty ? nil : AnnotationBackgroundSampler(screen: screen ?? NSScreen.main)
 
-        guard !marks.isEmpty else {
+        guard !scene.isEmpty else {
+            drawView.scene = nil
             drawView.marks = []
             drawView.needsDisplay = true
             window.orderOut(nil)
             return
         }
 
-        window.orderFrontRegardless()
-        let durations = marks.map(\.visualBeatDuration)
+        updateWindowVisibility(for: scene)
+        let durations = scene.visualBeatDurations
         let totalDuration = durations.reduce(0, +)
         let start = ProcessInfo.processInfo.systemUptime
 
-        renderSequenceFrame(marks: marks, durations: durations, elapsed: 0)
+        renderSequenceFrame(scene: scene, durations: durations, elapsed: 0)
         let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
             Task { @MainActor [weak self] in
                 guard let self else {
@@ -102,10 +120,16 @@ public final class AnnotationOverlayWindow {
                     if self.animationTimer === timer {
                         self.animationTimer = nil
                     }
-                    self.drawView.marks = marks
+                    guard self.updateWindowVisibility(for: scene) else {
+                        self.startTrackingIfNeeded(for: scene)
+                        return
+                    }
+                    self.drawView.scene = scene
+                    self.drawView.marks = []
                     self.drawView.needsDisplay = true
+                    self.startTrackingIfNeeded(for: scene)
                 } else {
-                    self.renderSequenceFrame(marks: marks, durations: durations, elapsed: elapsed)
+                    self.renderSequenceFrame(scene: scene, durations: durations, elapsed: elapsed)
                 }
             }
         }
@@ -118,24 +142,55 @@ public final class AnnotationOverlayWindow {
     }
 
     private func renderSequenceFrame(
-        marks: [AnnotationMark],
+        scene: DrawingScene,
         durations: [TimeInterval],
         elapsed: TimeInterval
     ) {
-        var remaining = max(0, elapsed)
-        var visible: [AnnotationMark] = []
-        for index in marks.indices {
-            let duration = max(0.01, durations[index])
-            if remaining >= duration {
-                visible.append(marks[index])
-                remaining -= duration
-            } else {
-                visible.append(marks[index].withDrawProgress(CGFloat(remaining / duration)))
-                break
+        guard updateWindowVisibility(for: scene) else { return }
+        drawView.scene = scene.withSequenceProgress(durations: durations, elapsed: elapsed)
+        drawView.marks = []
+        drawView.needsDisplay = true
+    }
+
+    private func startTrackingIfNeeded(for scene: DrawingScene) {
+        guard scene.tracksMovingWindow else { return }
+        let timer = Timer(timeInterval: 1.0 / 30.0, repeats: true) { [weak self] timer in
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    timer.invalidate()
+                    return
+                }
+                self.refreshTrackedScene(scene)
             }
         }
-        drawView.marks = visible
+        trackingTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func refreshTrackedScene(_ scene: DrawingScene) {
+        guard updateWindowVisibility(for: scene) else { return }
+        if let frame = scene.resolvedFrame(windowFrameProvider: { $0.currentFrame() }),
+           let screen = ScreenPerception.screen(containing: frame),
+           window.frame != screen.frame {
+            window.setFrame(screen.frame, display: false)
+            drawView.frame = CGRect(origin: .zero, size: screen.frame.size)
+            drawView.screenOrigin = screen.frame.origin
+            drawView.backgroundSampler = AnnotationBackgroundSampler(screen: screen)
+        }
         drawView.needsDisplay = true
+    }
+
+    @discardableResult
+    private func updateWindowVisibility(for scene: DrawingScene) -> Bool {
+        if case let .window(anchor) = scene.anchor,
+           anchor.isFrontmost() == false {
+            window.orderOut(nil)
+            return false
+        }
+        if scene.isEmpty == false, window.isVisible == false {
+            window.orderFrontRegardless()
+        }
+        return true
     }
 }
 
@@ -179,6 +234,7 @@ extension AnnotationMark {
 @MainActor
 final class AnnotationDrawView: NSView {
     var marks: [AnnotationMark] = []
+    var scene: DrawingScene?
     var screenOrigin: CGPoint = .zero
     var backgroundSampler: AnnotationBackgroundSampler?
     private let markScale: CGFloat = 1
@@ -192,7 +248,8 @@ final class AnnotationDrawView: NSView {
         ctx.setShouldAntialias(true)
         ctx.setLineCap(.round)
         ctx.setLineJoin(.round)
-        for mark in marks {
+        let resolvedMarks = scene?.resolvedMarks(windowFrameProvider: { $0.currentFrame() }) ?? marks
+        for mark in resolvedMarks {
             switch mark {
             case let .ring(center, radius, kind):
                 let c = local(center)
@@ -232,7 +289,7 @@ final class AnnotationDrawView: NSView {
                 guard let first = pts.first else { break }
                 let palette = palette(around: points)
                 if shape == .circle {
-                    let r: CGFloat = 32 * markScale
+                    let r = circleRadius(points: pts)
                     drawRing(
                         ctx,
                         rect: CGRect(x: first.x - r, y: first.y - r, width: r * 2, height: r * 2),
@@ -251,7 +308,7 @@ final class AnnotationDrawView: NSView {
                 guard let first = pts.first else { break }
                 let palette = palette(around: points)
                 if shape == .circle {
-                    let r: CGFloat = 32 * markScale
+                    let r = circleRadius(points: pts)
                     drawRing(
                         ctx,
                         rect: CGRect(x: first.x - r, y: first.y - r, width: r * 2, height: r * 2),
@@ -284,6 +341,13 @@ final class AnnotationDrawView: NSView {
             CGPoint(x: center.x - radius, y: center.y + radius),
             CGPoint(x: center.x + radius, y: center.y + radius),
         ]
+    }
+
+    private func circleRadius(points: [CGPoint]) -> CGFloat {
+        guard let center = points.first else { return 32 * markScale }
+        guard points.count >= 2 else { return 32 * markScale }
+        let edge = points[1]
+        return max(8 * markScale, hypot(edge.x - center.x, edge.y - center.y))
     }
 
     private func drawRing(_ ctx: CGContext, rect: CGRect, palette: AnnotationPalette, fill: Bool, dashed: Bool) {

@@ -29,7 +29,7 @@ public actor CodexConversation: AgentBrain {
         workingDirectory: String? = nil,
         systemPrompt: String? = ClippyAgentInstructions.systemPrompt,
         computerUseRuntime: MCPServerRuntime? = ComputerUseMCPConfig.defaultRuntime(),
-        annotationRuntime: MCPServerRuntime? = ClippyAnnotationMCPConfig.defaultRuntime(),
+        annotationRuntime: MCPServerRuntime? = nil,
         diagnosticsLogURL: URL? = CodexConversation.defaultDiagnosticsLogURL
     ) {
         self.binaryPath = binaryPath

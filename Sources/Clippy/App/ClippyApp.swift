@@ -29,8 +29,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var spokenBubbleShownAt: Date?
     private var spokenBubbleHide: DispatchWorkItem?
     private var codexComputerControlConversation: (any AgentBrain)?
-    private var sttEnabled = UserDefaults.standard.object(forKey: "ClippySTTEnabled") as? Bool ?? true
-    private var ttsEnabled = UserDefaults.standard.object(forKey: "ClippyTTSEnabled") as? Bool ?? true
+    private var sttEnabled = ClippyApp.defaultVoiceSetting(
+        defaultsKey: "ClippySTTEnabled",
+        disableEnvironmentKey: "CLIPPY_DISABLE_STT"
+    )
+    private var ttsEnabled = ClippyApp.defaultVoiceSetting(
+        defaultsKey: "ClippyTTSEnabled",
+        disableEnvironmentKey: "CLIPPY_DISABLE_TTS"
+    )
     private var conversation: (any AgentBrain)?
     private var selectedModel: ClippyModel = {
         // Honor an explicit prior choice; otherwise detect which subscription
@@ -61,7 +67,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var currentBrainTask: Task<Void, Never>?
     private var activeUserRequest: ActiveUserRequest?
     private var lastShot: ScreenPerception.Screenshot?
-    private var overlayDismiss: DispatchWorkItem?
+    private var lastShots: [ScreenPerception.Screenshot] = []
+    private var lastDesktopContext: DesktopContextSnapshot?
     private var turnProgressItems: [DispatchWorkItem] = []
     private var turnTimeoutItem: DispatchWorkItem?
     private var turnHasStreamingText = false
@@ -89,6 +96,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let screenshotPath: String?
         let screenshotPixelWidth: Int
         let screenshotPixelHeight: Int
+        let screenshots: [ClippyAgentInstructions.ScreenshotPromptContext]
         let desktopContext: DesktopContextSnapshot?
     }
 
@@ -164,6 +172,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         RetroFont.registerBundledFonts()
         startClippy(Self.makeClippy(bodyScale: bodyScale))
         overlay = AnnotationOverlayWindow()
+        setUpBrain()
         setUpVoice()
         setUpShortcuts()
         startCommandChannel()
@@ -311,6 +320,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     // MARK: - Voice (hold Control+Option; Deepgram STT + xAI TTS)
 
     private func setUpVoice() {
+        guard sttEnabled else {
+            log("voice: STT disabled; TTS \(ttsEnabled ? "enabled" : "disabled")")
+            return
+        }
         configureVoiceProviders()
 
         let monitor = PushToTalkMonitor(modifiers: [.control, .option])
@@ -344,6 +357,23 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         speech = deepgramSTT == nil ? SpeechCapture() : nil
         installVoiceProviderCallbacks()
         log("voice: deepgram STT=\(deepgramSTT != nil) xAI TTS key=\(ClippySecrets.xaiAPIKey != nil)")
+    }
+
+    private static func defaultVoiceSetting(defaultsKey: String, disableEnvironmentKey: String) -> Bool {
+        let environment = ProcessInfo.processInfo.environment
+        guard !environmentFlag(environment["CLIPPY_DISABLE_VOICE"]),
+              !environmentFlag(environment[disableEnvironmentKey]) else {
+            return false
+        }
+        return UserDefaults.standard.object(forKey: defaultsKey) as? Bool ?? true
+    }
+
+    private static func environmentFlag(_ value: String?) -> Bool {
+        guard let value else { return false }
+        switch value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "1", "true", "yes", "on": return true
+        default: return false
+        }
     }
 
     private func installVoiceProviderCallbacks() {
@@ -565,11 +595,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let forceSelectedProvider = forcedModel != nil
         let needsToolLane = ClippyAgentInstructions.shouldUseCodexToolLane(text: text, inputMode: inputMode)
         let needsComputerControl = ClippyAgentInstructions.shouldUseComputerControl(text: text, inputMode: inputMode)
-        let needsAnnotationTool = ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: text, inputMode: inputMode)
+        let needsVisualGrounding = ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: text, inputMode: inputMode)
         let toolLaneBrain = (!forceSelectedProvider && needsToolLane) ? computerControlBrain() : nil
         let activeBrain = toolLaneBrain ?? conversation
         let attemptedModel = forcedModel ?? (toolLaneBrain == nil ? selectedModel : .gpt55)
         guard let activeBrain else {
+            log("brain unavailable for message: \(text.prefix(120))")
             if isClippyHidden == false {
                 syncBubbleAnchorToClippy()
                 chatBubble.showReplyForReading("(My local brain isn't installed.)")
@@ -591,19 +622,20 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let brain = activeBrain
         if needsComputerControl {
             log("routing: codex computer-control requested")
-        } else if needsAnnotationTool {
-            log("routing: codex annotation requested")
         }
         let desktopContext = DesktopContextSnapshot.capture()
+        lastDesktopContext = desktopContext
         log("desktop-context: \(desktopContext.logSummary)")
         // Give Clippy eyes on every turn so short phrases like "do this" and
         // typed bubble turns still carry the real app/window context underneath.
         let wantsScreen = ClippyAgentInstructions.shouldAttachScreenshot(text: text, inputMode: inputMode)
         let screenshotScreen = desktopContext.targetScreen() ?? screenForClippy()
-        let shot = wantsScreen ? captureTurnScreenshot(screen: screenshotScreen) : nil
+        let shots = wantsScreen ? captureTurnScreenshots(primaryScreen: screenshotScreen) : []
+        let shot = primaryShot(in: shots, primaryScreen: screenshotScreen)
+        lastShots = shots
         lastShot = shot
-        if let shot {
-            log("screen-capture: index=\(shot.screenIndex) frame=\(shot.screenFrame) pixels=\(Int(shot.pixelSize.width))x\(Int(shot.pixelSize.height))")
+        if shots.isEmpty == false {
+            logScreenCaptures(shots, primary: shot)
         } else if wantsScreen {
             log("screen-capture: unavailable")
         } else {
@@ -615,8 +647,19 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             chatBubble.showThinking(initialThinkingStatus ?? (shot == nil ? "Starting the brain" : "Sending the screen"))
         }
         scheduleTurnProgressUpdates(wantsScreen: wantsScreen, attachedScreenshot: shot != nil)
-        scheduleTurnTimeout(reason: needsAnnotationTool ? "visual-grounding" : "message")
+        scheduleTurnTimeout(reason: "message")
         playActivityState(.thinking)
+        let screenshotContexts = Self.screenshotPromptContexts(for: shots, primary: shot)
+        let visualGroundingContext = needsVisualGrounding
+            ? VisualGroundingContext(
+                originalUserText: text,
+                screenshotPath: shot?.path,
+                screenshotPixelWidth: Int(shot?.pixelSize.width ?? 0),
+                screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
+                screenshots: screenshotContexts,
+                desktopContext: desktopContext
+            )
+            : nil
         // Tell the brain how this turn arrives and leaves: spoken-and-transcribed input
         // (read past STT typos) and/or spoken output (write for the ear).
         let speaking = ttsEnabled && ClippySecrets.xaiAPIKey != nil
@@ -625,21 +668,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             screenshotPath: shot?.path,
             screenshotPixelWidth: Int(shot?.pixelSize.width ?? 0),
             screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
+            screenshots: screenshotContexts,
             inputMode: inputMode,
             speaking: speaking,
             desktopContext: desktopContext,
-            requiresVisualGrounding: needsAnnotationTool)
-        let visualGroundingContext = needsAnnotationTool
-            ? VisualGroundingContext(
-                originalUserText: text,
-                screenshotPath: shot?.path,
-                screenshotPixelWidth: Int(shot?.pixelSize.width ?? 0),
-                screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
-                desktopContext: desktopContext
-            )
-            : nil
+            requiresVisualGrounding: needsVisualGrounding)
         ttsSpokenChars = 0
-        let localImagePaths = Self.localImagePaths(for: shot)
+        let localImagePaths = Self.localImagePaths(for: shots)
         currentBrainTask = Task { [weak self] in
             for await chunk in brain.stream(brainMessage, localImagePaths: localImagePaths) {
                 if Task.isCancelled { break }
@@ -648,10 +683,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                     case .status(let status):
                         self?.showTurnProgress(status)
                     case .partial(let partial):
-                        if visualGroundingContext == nil {
-                            self?.showStreamingReply(partial)
-                            self?.speakStreaming(partial, final: false)
-                        }
+                        self?.showStreamingReply(partial)
+                        self?.speakStreaming(partial, final: false)
                     case .final(let turn):
                         self?.receiveReply(
                             turn,
@@ -721,13 +754,74 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         return ScreenPerception.captureToFile(screen: targetScreen, belowWindowNumber: belowWindowNumber)
     }
 
+    private func captureTurnScreenshots(primaryScreen targetScreen: NSScreen?) -> [ScreenPerception.Screenshot] {
+        let clippyWindow = clippy?.windowController.window
+        let belowWindowNumber = clippyWindow?.isVisible == true ? clippyWindow?.windowNumber : nil
+
+        overlay?.clear()
+        let shots = ScreenPerception.captureAllToFiles(belowWindowNumber: belowWindowNumber)
+        if shots.isEmpty == false { return shots }
+        return ScreenPerception.captureToFile(screen: targetScreen, belowWindowNumber: belowWindowNumber).map { [$0] } ?? []
+    }
+
+    private func primaryShot(
+        in shots: [ScreenPerception.Screenshot],
+        primaryScreen targetScreen: NSScreen?
+    ) -> ScreenPerception.Screenshot? {
+        guard shots.isEmpty == false else { return nil }
+        if let targetScreen,
+           let matchingFrame = shots.first(where: { $0.screenFrame == targetScreen.frame }) {
+            return matchingFrame
+        }
+        if let targetScreen,
+           let screenIndex = NSScreen.screens.firstIndex(where: { $0 === targetScreen || $0.frame == targetScreen.frame }),
+           let matchingIndex = shots.first(where: { $0.screenIndex == screenIndex }) {
+            return matchingIndex
+        }
+        if let mainFrame = NSScreen.main?.frame,
+           let main = shots.first(where: { $0.screenFrame == mainFrame }) {
+            return main
+        }
+        return shots.first
+    }
+
+    private func logScreenCaptures(
+        _ shots: [ScreenPerception.Screenshot],
+        primary: ScreenPerception.Screenshot?
+    ) {
+        let primaryIndex = primary?.screenIndex
+        for shot in shots {
+            let marker = shot.screenIndex == primaryIndex ? " primary" : ""
+            log("screen-capture: index=\(shot.screenIndex)\(marker) frame=\(shot.screenFrame) pixels=\(Int(shot.pixelSize.width))x\(Int(shot.pixelSize.height))")
+        }
+    }
+
     private static func localImagePaths(for screenshot: ScreenPerception.Screenshot?) -> [String] {
         localImagePaths(for: screenshot?.path)
+    }
+
+    private static func localImagePaths(for screenshots: [ScreenPerception.Screenshot]) -> [String] {
+        screenshots.map(\.path).filter { $0.isEmpty == false }
     }
 
     private static func localImagePaths(for path: String?) -> [String] {
         guard let path, !path.isEmpty else { return [] }
         return [path]
+    }
+
+    private static func screenshotPromptContexts(
+        for screenshots: [ScreenPerception.Screenshot],
+        primary: ScreenPerception.Screenshot?
+    ) -> [ClippyAgentInstructions.ScreenshotPromptContext] {
+        screenshots.map { shot in
+            ClippyAgentInstructions.ScreenshotPromptContext(
+                path: shot.path,
+                pixelWidth: Int(shot.pixelSize.width),
+                pixelHeight: Int(shot.pixelSize.height),
+                screenNumber: shot.screenIndex + 1,
+                isPrimary: shot.screenIndex == primary?.screenIndex && shot.screenFrame == primary?.screenFrame
+            )
+        }
     }
 
     private func syncBubbleAnchorToClippy() {
@@ -832,8 +926,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let friendlyFailure = ClippyUserFacingError.replacement(for: turn.text, isError: turn.isError)
         let replyText = friendlyFailure ?? turn.text
         let parsed = GroundingParser.parse(replyText)
+        let visualTags = parsed.tags.filter(\.isRenderableVisual)
         if visualGroundingContext != nil {
-            log("visual-grounding-tags: renderable=\(renderableGroundingTagCount(in: parsed.tags)) total=\(parsed.tags.count)")
+            log("visual-grounding-tags: renderable=\(visualTags.count) total=\(parsed.tags.count)")
         }
         if shouldRepairVisualGrounding(turn: turn, parsed: parsed, context: visualGroundingContext) {
             repairVisualGrounding(context: visualGroundingContext!, previousTurn: turn, brain: brain)
@@ -860,8 +955,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         log("clippy: \(turn.text.prefix(120))")
 
-        if !turn.isError, !parsed.tags.isEmpty {
-            presentGrounding(parsed.tags, instructionText: spoken)
+        if !turn.isError, !visualTags.isEmpty {
+            presentGrounding(visualTags, instructionText: spoken)
             return
         }
         overlay?.clear()
@@ -935,11 +1030,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         context: VisualGroundingContext?
     ) -> Bool {
         guard context != nil, turn.isError == false else { return false }
-        return renderableGroundingTagCount(in: parsed.tags) == 0
+        return parsed.tags.contains(where: \.isRenderableVisual) == false
     }
 
-    private func renderableGroundingTagCount(in tags: [GroundingTag]) -> Int {
-        tags.filter(\.isRenderableVisual).count
+    private func pointTagCount(in tags: [GroundingTag]) -> Int {
+        tags.reduce(0) { count, tag in
+            if case .point = tag { return count + 1 }
+            return count
+        }
     }
 
     private func repairVisualGrounding(
@@ -956,7 +1054,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         turnHasStreamingText = false
         ttsSpokenChars = 0
         syncBubbleAnchorToClippy()
-        chatBubble?.showThinking("Adding screen marks")
+        chatBubble?.showThinking("Finding the spot")
         scheduleTurnTimeout(reason: "visual-grounding-repair")
         playActivityState(.thinking)
         let repairMessage = ClippyAgentInstructions.visualGroundingRepairMessage(
@@ -965,9 +1063,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             screenshotPath: context.screenshotPath,
             screenshotPixelWidth: context.screenshotPixelWidth,
             screenshotPixelHeight: context.screenshotPixelHeight,
+            screenshots: context.screenshots,
             desktopContext: context.desktopContext
         )
-        let localImagePaths = Self.localImagePaths(for: context.screenshotPath)
+        let localImagePaths = context.screenshots.map(\.path).filter { $0.isEmpty == false }
         currentBrainTask = Task { [weak self] in
             let repairTurn = await brain.send(
                 repairMessage,
@@ -990,31 +1089,22 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             return
         }
         let fallbackScreen = screenForClippy() ?? NSScreen.main ?? NSScreen.screens.first
-        let screen = screenForLastShot() ?? fallbackScreen
+        let screen = screenForGrounding(rawTags) ?? screenForLastShot() ?? fallbackScreen
         guard let screen else { return }
         // The model emitted coordinates in the screenshot's pixel space; map them onto
         // the actual screen so the ring and Clippy's body land in the right place.
-        let tags: [GroundingTag]
-        if let shot = lastShot {
-            tags = rawTags.map { $0.inScreenSpace(imageSize: shot.pixelSize, display: shot.screenFrame) }
-        } else {
-            tags = rawTags
+        let tags = rawTags.map { tag -> GroundingTag in
+            guard let shot = screenshot(for: tag) else { return tag }
+            return tag.inScreenSpace(imageSize: shot.pixelSize, display: shot.screenFrame)
         }
-        log("grounding-presented: renderable=\(renderableGroundingTagCount(in: tags)) total=\(tags.count)")
+        log("grounding-presented: points=\(pointTagCount(in: tags)) total=\(tags.count)")
         log("grounding-beats: \(groundingBeatSummary(tags))")
         let marks = tags.compactMap(AnnotationMark.init(tag:))
-        overlay?.showSequence(marks, on: screen)
+        let scene = groundingScene(from: marks)
+        overlay?.showSequence(scene, on: screen)
         armGuidedTarget(from: tags, instructionText: instructionText)
-        // Auto-dismiss the marks so they don't linger on screen forever.
-        overlayDismiss?.cancel()
-        if !marks.isEmpty {
-            let dismiss = DispatchWorkItem { [weak self] in self?.overlay?.clear() }
-            overlayDismiss = dismiss
-            let drawDuration = marks.reduce(TimeInterval(0)) { $0 + $1.visualBeatDuration }
-            DispatchQueue.main.asyncAfter(deadline: .now() + drawDuration + 6, execute: dismiss)
-        }
-
-        if let anchor = tags.first(where: { $0.anchor != nil })?.anchor {
+        if let anchor = scene.primaryPoint(windowFrameProvider: { $0.currentFrame() ?? $0.initialFrame })
+            ?? tags.first(where: { $0.anchor != nil })?.anchor {
             // Point at a target with Clippy's body.
             pendingIdle?.cancel()
             let size = clippy.frame.size
@@ -1037,6 +1127,32 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 scheduleNextIdle()
             }
         }
+    }
+
+    private func screenshot(for tag: GroundingTag) -> ScreenPerception.Screenshot? {
+        if let screenNumber = tag.screenNumber {
+            return lastShots.first { $0.screenIndex + 1 == screenNumber }
+        }
+        return lastShot ?? lastShots.first
+    }
+
+    private func screenForGrounding(_ tags: [GroundingTag]) -> NSScreen? {
+        for tag in tags {
+            guard let shot = screenshot(for: tag),
+                  let screen = screen(for: shot) else { continue }
+            return screen
+        }
+        return nil
+    }
+
+    private func groundingScene(from marks: [AnnotationMark]) -> DrawingScene {
+        guard !marks.isEmpty,
+              lastShot != nil,
+              let context = lastDesktopContext,
+              let anchor = DrawingWindowAnchor(desktopContext: context) else {
+            return DrawingScene(marks: marks)
+        }
+        return DrawingScene(marks: marks, anchor: .window(anchor))
     }
 
     private func firstActAnimation(in tags: [GroundingTag]) -> String? {
@@ -1103,6 +1219,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             guard let self, let guidedTarget = self.guidedTarget else { return }
             self.log("guided target expired label=\(guidedTarget.label)")
             self.disarmGuidedTarget(reason: "expired")
+            self.overlay?.clear()
         }
         guidedTargetExpiry = expiry
         DispatchQueue.main.asyncAfter(deadline: .now() + 90, execute: expiry)
@@ -1231,12 +1348,15 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         log("guided target follow-up start label=\(target.label) round=\(nextRound) \(trigger)X=\(Int(point.x)) \(trigger)Y=\(Int(point.y))")
 
         let desktopContext = DesktopContextSnapshot.capture()
+        lastDesktopContext = desktopContext
         log("desktop-context: \(desktopContext.logSummary)")
         let screenshotScreen = desktopContext.targetScreen() ?? screenForClippy()
-        let shot = captureTurnScreenshot(screen: screenshotScreen)
+        let shots = captureTurnScreenshots(primaryScreen: screenshotScreen)
+        let shot = primaryShot(in: shots, primaryScreen: screenshotScreen)
+        lastShots = shots
         lastShot = shot
-        if let shot {
-            log("screen-capture: index=\(shot.screenIndex) frame=\(shot.screenFrame) pixels=\(Int(shot.pixelSize.width))x\(Int(shot.pixelSize.height))")
+        if shots.isEmpty == false {
+            logScreenCaptures(shots, primary: shot)
         } else {
             log("screen-capture: unavailable")
         }
@@ -1262,9 +1382,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             screenshotPath: shot?.path,
             screenshotPixelWidth: Int(shot?.pixelSize.width ?? 0),
             screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
+            screenshots: Self.screenshotPromptContexts(for: shots, primary: shot),
             desktopContext: desktopContext
         )
-        let localImagePaths = Self.localImagePaths(for: shot)
+        let localImagePaths = Self.localImagePaths(for: shots)
         currentBrainTask = Task { [weak self] in
             for await chunk in brain.stream(message, localImagePaths: localImagePaths) {
                 if Task.isCancelled { break }
@@ -1285,6 +1406,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func screenForLastShot() -> NSScreen? {
         guard let shot = lastShot else { return nil }
+        return screen(for: shot)
+    }
+
+    private func screen(for shot: ScreenPerception.Screenshot) -> NSScreen? {
         if NSScreen.screens.indices.contains(shot.screenIndex) {
             let indexed = NSScreen.screens[shot.screenIndex]
             if indexed.frame == shot.screenFrame {
@@ -1601,6 +1726,21 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     @objc private func toggleSTT() {
         sttEnabled.toggle()
         UserDefaults.standard.set(sttEnabled, forKey: "ClippySTTEnabled")
+        if sttEnabled {
+            if ptt == nil {
+                setUpVoice()
+            }
+        } else {
+            let wasCapturing = isVoiceCaptureActive
+            isVoiceCaptureActive = false
+            usingDeepgram = false
+            deepgramSTT?.cancel()
+            if wasCapturing {
+                _ = speech?.stop()
+            }
+            ptt?.stop()
+            ptt = nil
+        }
     }
 
     @objc private func toggleTTS() {
@@ -2121,7 +2261,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     /// With CLIPPY_CMD_FILE set, polls a command file so the app can be driven
     /// headlessly: `ask:<text>`, `askfront:<bundle>|<url>|<text>`, `open`,
-    /// `snapshot`, `move:`, `park:`, `state:`.
+    /// `snapshot`, `ground:`, `groundshot:`, `move:`, `park:`, `state:`.
     private func startCommandChannel() {
         // Always on: the local MCP server (ClippyMCP) relays the model's tool calls
         // into this file, and debug commands use it too. Env var overrides the path.
@@ -2153,6 +2293,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         try? Data().write(to: URL(fileURLWithPath: path))
         for line in text.split(separator: "\n") {
             let command = line.trimmingCharacters(in: .whitespaces)
+            log("debug-command: \(debugCommandSummary(command))")
             if command.hasPrefix("ask:") {
                 sendMessage(String(command.dropFirst(4)))
             } else if command.hasPrefix("askfront:") {
@@ -2179,6 +2320,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                     chatBubble?.showReplyForReading(spoken.isEmpty ? "(pointing)" : spoken)
                     presentGrounding(parsed.tags)
                 }
+            } else if command.hasPrefix("groundshot:") {
+                let parsed = GroundingParser.parse(String(command.dropFirst("groundshot:".count)))
+                if isClippyHidden == false {
+                    lastDesktopContext = DesktopContextSnapshot.capture()
+                    let screenshotScreen = lastDesktopContext?.targetScreen() ?? screenForClippy()
+                    lastShots = captureTurnScreenshots(primaryScreen: screenshotScreen)
+                    lastShot = primaryShot(in: lastShots, primaryScreen: screenshotScreen)
+                    let spoken = VoiceSpeechTags.strip(parsed.spokenText)
+                    chatBubble?.showReplyForReading(spoken.isEmpty ? "(pointing)" : spoken)
+                    presentGrounding(parsed.tags)
+                }
             } else if command == "clearground" {
                 overlay?.clear()
             } else if command.hasPrefix("bodysize:") {
@@ -2187,6 +2339,22 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 presentGrounding([.act(animation: String(command.dropFirst(4)).trimmingCharacters(in: .whitespaces))])
             }
         }
+    }
+
+    private func debugCommandSummary(_ command: String) -> String {
+        if command.hasPrefix("ask:") {
+            return "ask:\(String(command.dropFirst(4)).prefix(120))"
+        }
+        if command.hasPrefix("askfront:") {
+            return "askfront"
+        }
+        if command.hasPrefix("ground:") {
+            return "ground"
+        }
+        if command.hasPrefix("groundshot:") {
+            return "groundshot"
+        }
+        return command
     }
 
     private func askFront(command: String) {

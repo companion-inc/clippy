@@ -135,22 +135,69 @@ public struct DesktopContextSnapshot: Equatable, Sendable {
         return "app=\(appName) window=\"\(title)\" screen=\(screenIndex) url=\(browserURL)"
     }
 
-    private static func activeWindow(excludingProcessIdentifier excludedPID: Int) -> WindowInfo? {
-        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+    public static func currentAppKitWindowFrame(
+        ownerProcessIdentifier: Int,
+        windowIdentifier: Int,
+        excludingProcessIdentifier excludedPID: Int = Int(ProcessInfo.processInfo.processIdentifier)
+    ) -> CGRect? {
+        guard let window = visibleWindow(
+            ownerProcessIdentifier: ownerProcessIdentifier,
+            windowIdentifier: windowIdentifier,
+            excludingProcessIdentifier: excludedPID
+        ) else {
             return nil
         }
-        for window in windows {
-            guard intValue(window[kCGWindowLayer as String]) == 0 else { continue }
-            guard doubleValue(window[kCGWindowAlpha as String]) > 0 else { continue }
+        return appKitFrame(for: window)
+    }
+
+    public static func isFrontmostWindow(
+        ownerProcessIdentifier: Int,
+        windowIdentifier: Int,
+        excludingProcessIdentifier excludedPID: Int = Int(ProcessInfo.processInfo.processIdentifier)
+    ) -> Bool {
+        guard let window = activeWindow(excludingProcessIdentifier: excludedPID) else {
+            return false
+        }
+        return window.ownerProcessIdentifier == ownerProcessIdentifier
+            && window.windowIdentifier == windowIdentifier
+    }
+
+    public static func visibleWindow(
+        ownerProcessIdentifier: Int,
+        windowIdentifier: Int,
+        excludingProcessIdentifier excludedPID: Int = Int(ProcessInfo.processInfo.processIdentifier)
+    ) -> WindowInfo? {
+        visibleWindows(excludingProcessIdentifier: excludedPID).first {
+            $0.ownerProcessIdentifier == ownerProcessIdentifier
+                && $0.windowIdentifier == windowIdentifier
+        }
+    }
+
+    public static func appKitFrame(for window: WindowInfo, screen: ScreenInfo? = nil) -> CGRect? {
+        guard let screen = screen ?? screenInfo(forWindowBounds: window.bounds) else { return nil }
+        return appKitFrame(forWindowBounds: window.bounds, screen: screen)
+    }
+
+    private static func activeWindow(excludingProcessIdentifier excludedPID: Int) -> WindowInfo? {
+        visibleWindows(excludingProcessIdentifier: excludedPID).first
+    }
+
+    private static func visibleWindows(excludingProcessIdentifier excludedPID: Int) -> [WindowInfo] {
+        guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+        return windows.compactMap { window -> WindowInfo? in
+            guard intValue(window[kCGWindowLayer as String]) == 0 else { return nil }
+            guard doubleValue(window[kCGWindowAlpha as String]) > 0 else { return nil }
             guard let ownerPID = intValue(window[kCGWindowOwnerPID as String]),
-                  ownerPID != excludedPID else { continue }
+                  ownerPID != excludedPID else { return nil }
             guard let ownerName = clean(window[kCGWindowOwnerName as String] as? String),
                   ownerName != "Clippy",
-                  ownerName != "ClippyMCP" else { continue }
+                  ownerName != "ClippyMCP" else { return nil }
             guard let boundsDictionary = window[kCGWindowBounds as String] as? NSDictionary,
                   let bounds = CGRect(dictionaryRepresentation: boundsDictionary),
                   bounds.width >= 40,
-                  bounds.height >= 40 else { continue }
+                  bounds.height >= 40 else { return nil }
             let windowID = intValue(window[kCGWindowNumber as String]) ?? 0
             let title = clean(window[kCGWindowName as String] as? String)
             return WindowInfo(
@@ -161,7 +208,6 @@ public struct DesktopContextSnapshot: Equatable, Sendable {
                 bounds: bounds
             )
         }
-        return nil
     }
 
     private static func appInfo(for window: WindowInfo?) -> AppInfo? {
@@ -201,6 +247,14 @@ public struct DesktopContextSnapshot: Equatable, Sendable {
         }
         guard let best = candidates.max(by: { $0.area < $1.area }) else { return nil }
         return best.area > 0 ? best.info : nil
+    }
+
+    private static func appKitFrame(forWindowBounds bounds: CGRect, screen: ScreenInfo) -> CGRect {
+        let display = screen.displayBounds
+        let appKit = screen.appKitFrame
+        let x = appKit.minX + (bounds.minX - display.minX)
+        let y = appKit.maxY - (bounds.maxY - display.minY)
+        return CGRect(x: x, y: y, width: bounds.width, height: bounds.height)
     }
 
     private static func browserInfo(forBundleIdentifier bundleIdentifier: String?) -> BrowserInfo? {

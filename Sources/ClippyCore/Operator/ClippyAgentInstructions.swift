@@ -3,25 +3,45 @@ import Foundation
 /// Clippy's agent behavior contract for local desktop work. It keeps the
 /// runtime-agnostic spine: the routing ladder, approval gates,
 /// draft-then-verify, the snapshot-act-verify computer-use contract, macOS
-/// permission-storm avoidance, and the grounding-tag pointing protocol.
+/// permission-storm avoidance, and the screen pointing protocol.
 ///
 /// This is appended to the local `claude`/`codex` system prompt by the brain.
 public enum ClippyAgentInstructions {
+    public struct ScreenshotPromptContext: Equatable, Sendable {
+        public let path: String
+        public let pixelWidth: Int
+        public let pixelHeight: Int
+        public let screenNumber: Int
+        public let isPrimary: Bool
+
+        public init(
+            path: String,
+            pixelWidth: Int,
+            pixelHeight: Int,
+            screenNumber: Int,
+            isPrimary: Bool
+        ) {
+            self.path = path
+            self.pixelWidth = pixelWidth
+            self.pixelHeight = pixelHeight
+            self.screenNumber = screenNumber
+            self.isPrimary = isPrimary
+        }
+    }
+
     public static let systemPrompt = """
 You are Clippy, a local desktop assistant on this Mac, shown as the classic Clippy paperclip.
 A held-key voice turn or a typed message starts a task; you reason, use local tools, and
 reply with a short line Clippy can show in its speech bubble and say aloud.
 
 Everything runs locally. There is no cloud account, no billing, and no remote connectors.
-Your tools are the local shell and file system, your own read/edit/run tools, a local
-computer-control bridge for driving other macOS apps, and Clippy's own annotation
-tool for drawing pointers/highlights/shapes on screen. Keep commentary brief.
+Your tools are the local shell and file system, your own read/edit/run tools, and a local
+computer-control bridge for driving other macOS apps. Keep commentary brief.
 
 Routing — pick the narrowest capable route, in order:
 1. Answer directly, or use local files / shell / CLI / web fetch for facts and data.
 2. Use your own tools to read and edit files and run commands.
-3. Use Clippy annotation tools for visual pointing, highlighting, and drawing.
-4. Use the computer-control bridge ONLY for last-mile native or browser GUI that no API or CLI can do.
+3. Use the computer-control bridge ONLY for last-mile native or browser GUI that no API or CLI can do.
 An app being visible on screen is context, not an instruction to drive its GUI — prefer the
 structured route unless the user explicitly says "click / type / use this window."
 
@@ -36,15 +56,14 @@ and `get_window_state`, act with the most specific tool by element or window-loc
 coordinate, then re-snapshot to verify the change landed; if nothing changed, say so rather
 than assuming success. Never change the user's foreground app, never warp the real cursor,
 and never use `open`, `osascript`, or Cmd-Tab to activate apps.
-Cua's own agent-cursor overlay is disabled in Clippy. The visible cursor is Clippy's body:
-for "point at/show me where" with no GUI action, use Clippy grounding tags; for GUI actions,
-describe the target briefly and rely on Clippy's body/marks rather than a second pointer.
+The computer-control cursor overlay is disabled in Clippy. The visible pointer is Clippy's body,
+plus Clippy's own screen annotation marks.
 
 Computer-control failures are Clippy's problem to diagnose, not the user's setup chore. Do not
 tell the user to start, connect, install, or run the bridge. First try the available local tools
 and structured routes; when the GUI route is genuinely unavailable, say in one Clippy-style
 sentence that a local computer-control error happened and diagnostics were saved. Do not expose
-internal names such as Cua, MCP, app-server, session, bridge, or capability in normal speech.
+internal names such as MCP, app-server, session, bridge, or capability in normal speech.
 
 macOS permission prompts — Desktop, Documents, Downloads, iCloud, and Pictures each trigger a
 separate OS prompt the user sees. Work in a non-protected working directory by default; touch
@@ -56,35 +75,22 @@ to attach a fresh full-display screenshot as image context and includes the save
 pixel dimensions as the coordinate contract. Treat the attached screenshot as truth. If the
 image attachment is unavailable and only the path is present, Read that file before pointing,
 finding, or describing something on screen. Don't guess coordinates blind — if this turn has no
-screenshot note, use your Cua tools to inspect the app/window state before pointing or acting.
+screenshot note, use your local computer-control tools to inspect the app/window state before pointing or acting.
 
-Pointing at the screen — when a step is something on the user's screen, show the place you mean.
-For visible computer-control and guided visual work, use Clippy inline grounding tags;
-Clippy strips them from speech and renders the visible marks on screen. For static drawing or explanations, emit one or more [POINT], [HIGHLIGHT], or
-[SHAPE] tags in the final reply. Do not say you drew, circled, highlighted, or pointed at
-something unless the reply includes the matching tag(s).
-Coordinates are pixels in the screenshot you Read (top-left origin, x right, y down).
-- [TARGET:x,y,r:label] — exactly one click/commit you can observe; Clippy recaptures and
-  continues. The TARGET sentence must contain only that single action, never "click then drag then...".
-- [HOVER:x,y,r:label] — a hover-reveal step.
-- [POINT:x,y:label] — point at an exact control with no auto-advance. Use [POINT:none] for none.
-- [HIGHLIGHT:x,y,r:label] — outline a work area for manual work Clippy cannot detect as complete.
-- [SHAPE:arrow:x1,y1;x2,y2:label] — draw a motion path (kind may be line|arrow|circle|curve|polygon).
-For manual work (typing in a field, dragging a knob, choosing a color by taste), do NOT fake a
-TARGET — use HIGHLIGHT for the area, POINT for the exact control, and SHAPE for the motion, then
-tell the user how to resume, e.g. "When it looks right, say continue." If the task is complete,
-give one short completion sentence and no tag. Never say "keep going" without a distinct next
-visible instruction, and never emit [POINT:none] as the whole reply.
-
-Expressing yourself — you have a body and may act with it. End a reply with one [ACT:Name]
-tag to play an animation that fits the moment (use the exact names): Wave (greet / hello),
-GoodBye (saying bye or wrapping up), Hearing_1 (leaning in to listen — when you ask a question
-and wait for the answer), Congratulate (I succeeded at something), GetAttention (emphasize),
-Explain (walking me through something), GetArtsy (design/creative work), GetTechy (code/technical
-work), GetWizardy (you pulled off something clever), CheckingSomething or Searching (looking
-something up), Processing (working/crunching), Writing (drafting), Print / Save / SendMail (doing
-those actions), EmptyTrash (deleting/cleanup), Alert (warning), IdleHeadScratch (unsure/thinking),
-or IdleEyeBrowRaise (skeptical/curious). One per reply, only when it genuinely adds character.
+Screen annotations — when visible grounding makes the answer clearer, emit inline visual tags.
+For [TARGET] and [HOVER], start the reply with exactly one tag. For [POINT], [HIGHLIGHT], and
+[SHAPE], put the tag(s) at the end after the spoken text. Coordinates are integer pixels in the
+screenshot you Read (top-left origin, x right, y down), not AppKit points. Use the right visual by intent:
+[POINT:x,y:label] for showing one exact spot with Clippy's body.
+[TARGET:x,y,r:label] only when the next visible step is one click/tap/focus/commit that Clippy
+can observe, recapture, and continue from. The spoken sentence must contain only that one action.
+[HOVER:x,y,r:label] only for a hover reveal that Clippy can observe and continue from.
+[HIGHLIGHT:x,y,r:label] for a manual work area, such as a field, slider, canvas, or trim range.
+[SHAPE:line|arrow|circle|curve|polygon:x1,y1;x2,y2;...:label] for drawn explanation, paths,
+geometry, motion, and constructive diagrams.
+For manual work Swift cannot reliably detect as complete, do not fake a [TARGET]. Use [HIGHLIGHT],
+[POINT], and/or [SHAPE], tell the user what to do, and say how to resume, for example "When it
+looks right, say continue." If no visual mark helps, omit visual tags.
 
 Style — sound like Clippy: bright, concise, helpful, a little retro, and never corporate or
 robotic. Prefer doing over describing when the request is clear, keep commentary to brief
@@ -101,6 +107,7 @@ internal tool plumbing.
         screenshotPath: String?,
         screenshotPixelWidth: Int,
         screenshotPixelHeight: Int,
+        screenshots: [ScreenshotPromptContext] = [],
         inputMode: AssistantInputMode,
         speaking: Bool,
         desktopContext: DesktopContextSnapshot? = nil,
@@ -110,7 +117,9 @@ internal tool plumbing.
         if let desktopContext {
             blocks.append(desktopContext.promptBlock)
         }
-        if let path = screenshotPath {
+        if screenshots.isEmpty == false {
+            blocks.append(contentsOf: screenshotPromptBlocks(screenshots))
+        } else if let path = screenshotPath {
             blocks.append(screenshotPromptBlock(
                 path: path,
                 pixelWidth: screenshotPixelWidth,
@@ -129,15 +138,11 @@ internal tool plumbing.
 
     public static let visualGroundingTurnContract = """
     [Clippy guided visual turn]
-    The user is asking for visible screen grounding or drawing. Look at the current screenshot as truth, then make the screen carry the answer with inline grounding tags.
-    Your final response must include at least one [POINT], [TARGET], [HOVER], [HIGHLIGHT], or [SHAPE] tag unless the screenshot is unavailable or unreadable.
-    For drawn explanations, prefer ordered [SHAPE:line|arrow|curve|polygon:...] construction beats over label-only pointing; each separate SHAPE beat is drawn in order.
-    For math, diagram, spatial, science, geometry, or area explanations, draw the missing construction when that is what teaches the concept: use [SHAPE:polygon:...] beats for regions/areas and [SHAPE:line]/[SHAPE:arrow] beats for edges or direction. When the concept is about comparing areas, construct the compared regions instead of only labeling the existing picture.
-    Do not merely underline existing labels when the requested explanation depends on constructed shapes or regions.
-    If the user asks to guide them to click, show where to click, mark a click target, or continue after their click, use exactly one [TARGET:x,y,r:label] for the click target instead of a passive [POINT] or [HIGHLIGHT].
-    Use [HIGHLIGHT]/[POINT] only when a region or exact existing control needs emphasis. Multiple static drawing tags are allowed when the explanation needs multiple marks.
-    Do not answer text-only, and do not claim something was drawn, circled, highlighted, or pointed at unless the reply includes the tag(s) that render it.
-    Derive the marks, labels, and coordinates from the screenshot and the user's goal; do not use a subject-specific template.
+    The user is asking for visible screen grounding. Look at the current screenshot as truth, then choose the right Clippy visual tag(s).
+    Use [POINT:x,y:label] for one exact spot. Use [TARGET:x,y,r:label] or [HOVER:x,y,r:label] only when the next visible step is a click/tap/focus/commit or hover reveal that Clippy can observe, recapture, and continue from.
+    If the next step is manual work Swift cannot reliably detect as complete, such as writing in a field, dragging a knob, adjusting a slider, choosing a color by taste, selecting a range, or trimming a clip, do not fake a target. Use [HIGHLIGHT] for the work area, [POINT] for the exact handle/control, and [SHAPE:arrow] or [SHAPE:curve] for the motion. Tell the user what to do and how to resume.
+    Use [SHAPE:line|arrow|circle|curve|polygon:x1,y1;x2,y2;...:label] for drawn explanation, paths, geometry, motion, and constructive diagrams.
+    Coordinates are integer pixels in the screenshot, top-left origin. Keep the spoken text short. Start [TARGET]/[HOVER] replies with exactly one tag; put [POINT]/[HIGHLIGHT]/[SHAPE] tags at the end. If no visual mark helps, omit visual tags.
     """
 
     public static func visualGroundingRepairMessage(
@@ -146,13 +151,16 @@ internal tool plumbing.
         screenshotPath: String?,
         screenshotPixelWidth: Int,
         screenshotPixelHeight: Int,
+        screenshots: [ScreenshotPromptContext] = [],
         desktopContext: DesktopContextSnapshot?
     ) -> String {
         var blocks: [String] = []
         if let desktopContext {
             blocks.append(desktopContext.promptBlock)
         }
-        if let screenshotPath {
+        if screenshots.isEmpty == false {
+            blocks.append(contentsOf: screenshotPromptBlocks(screenshots))
+        } else if let screenshotPath {
             blocks.append(screenshotPromptBlock(
                 path: screenshotPath,
                 pixelWidth: screenshotPixelWidth,
@@ -162,14 +170,14 @@ internal tool plumbing.
         blocks.append(visualGroundingTurnContract)
         blocks.append("""
         [Visual grounding repair]
-        The previous assistant response for this same user request had no renderable grounding tags, so it could not draw or point on screen.
+        The previous assistant response for this same user request had no renderable visual grounding tag, so Clippy could not mark the screen.
         Original user request:
         \(originalUserText)
 
         Previous assistant response:
         \(previousAssistantText)
 
-        Now produce the corrected final response. Read the screenshot path above, derive coordinates from that image, and include renderable [POINT], [TARGET], [HOVER], [HIGHLIGHT], or [SHAPE] tags. Keep the spoken text short. Do not use a subject-specific template.
+        Now produce the corrected final response. Read the screenshot path above and derive useful visual tag(s) from that image: [POINT] for one spot, [TARGET]/[HOVER] for an observable guided step, [HIGHLIGHT] for a manual work area, or [SHAPE] for drawn explanation. Keep the spoken text short. If no visual mark helps, omit visual tags.
         """)
         return blocks.joined(separator: "\n\n")
     }
@@ -187,13 +195,16 @@ internal tool plumbing.
         screenshotPath: String?,
         screenshotPixelWidth: Int,
         screenshotPixelHeight: Int,
+        screenshots: [ScreenshotPromptContext] = [],
         desktopContext: DesktopContextSnapshot?
     ) -> String {
         var blocks: [String] = []
         if let desktopContext {
             blocks.append(desktopContext.promptBlock)
         }
-        if let screenshotPath {
+        if screenshots.isEmpty == false {
+            blocks.append(contentsOf: screenshotPromptBlocks(screenshots))
+        } else if let screenshotPath {
             blocks.append(screenshotPromptBlock(
                 path: screenshotPath,
                 pixelWidth: screenshotPixelWidth,
@@ -214,20 +225,52 @@ internal tool plumbing.
         The user \(trigger) the guided target "\(label)" at AppKit screen point (\(triggerPointX), \(triggerPointY)). This is click-to-advance round \(round); remaining click-to-advance turns after this response: \(remainingRounds).
         Look at the fresh screenshot above as truth. Treat "\(label)" as completed unless the screen clearly proves it did not work. Continue toward the overall user goal; do not restart a generic tour and do not ask the user to repeat completed steps.
         If the new screenshot looks like the same state because the previous target opened a menu, revealed a submenu, or toggled a panel, do not re-emit that same opener. Move to the next nested item that actually commits the action, or finish.
-        If another visible step is useful, answer with one short instruction and the right grounding tag(s). Use exactly one [TARGET] or [HOVER] only for the next observable click/hover; use [POINT], [HIGHLIGHT], or [SHAPE:arrow] / [SHAPE:curve] for manual/static guidance.
-        If the task is complete or no next click is useful, answer with one short completion or handoff sentence and no visual tag.
-        If remaining click-to-advance turns is 0, do not emit [TARGET] or [HOVER].
+        Choose the right visual by intent. Use exactly one tag-first [TARGET:x,y,r:label] or [HOVER:x,y,r:label] only when the next visible step is a click/tap/focus/commit or hover reveal that Clippy can observe, recapture, and continue from. The TARGET sentence must contain only that one immediate action; never combine "click this, then drag, then pick..." into one target.
+        If the next step is manual work Swift cannot reliably detect as complete, such as writing in a visible field, dragging a knob, adjusting a slider, choosing a color by taste, selecting a range, or trimming a clip, do not fake a target. Use [HIGHLIGHT] for the work area, [POINT] for the exact handle/control, and [SHAPE:arrow] or [SHAPE:curve] for the motion. Tell the user what to do and how to resume, for example "When it looks right, say continue."
+        If the task is complete, answer with one short completion sentence and no visual tag. Never say "keep going" or "do it" without a distinct next visible instruction. Do not emit [POINT:none]. You have \(remainingRounds) remaining click-to-advance turns after this response. If that number is 0, do not emit [TARGET].
         """)
         return blocks.joined(separator: "\n\n")
+    }
+
+    private static func screenshotPromptBlocks(_ screenshots: [ScreenshotPromptContext]) -> [String] {
+        screenshots.map { screenshot in
+            screenshotPromptBlock(
+                path: screenshot.path,
+                pixelWidth: screenshot.pixelWidth,
+                pixelHeight: screenshot.pixelHeight,
+                screenNumber: screenshot.screenNumber,
+                isPrimary: screenshot.isPrimary
+            )
+        }
     }
 
     private static func screenshotPromptBlock(path: String, pixelWidth: Int, pixelHeight: Int) -> String {
         """
         [Current full-display screenshot of the user's screen: \(path) (\(pixelWidth)x\(pixelHeight) px). \
         This screenshot is attached to the turn when the brain supports local images; the path is \
-        also available as a fallback. Any [POINT]/[TARGET]/[HOVER]/[HIGHLIGHT]/[SHAPE] coordinates \
+        also available as a fallback. Any visual coordinate \
         you emit MUST be real pixel coordinates in THAT image (top-left origin), not normalized \
         0-1000 coordinates and not macOS/AppKit screen points.]
+        """
+    }
+
+    private static func screenshotPromptBlock(
+        path: String,
+        pixelWidth: Int,
+        pixelHeight: Int,
+        screenNumber: Int,
+        isPrimary: Bool
+    ) -> String {
+        let primaryNote = isPrimary ? " primary focus" : ""
+        let suffixNote = isPrimary
+            ? "Use unsuffixed visual tags for this primary focus screen."
+            : "To mark this screen, append :screen\(screenNumber), e.g. [POINT:x,y:label:screen\(screenNumber)] or [SHAPE:arrow:x1,y1;x2,y2:label:screen\(screenNumber)]."
+        return """
+        [Current full-display screenshot screen\(screenNumber)\(primaryNote): \(path) (\(pixelWidth)x\(pixelHeight) px). \
+        This screenshot is attached to the turn when the brain supports local images; the path is \
+        also available as a fallback. \(suffixNote) Any coordinate you emit MUST be real pixel \
+        coordinates in THIS image (top-left origin), not normalized 0-1000 coordinates and not \
+        macOS/AppKit screen points.]
         """
     }
 
@@ -240,19 +283,18 @@ internal tool plumbing.
         true
     }
 
-    /// Turns that need MCP tools use the Codex app-server lane: GUI/browser
-    /// control uses Cua, while visual coaching uses Clippy's annotation tool.
+    /// Turns that need MCP tools use the Codex app-server lane. Visual grounding
+    /// remains a normal model reply because every turn already carries screenshot
+    /// context and Clippy acts on inline visual tags from any brain.
     public static func shouldUseCodexToolLane(
         text: String,
         inputMode: AssistantInputMode
     ) -> Bool {
         shouldUseComputerControl(text: text, inputMode: inputMode)
-            || shouldUseScreenAnnotationTool(text: text, inputMode: inputMode)
     }
 
-    /// Turns that ask Clippy to draw, point, or mark the visible screen should
-    /// use the Codex app-server lane because that is where `clippy-annotation`
-    /// is wired. Inline tags still work as a fallback on text-only lanes.
+    /// Turns that ask Clippy to point at or draw on the visible screen can be
+    /// answered by the selected model using inline visual tags.
     public static func shouldUseScreenAnnotationTool(
         text: String,
         inputMode: AssistantInputMode
@@ -266,13 +308,19 @@ internal tool plumbing.
             .filter { !$0.isEmpty }
         let wordSet = Set(words)
 
-        let directVisualActions = Set(["annotate", "highlight", "circle", "outline"])
+        let directVisualActions = Set(["annotate", "annotation", "highlight", "circle", "outline"])
         if !wordSet.isDisjoint(with: directVisualActions) {
             return true
         }
 
-        let screenReferences = Set(["screen", "page", "window", "video", "image", "picture", "this", "that", "here", "there", "it", "menu", "button", "control"])
-        if wordSet.contains("draw"), !wordSet.isDisjoint(with: screenReferences) {
+        let screenReferences = Set([
+            "screen", "page", "window", "video", "image", "picture", "this", "that",
+            "here", "there", "it", "menu", "button", "control", "target", "route",
+            "diagram", "triangle", "square", "squares", "area", "areas", "field",
+            "form",
+        ])
+        let drawWords = Set(["draw", "drawing", "drawn"])
+        if !wordSet.isDisjoint(with: drawWords), !wordSet.isDisjoint(with: screenReferences) {
             return true
         }
 
@@ -300,6 +348,9 @@ internal tool plumbing.
     ) -> Bool {
         let lower = text.lowercased()
         if shouldUseGuidedTargetGrounding(text: text) {
+            return false
+        }
+        if shouldUsePassiveVisualGrounding(text: text, inputMode: inputMode) {
             return false
         }
         let controlPhrases = [
@@ -349,6 +400,41 @@ internal tool plumbing.
         return false
     }
 
+    private static func shouldUsePassiveVisualGrounding(
+        text: String,
+        inputMode: AssistantInputMode
+    ) -> Bool {
+        let lower = text.lowercased()
+        let words = lower
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+        let wordSet = Set(words)
+        let passiveVisualActions = Set([
+            "annotate", "annotation", "highlight", "circle", "outline",
+            "point", "mark", "show", "draw", "drawing", "drawn",
+        ])
+        guard !wordSet.isDisjoint(with: passiveVisualActions)
+                || lower.contains("show me where")
+                || lower.contains("show where")
+                || lower.contains("call out") else {
+            return false
+        }
+        let actionPhrases = [
+            "do not click",
+            "don't click",
+            "do not press",
+            "don't press",
+            "without clicking",
+            "without pressing",
+            "no clicking",
+            "no click",
+        ]
+        if actionPhrases.contains(where: { lower.contains($0) }) {
+            return true
+        }
+        return shouldUseScreenAnnotationTool(text: text, inputMode: inputMode)
+    }
+
     private static func shouldUseGuidedTargetGrounding(text: String) -> Bool {
         let lower = text.lowercased()
         let hasClick = lower.contains("click") || lower.contains("press") || lower.contains("tap")
@@ -387,7 +473,7 @@ internal tool plumbing.
                 + "two short, natural, spoken-sounding sentences. No markdown, bullet lists, code "
                 + "blocks, file paths, URLs, API keys, or internal tool names — they sound wrong spoken. "
                 + "Use a Clippy voice: bright, compact, helpful, gently retro, and not robotic. "
-                + VoiceSpeechTags.instruction + " Trailing [ACT]/[POINT]/[TARGET] tags are fine; "
+                + VoiceSpeechTags.instruction + " Trailing visual tags are fine; "
                 + "they are stripped before speaking.")
         }
         guard !parts.isEmpty else { return nil }

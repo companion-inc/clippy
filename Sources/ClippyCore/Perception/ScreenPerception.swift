@@ -48,7 +48,8 @@ public enum ScreenPerception {
         screen requestedScreen: NSScreen? = nil,
         maxDimension: Int = 1600,
         compression: CGFloat = 0.7,
-        belowWindowNumber: Int? = nil
+        belowWindowNumber: Int? = nil,
+        fileName: String = "screen.jpg"
     ) -> Screenshot? {
         guard let target = captureTarget(for: requestedScreen) ?? mainScreenForCapture() else { return nil }
         guard let image = captureImage(displayID: target.displayID, belowWindowNumber: belowWindowNumber),
@@ -57,7 +58,7 @@ public enum ScreenPerception {
         guard let data = rep.representation(using: .jpeg, properties: [.compressionFactor: compression]) else { return nil }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support")
-        let url = base.appendingPathComponent("Clippy/screen.jpg")
+        let url = base.appendingPathComponent("Clippy/\(fileName)")
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         guard (try? data.write(to: url)) != nil else { return nil }
         return Screenshot(
@@ -66,6 +67,23 @@ public enum ScreenPerception {
             screenFrame: target.screen.frame,
             screenIndex: target.index
         )
+    }
+
+    /// Capture every connected display to stable per-screen JPEG files.
+    public static func captureAllToFiles(
+        maxDimension: Int = 1600,
+        compression: CGFloat = 0.7,
+        belowWindowNumber: Int? = nil
+    ) -> [Screenshot] {
+        NSScreen.screens.enumerated().compactMap { index, screen in
+            captureToFile(
+                screen: screen,
+                maxDimension: maxDimension,
+                compression: compression,
+                belowWindowNumber: belowWindowNumber,
+                fileName: "screen-\(index + 1).jpg"
+            )
+        }
     }
 
     private static func captureImage(displayID: CGDirectDisplayID, belowWindowNumber: Int?) -> CGImage? {

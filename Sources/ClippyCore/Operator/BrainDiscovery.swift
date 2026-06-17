@@ -62,8 +62,8 @@ public enum BrainDiscovery {
     }
 
     /// The brain to use when the user hasn't picked one yet: whichever subscription
-    /// is present. If both are signed in, prefer Codex because Clippy wires Cua and
-    /// its annotation MCP server through the Codex app-server path.
+    /// is present. If both are signed in, prefer Codex because Clippy wires Cua
+    /// through the Codex app-server path.
     public static func defaultModel() -> ClippyModel {
         if codexSignedIn() { return .gpt55 }
         if claudeSignedIn() { return .opus48 }

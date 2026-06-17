@@ -134,17 +134,14 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         requiresVisualGrounding: true)
     #expect(guided.contains("Clippy guided visual turn"))
     #expect(guided.contains("Look at the current screenshot as truth"))
-    #expect(guided.contains("Do not answer text-only"))
-    #expect(guided.contains("[TARGET]"))
-    #expect(guided.contains("[HOVER]"))
-    #expect(guided.contains("construction beats"))
-    #expect(guided.contains("drawn in order"))
-    #expect(guided.contains("missing construction"))
-    #expect(guided.contains("[SHAPE:polygon:...] beats for regions/areas"))
-    #expect(guided.contains("construct the compared regions"))
-    #expect(guided.contains("Do not merely underline existing labels"))
+    #expect(guided.contains("[POINT:x,y:label]"))
     #expect(guided.contains("[TARGET:x,y,r:label]"))
-    #expect(guided.contains("subject-specific template"))
+    #expect(guided.contains("[HOVER:x,y,r:label]"))
+    #expect(guided.contains("[HIGHLIGHT]"))
+    #expect(guided.contains("[SHAPE:line|arrow|circle|curve|polygon"))
+    #expect(guided.contains("do not fake a target"))
+    #expect(guided.contains("[POINT:none]") == false)
+    #expect(guided.contains("[ACT]") == false)
     #expect(guided.contains("Pythagorean") == false)
 }
 
@@ -164,15 +161,56 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         desktopContext: context
     )
     #expect(msg.contains("Visual grounding repair"))
-    #expect(msg.contains("had no renderable grounding tags"))
+    #expect(msg.contains("had no renderable visual grounding tag"))
     #expect(msg.contains("/tmp/shot.png (1600x1034 px)"))
     #expect(msg.contains("[POINT]"))
-    #expect(msg.contains("[TARGET]"))
-    #expect(msg.contains("[HOVER]"))
+    #expect(msg.contains("[TARGET]/[HOVER]"))
     #expect(msg.contains("[HIGHLIGHT]"))
     #expect(msg.contains("[SHAPE]"))
-    #expect(msg.contains("subject-specific template"))
+    #expect(msg.contains("[ACT]") == false)
+    #expect(msg.contains("Do not use shape, highlight, target, hover, or animation tags.") == false)
     #expect(msg.contains("Pythagorean") == false)
+}
+
+@Test func richVisualGroundingResponsesKeepRenderableTags() {
+    let drawing = GroundingParser.parse("""
+    I circled the target and outlined the triangle. \
+    [SHAPE:circle:520,170;560,170:red target] \
+    [SHAPE:polygon:930,470;1120,470;1120,280:right triangle]
+    """)
+    let drawingTags = drawing.tags
+    #expect(drawingTags.count == 2)
+    #expect(drawingTags.allSatisfy { $0.isRenderableVisual })
+    #expect(drawingTags.allSatisfy {
+        if case .shape = $0 { return true }
+        return false
+    })
+
+    let squares = GroundingParser.parse("""
+    I drew the three square areas in order. \
+    [SHAPE:polygon:760,470;930,470;930,640;760,640:left square] \
+    [SHAPE:polygon:1120,280;1290,280;1290,470;1120,470:right square] \
+    [SHAPE:polygon:930,470;1120,470;1120,660;930,660:hypotenuse square]
+    """)
+    let squareTags = squares.tags
+    #expect(squareTags.count == 3)
+    #expect(squareTags.allSatisfy { $0.isRenderableVisual })
+
+    let form = GroundingParser.parse("""
+    Type in the notes box; when it looks right, say continue. \
+    [HIGHLIGHT:208,397,70:notes area] [POINT:732,590:submit demo]
+    """)
+    let formTags = form.tags
+    #expect(formTags.count == 2)
+    #expect(formTags.allSatisfy { $0.isRenderableVisual })
+    #expect(formTags.contains {
+        if case .highlight = $0 { return true }
+        return false
+    })
+    #expect(formTags.contains {
+        if case .point = $0 { return true }
+        return false
+    })
 }
 
 @Test func guidedTargetFollowUpMessageMatchesClickToAdvanceContract() {
@@ -209,9 +247,13 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(msg.contains("remaining click-to-advance turns after this response: 0"))
     #expect(msg.contains("Look at the fresh screenshot above as truth"))
     #expect(msg.contains("do not re-emit that same opener"))
-    #expect(msg.contains("If another visible step is useful"))
+    #expect(msg.contains("Choose the right visual by intent"))
     #expect(msg.contains("If the task is complete"))
-    #expect(msg.contains("do not emit [TARGET] or [HOVER]"))
+    #expect(msg.contains("[TARGET:x,y,r:label]"))
+    #expect(msg.contains("[HOVER:x,y,r:label]"))
+    #expect(msg.contains("[HIGHLIGHT]"))
+    #expect(msg.contains("[SHAPE:arrow]"))
+    #expect(msg.contains("Do not emit [POINT:none]"))
 }
 
 @Test func screenshotPolicyCapturesEveryTurn() {
@@ -228,6 +270,8 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "apply to this job in the browser", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "click the blue button", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "Guide me to click the Start demo button. Mark it as the click target and continue after I click it.", inputMode: .text) == false)
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "Highlight the Notes area for manual typing and point at the Submit demo button. Do not click anything.", inputMode: .text) == false)
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "point at the Submit demo button", inputMode: .text) == false)
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "type this into the page", inputMode: .voice))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "hover over that menu", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "hover a ring over this button", inputMode: .text) == false)
@@ -235,7 +279,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "what's on my screen", inputMode: .text) == false)
 }
 
-@Test func codexToolLaneRoutesScreenAnnotationWork() {
+@Test func visualGroundingPolicyKeepsPointerWorkOnSelectedModelLane() {
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "highlight this button", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw an arrow on the page", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "Can you draw my screen to explain this?", inputMode: .text))
@@ -243,20 +287,28 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw", inputMode: .voice))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "point at the menu", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "circle this", inputMode: .voice))
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "Now explain the square areas on the triangle by drawing the three squares in order, then leave the drawing visible.", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "Highlight the Notes area for manual typing and point at the Submit demo button. Do not click anything.", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "Guide me to click the Start demo button. Mark it as the click target and continue after I click it.", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw a logo", inputMode: .text) == false)
 
-    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "highlight this button", inputMode: .text))
-    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "Can you draw my screen to explain this?", inputMode: .text))
-    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "show me where to click", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "highlight this button", inputMode: .text) == false)
+    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "Can you draw my screen to explain this?", inputMode: .text) == false)
+    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "show me where to click", inputMode: .text) == false)
+    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "draw an arrow on the page", inputMode: .text) == false)
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "fill out this form", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "summarize the docs", inputMode: .text) == false)
 }
 
-@Test func computerUsePromptDisablesCuaCursorForVisibleActions() {
-    #expect(ClippyAgentInstructions.systemPrompt.contains("Cua's own agent-cursor overlay is disabled in Clippy"))
-    #expect(ClippyAgentInstructions.systemPrompt.contains("The visible cursor is Clippy's body"))
-    #expect(ClippyAgentInstructions.systemPrompt.contains("Clippy inline grounding tags"))
+@Test func computerUsePromptDisablesSecondCursorForVisibleActions() {
+    #expect(ClippyAgentInstructions.systemPrompt.contains("computer-control cursor overlay is disabled in Clippy"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("The visible pointer is Clippy's body"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("[POINT:x,y:label]"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("[TARGET:x,y,r:label]"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("[HOVER:x,y,r:label]"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("[HIGHLIGHT:x,y,r:label]"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("[SHAPE:line|arrow|circle|curve|polygon"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("[ACT") == false)
     #expect(ClippyAgentInstructions.systemPrompt.contains("Pythagorean") == false)
 }
 

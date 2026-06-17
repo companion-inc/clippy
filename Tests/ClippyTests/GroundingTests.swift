@@ -24,6 +24,22 @@ import Testing
     #expect(parsed.spokenText == "All set.")
 }
 
+@Test func finalPointTagMatchesOnlyTrailingPointer() {
+    #expect(GroundingParser.finalPointTag(in: "Look here. [POINT:10,20:menu]") == .point(
+        CGPoint(x: 10, y: 20),
+        label: "menu",
+        screen: nil
+    ))
+    #expect(GroundingParser.finalPointTag(in: "Look here. [POINT:10,20:menu:screen2]") == .point(
+        CGPoint(x: 10, y: 20),
+        label: "menu",
+        screen: 2
+    ))
+    #expect(GroundingParser.finalPointTag(in: "Look here. [POINT:none]") == nil)
+    #expect(GroundingParser.finalPointTag(in: "[POINT:10,20:menu] then keep reading") == nil)
+    #expect(GroundingParser.finalPointTag(in: "Draw this. [SHAPE:line:1,2;3,4:path]") == nil)
+}
+
 @Test func streamingStripHidesTagsAndPartialTagsSoNoBracketFlashes() {
     // Complete tag removed.
     #expect(GroundingParser.stripForStreaming("Look up there [POINT:600,40:menu bar]") == "Look up there")
@@ -78,6 +94,86 @@ import Testing
     let mark = AnnotationMark.path(points: points, shape: .polygon)
     #expect(mark.visualBeatDuration > 0)
     #expect(mark.withDrawProgress(0.5) == .partialPath(points: points, shape: .polygon, progress: 0.5))
+}
+
+@Test func windowAnchoredDrawingSceneReprojectsMarksWhenWindowMoves() {
+    let anchor = DrawingWindowAnchor(
+        ownerProcessIdentifier: 42,
+        windowIdentifier: 7,
+        ownerName: "TestApp",
+        title: "Demo",
+        browserURL: "https://example.com/demo",
+        initialFrame: CGRect(x: 100, y: 200, width: 400, height: 300)
+    )
+    let mark = AnnotationMark.ring(center: CGPoint(x: 150, y: 260), radius: 24, kind: .target)
+    let scene = DrawingScene(marks: [mark], anchor: .window(anchor))
+
+    let moved = CGRect(x: 320, y: 480, width: 400, height: 300)
+    #expect(scene.resolvedMarks(windowFrameProvider: { _ in moved }) == [
+        .ring(center: CGPoint(x: 370, y: 540), radius: 24, kind: .target),
+    ])
+}
+
+@Test func windowAnchoredDrawingSceneKeepsPathGeometryLocalToWindow() {
+    let anchor = DrawingWindowAnchor(
+        ownerProcessIdentifier: 42,
+        windowIdentifier: 7,
+        ownerName: "TestApp",
+        title: "Demo",
+        browserURL: nil,
+        initialFrame: CGRect(x: 100, y: 200, width: 400, height: 300)
+    )
+    let mark = AnnotationMark.path(
+        points: [CGPoint(x: 120, y: 220), CGPoint(x: 180, y: 260)],
+        shape: .arrow
+    )
+    let scene = DrawingScene(marks: [mark], anchor: .window(anchor))
+    let moved = CGRect(x: -50, y: 90, width: 400, height: 300)
+
+    #expect(scene.resolvedMarks(windowFrameProvider: { _ in moved }) == [
+        .path(points: [CGPoint(x: -30, y: 110), CGPoint(x: 30, y: 150)], shape: .arrow),
+    ])
+}
+
+@Test func windowAnchoredDrawingSceneIsWindowSpecific() {
+    let anchor = DrawingWindowAnchor(
+        ownerProcessIdentifier: 42,
+        windowIdentifier: 7,
+        ownerName: "TestApp",
+        title: "Demo",
+        browserURL: nil,
+        initialFrame: CGRect(x: 100, y: 200, width: 400, height: 300)
+    )
+    let anchored = DrawingScene(
+        marks: [.region(center: CGPoint(x: 120, y: 220), radius: 18)],
+        anchor: .window(anchor)
+    )
+    let screenOnly = DrawingScene(marks: [
+        .region(center: CGPoint(x: 120, y: 220), radius: 18),
+    ])
+
+    #expect(anchored.tracksMovingWindow)
+    #expect(anchored.hidesWhenWindowIsNotFrontmost)
+    #expect(screenOnly.hidesWhenWindowIsNotFrontmost == false)
+}
+
+@Test func appKitFrameConvertsCoreGraphicsWindowBoundsFromTopLeftDisplaySpace() {
+    let window = DesktopContextSnapshot.WindowInfo(
+        title: "Demo",
+        ownerName: "TestApp",
+        ownerProcessIdentifier: 42,
+        windowIdentifier: 7,
+        bounds: CGRect(x: 100, y: 50, width: 400, height: 300)
+    )
+    let screen = DesktopContextSnapshot.ScreenInfo(
+        index: 0,
+        appKitFrame: CGRect(x: 0, y: 0, width: 1000, height: 800),
+        displayBounds: CGRect(x: 0, y: 0, width: 1000, height: 800),
+        displayIdentifier: 1
+    )
+
+    #expect(DesktopContextSnapshot.appKitFrame(for: window, screen: screen)
+        == CGRect(x: 100, y: 450, width: 400, height: 300))
 }
 
 @Test func keepsMultipleTagsInDocumentOrder() {

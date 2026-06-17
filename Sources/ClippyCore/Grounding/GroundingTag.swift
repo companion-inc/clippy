@@ -41,6 +41,20 @@ public enum GroundingTag: Equatable, Sendable {
         }
     }
 
+    /// One-based screenshot number from an optional `:screenN` suffix.
+    public var screenNumber: Int? {
+        switch self {
+        case let .point(_, _, screen),
+             let .target(_, _, _, screen),
+             let .hover(_, _, _, screen),
+             let .highlight(_, _, _, screen),
+             let .shape(_, _, _, screen):
+            return screen
+        case .act:
+            return nil
+        }
+    }
+
     /// The primary on-screen anchor Clippy should point at (first point for shapes).
     public var anchor: CGPoint? {
         switch self {
@@ -180,9 +194,27 @@ public enum GroundingParser {
         return found.sorted { $0.0 < $1.0 }.map { $0.1 }
     }
 
+    /// Extract only a final `[POINT:...]` tag, matching the pointer contract used
+    /// for normal assistant replies. `[POINT:none]` intentionally returns nil.
+    public static func finalPointTag(in text: String) -> GroundingTag? {
+        let ns = text as NSString
+        let full = NSRange(location: 0, length: ns.length)
+        guard let match = finalPointRegex.firstMatch(in: text, options: [], range: full),
+              let x = group(1, match, ns).flatMap({ Double($0) }),
+              let y = group(2, match, ns).flatMap({ Double($0) }) else {
+            return nil
+        }
+        return .point(
+            CGPoint(x: x, y: y),
+            label: group(3, match, ns) ?? "",
+            screen: group(4, match, ns).flatMap { Int($0) }
+        )
+    }
+
     // MARK: - Patterns
 
     private static let pointRegex = re(#"\[POINT:\s*(?:none|(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)(?:\s*:\s*([^\]:]*?))?(?:\s*:\s*screen\s*(\d+))?)\s*\]"#)
+    private static let finalPointRegex = re(#"\[POINT:\s*(?:none|(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)(?:\s*:\s*([^\]:]*?))?(?:\s*:\s*screen\s*(\d+))?)\s*\]\s*$"#)
     private static let regionRegex = re(#"\[(TARGET|HOVER|HIGHLIGHT):\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*:\s*([^\]:]*?)(?:\s*:\s*screen\s*(\d+))?\s*\]"#)
     private static let shapeRegex = re(#"\[SHAPE:\s*(line|arrow|circle|curve|polygon)\s*:\s*([-0-9.,;\s]+?)\s*:\s*([^\]:]*?)(?:\s*:\s*screen\s*(\d+))?\s*\]"#)
     private static let actRegex = re(#"\[ACT:\s*([A-Za-z0-9_]+)\s*\]"#)
