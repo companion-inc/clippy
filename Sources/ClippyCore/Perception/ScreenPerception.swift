@@ -47,10 +47,11 @@ public enum ScreenPerception {
     public static func captureToFile(
         screen requestedScreen: NSScreen? = nil,
         maxDimension: Int = 1600,
-        compression: CGFloat = 0.7
+        compression: CGFloat = 0.7,
+        belowWindowNumber: Int? = nil
     ) -> Screenshot? {
         guard let target = captureTarget(for: requestedScreen) ?? mainScreenForCapture() else { return nil }
-        guard let image = CGDisplayCreateImage(target.displayID),
+        guard let image = captureImage(displayID: target.displayID, belowWindowNumber: belowWindowNumber),
               let scaled = try? scale(image: image, maxDimension: maxDimension) else { return nil }
         let rep = NSBitmapImageRep(cgImage: scaled)
         guard let data = rep.representation(using: .jpeg, properties: [.compressionFactor: compression]) else { return nil }
@@ -65,6 +66,19 @@ public enum ScreenPerception {
             screenFrame: target.screen.frame,
             screenIndex: target.index
         )
+    }
+
+    private static func captureImage(displayID: CGDirectDisplayID, belowWindowNumber: Int?) -> CGImage? {
+        if let belowWindowNumber,
+           let image = CGWindowListCreateImage(
+            CGDisplayBounds(displayID),
+            .optionOnScreenBelowWindow,
+            CGWindowID(belowWindowNumber),
+            [.boundsIgnoreFraming, .bestResolution]
+           ) {
+            return image
+        }
+        return CGDisplayCreateImage(displayID)
     }
 
     /// Pick the screen Clippy should consider itself on. Use intersection area

@@ -4,25 +4,22 @@ import Foundation
 public struct ClippyVoice: Equatable, Sendable, Identifiable {
     public let id: String
     public let displayName: String
-    public let gender: String
+    public let detail: String
 
-    public init(id: String, displayName: String, gender: String) {
+    public init(id: String, displayName: String, detail: String) {
         self.id = id
         self.displayName = displayName
-        self.gender = gender
+        self.detail = detail
     }
 }
 
 public extension ClippyVoice {
-    static let eve = ClippyVoice(id: "eve", displayName: "Energetic, upbeat", gender: "Female")
-    static let ara = ClippyVoice(id: "ara", displayName: "Warm, friendly", gender: "Female")
-    static let sal = ClippyVoice(id: "sal", displayName: "Smooth, balanced", gender: "Male")
-    static let rex = ClippyVoice(id: "rex", displayName: "Confident, clear", gender: "Male")
-    static let leo = ClippyVoice(id: "leo", displayName: "Authoritative, strong", gender: "Male")
+    static let grace = ClippyVoice(id: "grace", displayName: "Grace", detail: "Female · English")
+    static let daniel = ClippyVoice(id: "daniel", displayName: "Daniel", detail: "Male · English")
 
-    static let all: [ClippyVoice] = [eve, ara, sal, rex, leo]
+    static let all: [ClippyVoice] = [grace, daniel]
 
-    static let `default` = eve
+    static let `default` = grace
 
     static func by(id: String) -> ClippyVoice? {
         all.first { $0.id == id }

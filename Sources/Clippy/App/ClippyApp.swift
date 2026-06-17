@@ -497,7 +497,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         // typed bubble turns still carry the real app/window context underneath.
         let wantsScreen = ClippyAgentInstructions.shouldAttachScreenshot(text: text, inputMode: inputMode)
         let screenshotScreen = desktopContext.targetScreen() ?? screenForClippy()
-        let shot = wantsScreen ? captureCleanTurnScreenshot(screen: screenshotScreen) : nil
+        let shot = wantsScreen ? captureTurnScreenshot(screen: screenshotScreen) : nil
         lastShot = shot
         if let shot {
             log("screen-capture: index=\(shot.screenIndex) frame=\(shot.screenFrame) pixels=\(Int(shot.pixelSize.width))x\(Int(shot.pixelSize.height))")
@@ -609,27 +609,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         turnTimeoutItem = nil
     }
 
-    private func captureCleanTurnScreenshot(screen targetScreen: NSScreen?) -> ScreenPerception.Screenshot? {
+    private func captureTurnScreenshot(screen targetScreen: NSScreen?) -> ScreenPerception.Screenshot? {
         let clippyWindow = clippy?.windowController.window
-        let bubbleWindow = chatBubble?.window
-        let clippyWasVisible = clippyWindow?.isVisible == true
-        let bubbleWasVisible = bubbleWindow?.isVisible == true
+        let belowWindowNumber = clippyWindow?.isVisible == true ? clippyWindow?.windowNumber : nil
 
         overlay?.clear()
-        bubbleWindow?.orderOut(nil)
-        clippyWindow?.orderOut(nil)
-        // Let WindowServer process the order-out before CGDisplayCreateImage.
-        RunLoop.current.run(until: Date().addingTimeInterval(0.06))
-
-        let shot = ScreenPerception.captureToFile(screen: targetScreen)
-
-        if clippyWasVisible {
-            clippyWindow?.orderFrontRegardless()
-        }
-        if bubbleWasVisible {
-            bubbleWindow?.orderFrontRegardless()
-        }
-        return shot
+        return ScreenPerception.captureToFile(screen: targetScreen, belowWindowNumber: belowWindowNumber)
     }
 
     private func syncBubbleAnchorToClippy() {
@@ -1053,7 +1038,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let desktopContext = DesktopContextSnapshot.capture()
         log("desktop-context: \(desktopContext.logSummary)")
         let screenshotScreen = desktopContext.targetScreen() ?? screenForClippy()
-        let shot = captureCleanTurnScreenshot(screen: screenshotScreen)
+        let shot = captureTurnScreenshot(screen: screenshotScreen)
         lastShot = shot
         if let shot {
             log("screen-capture: index=\(shot.screenIndex) frame=\(shot.screenFrame) pixels=\(Int(shot.pixelSize.width))x\(Int(shot.pixelSize.height))")
@@ -1321,11 +1306,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         items.append(.submenu("Model", detail: selectedModel.displayName, items: modelItems))
 
         let voiceItems = ClippyVoice.all.map { voice in
-            RetroMenuItem.choice(voice.displayName, detail: voice.gender, isSelected: voice.id == selectedVoice.id) { [weak self] in
+            RetroMenuItem.choice(voice.displayName, detail: voice.detail, isSelected: voice.id == selectedVoice.id) { [weak self] in
                 self?.selectVoice(id: voice.id)
             }
         }
-        items.append(.submenu("Voice", detail: selectedVoice.gender, items: voiceItems))
+        items.append(.submenu("Voice", detail: selectedVoice.detail, items: voiceItems))
 
         items.append(.separator())
         items.append(.action("Setup...") { [weak self] in
