@@ -689,13 +689,16 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             tags = rawTags
         }
         log("grounding-presented: renderable=\(renderableGroundingTagCount(in: tags)) total=\(tags.count)")
-        overlay?.show(tags.compactMap(AnnotationMark.init(tag:)), on: screen)
+        log("grounding-beats: \(groundingBeatSummary(tags))")
+        let marks = tags.compactMap(AnnotationMark.init(tag:))
+        overlay?.showSequence(marks, on: screen)
         // Auto-dismiss the marks so they don't linger on screen forever.
         overlayDismiss?.cancel()
-        if tags.contains(where: { AnnotationMark(tag: $0) != nil }) {
+        if !marks.isEmpty {
             let dismiss = DispatchWorkItem { [weak self] in self?.overlay?.clear() }
             overlayDismiss = dismiss
-            DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: dismiss)
+            let drawDuration = marks.reduce(TimeInterval(0)) { $0 + $1.visualBeatDuration }
+            DispatchQueue.main.asyncAfter(deadline: .now() + drawDuration + 6, execute: dismiss)
         }
 
         if let anchor = tags.first(where: { $0.anchor != nil })?.anchor {
@@ -728,6 +731,25 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             if case let .act(animation) = tag { return animation }
         }
         return nil
+    }
+
+    private func groundingBeatSummary(_ tags: [GroundingTag]) -> String {
+        tags.map { tag in
+            switch tag {
+            case let .point(point, label, _):
+                return "point(\(Int(point.x)),\(Int(point.y)):\(label))"
+            case let .target(point, radius, label, _):
+                return "target(\(Int(point.x)),\(Int(point.y)),r\(Int(radius)):\(label))"
+            case let .hover(point, radius, label, _):
+                return "hover(\(Int(point.x)),\(Int(point.y)),r\(Int(radius)):\(label))"
+            case let .highlight(point, radius, label, _):
+                return "highlight(\(Int(point.x)),\(Int(point.y)),r\(Int(radius)):\(label))"
+            case let .shape(kind, points, label, _):
+                return "shape:\(kind.rawValue)(points:\(points.count):\(label))"
+            case let .act(animation):
+                return "act(\(animation))"
+            }
+        }.joined(separator: " | ")
     }
 
     private func screenForLastShot() -> NSScreen? {

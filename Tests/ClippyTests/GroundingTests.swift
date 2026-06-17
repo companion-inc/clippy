@@ -59,6 +59,18 @@ import Testing
     #expect(screen == nil)
 }
 
+@Test func annotationMarkPathCanBecomeASequencedVisualBeat() {
+    let points = [
+        CGPoint(x: 10, y: 10),
+        CGPoint(x: 30, y: 10),
+        CGPoint(x: 30, y: 30),
+        CGPoint(x: 10, y: 30),
+    ]
+    let mark = AnnotationMark.path(points: points, shape: .polygon)
+    #expect(mark.visualBeatDuration > 0)
+    #expect(mark.withDrawProgress(0.5) == .partialPath(points: points, shape: .polygon, progress: 0.5))
+}
+
 @Test func keepsMultipleTagsInDocumentOrder() {
     let parsed = GroundingParser.parse("[POINT:5,5:one] then [HIGHLIGHT:9,9,3:two]")
     #expect(parsed.tags.count == 2)

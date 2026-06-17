@@ -6,6 +6,7 @@ public enum AnnotationMark: Equatable, Sendable {
     case ring(center: CGPoint, radius: CGFloat, kind: RingKind)
     case region(center: CGPoint, radius: CGFloat)
     case path(points: [CGPoint], shape: GroundingTag.ShapeKind)
+    case partialPath(points: [CGPoint], shape: GroundingTag.ShapeKind, progress: CGFloat)
 
     public enum RingKind: Equatable, Sendable { case target, hover }
 
@@ -29,6 +30,7 @@ public enum AnnotationMark: Equatable, Sendable {
 public final class AnnotationOverlayWindow {
     private let window: NSWindow
     private let drawView: AnnotationDrawView
+    private var animationTimer: Timer?
 
     public init() {
         let frame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
@@ -45,6 +47,8 @@ public final class AnnotationOverlayWindow {
 
     /// Draw `marks` (global screen coordinates). Empty clears and hides the overlay.
     public func show(_ marks: [AnnotationMark], on screen: NSScreen? = nil) {
+        animationTimer?.invalidate()
+        animationTimer = nil
         let frame = (screen ?? NSScreen.main)?.frame ?? window.frame
         window.orderOut(nil)
         window.setFrame(frame, display: false)
@@ -60,8 +64,115 @@ public final class AnnotationOverlayWindow {
         }
     }
 
+    /// Draw marks as Clippy-style visual beats: shape paths reveal over time, and
+    /// multiple marks arrive in order instead of appearing as one finished overlay.
+    public func showSequence(_ marks: [AnnotationMark], on screen: NSScreen? = nil) {
+        animationTimer?.invalidate()
+        animationTimer = nil
+
+        let frame = (screen ?? NSScreen.main)?.frame ?? window.frame
+        window.orderOut(nil)
+        window.setFrame(frame, display: false)
+        drawView.frame = CGRect(origin: .zero, size: frame.size)
+        drawView.screenOrigin = frame.origin
+        drawView.backgroundSampler = marks.isEmpty ? nil : AnnotationBackgroundSampler(screen: screen ?? NSScreen.main)
+
+        guard !marks.isEmpty else {
+            drawView.marks = []
+            drawView.needsDisplay = true
+            window.orderOut(nil)
+            return
+        }
+
+        window.orderFrontRegardless()
+        let durations = marks.map(\.visualBeatDuration)
+        let totalDuration = durations.reduce(0, +)
+        let start = ProcessInfo.processInfo.systemUptime
+
+        renderSequenceFrame(marks: marks, durations: durations, elapsed: 0)
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] timer in
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    timer.invalidate()
+                    return
+                }
+                let elapsed = ProcessInfo.processInfo.systemUptime - start
+                if elapsed >= totalDuration {
+                    timer.invalidate()
+                    if self.animationTimer === timer {
+                        self.animationTimer = nil
+                    }
+                    self.drawView.marks = marks
+                    self.drawView.needsDisplay = true
+                } else {
+                    self.renderSequenceFrame(marks: marks, durations: durations, elapsed: elapsed)
+                }
+            }
+        }
+        animationTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
     public func clear() {
         show([])
+    }
+
+    private func renderSequenceFrame(
+        marks: [AnnotationMark],
+        durations: [TimeInterval],
+        elapsed: TimeInterval
+    ) {
+        var remaining = max(0, elapsed)
+        var visible: [AnnotationMark] = []
+        for index in marks.indices {
+            let duration = max(0.01, durations[index])
+            if remaining >= duration {
+                visible.append(marks[index])
+                remaining -= duration
+            } else {
+                visible.append(marks[index].withDrawProgress(CGFloat(remaining / duration)))
+                break
+            }
+        }
+        drawView.marks = visible
+        drawView.needsDisplay = true
+    }
+}
+
+extension AnnotationMark {
+    public var visualBeatDuration: TimeInterval {
+        switch self {
+        case let .path(points, shape),
+             let .partialPath(points, shape, _):
+            let length = Self.pathLength(points, closesPath: shape == .polygon)
+            return TimeInterval(min(1.25, max(0.35, Double(length / 900))))
+        case .ring, .region:
+            return 0.18
+        }
+    }
+
+    public func withDrawProgress(_ progress: CGFloat) -> AnnotationMark {
+        let clamped = min(1, max(0, progress))
+        switch self {
+        case let .path(points, shape):
+            return .partialPath(points: points, shape: shape, progress: clamped)
+        case let .partialPath(points, shape, _):
+            return .partialPath(points: points, shape: shape, progress: clamped)
+        case .ring, .region:
+            return clamped >= 1 ? self : self
+        }
+    }
+
+    private static func pathLength(_ points: [CGPoint], closesPath: Bool) -> CGFloat {
+        guard points.count > 1 else { return 0 }
+        var total: CGFloat = 0
+        for pair in zip(points, points.dropFirst()) {
+            total += hypot(pair.1.x - pair.0.x, pair.1.y - pair.0.y)
+        }
+        if closesPath, let first = points.first, let last = points.last {
+            total += hypot(first.x - last.x, first.y - last.y)
+        }
+        return total
     }
 }
 
@@ -134,6 +245,27 @@ final class AnnotationDrawView: NSView {
                 drawPath(ctx, points: pts, shape: shape, palette: palette)
                 if shape == .arrow, pts.count >= 2 {
                     drawArrowHead(ctx, from: pts[pts.count - 2], to: pts[pts.count - 1], palette: palette)
+                }
+            case let .partialPath(points, shape, progress):
+                let pts = points.map(local)
+                guard let first = pts.first else { break }
+                let palette = palette(around: points)
+                if shape == .circle {
+                    let r: CGFloat = 32 * markScale
+                    drawRing(
+                        ctx,
+                        rect: CGRect(x: first.x - r, y: first.y - r, width: r * 2, height: r * 2),
+                        palette: palette,
+                        fill: true,
+                        dashed: false
+                    )
+                    break
+                }
+                let visible = partialPathPoints(pts, closesPath: shape == .polygon, progress: progress)
+                let finished = progress >= 0.999
+                drawPath(ctx, points: finished ? pts : visible, shape: finished ? shape : .line, palette: palette)
+                if shape == .arrow, visible.count >= 2 {
+                    drawArrowHead(ctx, from: visible[visible.count - 2], to: visible[visible.count - 1], palette: palette)
                 }
             }
         }
@@ -226,6 +358,38 @@ final class AnnotationDrawView: NSView {
         ctx.addPath(path)
         ctx.strokePath()
         ctx.restoreGState()
+    }
+
+    private func partialPathPoints(_ points: [CGPoint], closesPath: Bool, progress: CGFloat) -> [CGPoint] {
+        guard points.count > 1 else { return points }
+        let clamped = min(1, max(0, progress))
+        var segments = Array(zip(points, points.dropFirst()))
+        if closesPath, let first = points.first, let last = points.last {
+            segments.append((last, first))
+        }
+        let total = segments.reduce(CGFloat(0)) { partial, segment in
+            partial + hypot(segment.1.x - segment.0.x, segment.1.y - segment.0.y)
+        }
+        guard total > 0 else { return [points[0]] }
+
+        var remaining = total * clamped
+        var visible = [points[0]]
+        for (start, end) in segments {
+            let length = hypot(end.x - start.x, end.y - start.y)
+            guard length > 0 else { continue }
+            if remaining >= length {
+                visible.append(end)
+                remaining -= length
+            } else {
+                let t = remaining / length
+                visible.append(CGPoint(
+                    x: start.x + (end.x - start.x) * t,
+                    y: start.y + (end.y - start.y) * t
+                ))
+                break
+            }
+        }
+        return visible
     }
 
     private func drawPathStroke(

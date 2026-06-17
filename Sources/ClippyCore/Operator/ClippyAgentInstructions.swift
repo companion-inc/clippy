@@ -132,7 +132,10 @@ internal tool plumbing.
     [Clippy-style guided visual turn]
     The user is asking for visible screen grounding or drawing. Read the current screenshot, then make the screen carry the answer with inline grounding tags.
     Your final response must include at least one [POINT], [HIGHLIGHT], or [SHAPE] tag unless the screenshot is unavailable or unreadable.
-    For drawn explanations, use [SHAPE:line|arrow|curve|polygon:...] and/or [HIGHLIGHT]/[POINT]. Multiple static drawing tags are allowed when the explanation needs multiple marks.
+    For drawn explanations, prefer ordered [SHAPE:line|arrow|curve|polygon:...] construction beats over label-only pointing; each separate SHAPE beat is drawn in order.
+    For math, diagram, spatial, or area explanations, draw the missing construction when that is what teaches the concept: use [SHAPE:polygon:...] beats for regions/areas and [SHAPE:line]/[SHAPE:arrow] beats for edges or direction.
+    Do not merely underline existing labels when the requested explanation depends on constructed shapes or regions.
+    Use [HIGHLIGHT]/[POINT] only when a region or exact existing control needs emphasis. Multiple static drawing tags are allowed when the explanation needs multiple marks.
     Do not answer text-only, and do not claim something was drawn, circled, highlighted, or pointed at unless the reply includes the tag(s) that render it.
     Derive the marks, labels, and coordinates from the screenshot and the user's goal; do not use a subject-specific template.
     """

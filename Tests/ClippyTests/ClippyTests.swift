@@ -134,6 +134,11 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         requiresVisualGrounding: true)
     #expect(guided.contains("Clippy-style guided visual turn"))
     #expect(guided.contains("Do not answer text-only"))
+    #expect(guided.contains("construction beats"))
+    #expect(guided.contains("drawn in order"))
+    #expect(guided.contains("missing construction"))
+    #expect(guided.contains("[SHAPE:polygon:...] beats for regions/areas"))
+    #expect(guided.contains("Do not merely underline existing labels"))
     #expect(guided.contains("subject-specific template"))
     #expect(guided.contains("Pythagorean") == false)
 }
