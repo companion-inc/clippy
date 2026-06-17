@@ -14,8 +14,8 @@ public struct ClippyVoice: Equatable, Sendable, Identifiable {
 }
 
 public extension ClippyVoice {
-    static let ara = ClippyVoice(id: "ara", displayName: "Ara", detail: "Female · Multilingual")
-    static let rex = ClippyVoice(id: "rex", displayName: "Rex", detail: "Male · Multilingual")
+    static let ara = ClippyVoice(id: "ara", displayName: "Ara", detail: "Female · Bright")
+    static let rex = ClippyVoice(id: "rex", displayName: "Rex", detail: "Male · Calm")
 
     static let all: [ClippyVoice] = [ara, rex]
 
