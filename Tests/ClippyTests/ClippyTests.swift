@@ -1,5 +1,6 @@
 import AppKit
 import AVFoundation
+import Carbon.HIToolbox
 import Foundation
 import Testing
 @testable import ClippyCore
@@ -851,6 +852,9 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         keyCode: 9,
         modifierFlags: [.control, .option, .command]
     ) == false)
+
+    #expect(GlobalHotkeyMonitor.carbonModifierMask(for: [.control, .option, .command])
+        == UInt32(controlKey | optionKey | cmdKey))
 }
 
 @Test @MainActor func clippyAnimatorStopsAfterOneShotAnimationExits() throws {
