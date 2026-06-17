@@ -223,6 +223,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     // MARK: - Brain
 
+    private func applySelectedModel(_ model: ClippyModel) {
+        selectedModel = model
+        UserDefaults.standard.set(model.id, forKey: "ClippySelectedModelID")
+        setUpBrain()
+    }
+
     private func setUpBrain() {
         codexComputerControlConversation = nil
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -758,11 +764,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         currentBrainTask = nil
         turnHasStreamingText = false
         isTurnRunning = false
+        let switchedToChatGPT = switchToChatGPTAfterClaudeLimitIfAvailable(turn.text)
         if isClippyHidden {
             log("clippy: \(turn.text.prefix(120))")
             return
         }
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
+        if switchedToChatGPT {
+            showChatGPTFallbackNotice()
+            log("clippy: \(turn.text.prefix(120))")
+            return
+        }
         let friendlyFailure = ClippyUserFacingError.replacement(for: turn.text, isError: turn.isError)
         let replyText = friendlyFailure ?? turn.text
         let parsed = GroundingParser.parse(replyText)
@@ -804,6 +816,35 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let animationName = turn.isError
             ? (clippy?.spec.errorAnimationName ?? "Alert")
             : (clippy?.spec.replyAnimationName ?? "Explain")
+        clippy?.play(animationName) { [weak self, weak clippy] _, state in
+            switch state {
+            case .waiting:
+                clippy?.exitCurrentAnimation()
+            case .exited:
+                self?.scheduleNextIdle()
+            }
+        }
+    }
+
+    private func switchToChatGPTAfterClaudeLimitIfAvailable(_ text: String) -> Bool {
+        guard BrainFallbackPolicy.shouldSwitchToChatGPT(
+            afterProviderLimitText: text,
+            selectedModel: selectedModel,
+            isChatGPTAvailable: BrainDiscovery.codexSignedIn()
+        )
+        else {
+            return false
+        }
+        applySelectedModel(.gpt55)
+        log("model auto-selected: \(ClippyModel.gpt55.id) after Claude usage limit")
+        return true
+    }
+
+    private func showChatGPTFallbackNotice() {
+        overlay?.clear()
+        chatBubble?.showReplyForReading("Claude usage limit hit. I switched to ChatGPT.")
+        playActivityState(.attention)
+        let animationName = clippy?.spec.replyAnimationName ?? "Explain"
         clippy?.play(animationName) { [weak self, weak clippy] _, state in
             switch state {
             case .waiting:
@@ -1745,9 +1786,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func selectOnboardingModel(_ model: ClippyModel) {
-        selectedModel = model
-        UserDefaults.standard.set(model.id, forKey: "ClippySelectedModelID")
-        setUpBrain()
+        applySelectedModel(model)
         log("model selected: \(model.id)")
         showListeningStep()
     }
@@ -1948,9 +1987,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func selectModel(id: String) {
         guard let model = ClippyModel.by(id: id) else { return }
-        selectedModel = model
-        UserDefaults.standard.set(id, forKey: "ClippySelectedModelID")
-        setUpBrain()
+        applySelectedModel(model)
         log("model selected: \(id)")
         guard isClippyHidden == false else { return }
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }

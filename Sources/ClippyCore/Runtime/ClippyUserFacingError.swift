@@ -1,6 +1,13 @@
 import Foundation
 
 public enum ClippyUserFacingError {
+    public enum ProviderLimit: Equatable, Sendable {
+        case claude
+        case chatGPT
+        case xAI
+        case unknown
+    }
+
     public static func replacement(for technicalText: String, isError: Bool) -> String? {
         if let providerLimit = providerLimitMessage(for: technicalText) {
             return providerLimit
@@ -54,7 +61,7 @@ public enum ClippyUserFacingError {
         needles.contains { lowercasedText.contains($0) }
     }
 
-    private static func providerLimitMessage(for text: String) -> String? {
+    public static func providerLimit(for text: String) -> ProviderLimit? {
         let lower = text.lowercased()
         guard containsAny(lower, [
             "monthly spend limit",
@@ -66,14 +73,30 @@ public enum ClippyUserFacingError {
             return nil
         }
         if lower.contains("claude") || lower.contains("anthropic") {
-            return "Claude usage limit hit. Raise it at claude.ai/settings/usage."
+            return .claude
         }
         if lower.contains("chatgpt") || lower.contains("openai") || lower.contains("codex") {
-            return "ChatGPT usage limit hit. Check billing or usage settings."
+            return .chatGPT
         }
         if lower.contains("xai") || lower.contains("grok") {
-            return "xAI usage limit hit. Check xAI billing or credits."
+            return .xAI
         }
-        return "Usage limit hit. Check the account billing or usage settings."
+        return .unknown
+    }
+
+    private static func providerLimitMessage(for text: String) -> String? {
+        guard let providerLimit = providerLimit(for: text) else {
+            return nil
+        }
+        switch providerLimit {
+        case .claude:
+            return "Claude usage limit hit. Raise it at claude.ai/settings/usage."
+        case .chatGPT:
+            return "ChatGPT usage limit hit. Check billing or usage settings."
+        case .xAI:
+            return "xAI usage limit hit. Check xAI billing or credits."
+        case .unknown:
+            return "Usage limit hit. Check the account billing or usage settings."
+        }
     }
 }

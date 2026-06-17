@@ -687,8 +687,31 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     let raw = "You've hit your monthly spend limit · raise it at claude.ai/settings/usage"
     let friendly = ClippyUserFacingError.replacement(for: raw, isError: false)
 
+    #expect(ClippyUserFacingError.providerLimit(for: raw) == .claude)
     #expect(friendly == "Claude usage limit hit. Raise it at claude.ai/settings/usage.")
     #expect(friendly?.contains("local error") == false)
+    #expect(ClippyUserFacingError.providerLimit(for: "OpenAI rate limit exceeded") == .chatGPT)
+    #expect(ClippyUserFacingError.providerLimit(for: "xAI insufficient credits") == .xAI)
+}
+
+@Test func brainFallbackPolicySwitchesFromClaudeToChatGPTForClaudeUsageLimit() {
+    let raw = "You've hit your monthly spend limit · raise it at claude.ai/settings/usage"
+
+    #expect(BrainFallbackPolicy.shouldSwitchToChatGPT(
+        afterProviderLimitText: raw,
+        selectedModel: .opus48,
+        isChatGPTAvailable: true
+    ))
+    #expect(BrainFallbackPolicy.shouldSwitchToChatGPT(
+        afterProviderLimitText: raw,
+        selectedModel: .opus48,
+        isChatGPTAvailable: false
+    ) == false)
+    #expect(BrainFallbackPolicy.shouldSwitchToChatGPT(
+        afterProviderLimitText: "OpenAI rate limit exceeded",
+        selectedModel: .gpt55,
+        isChatGPTAvailable: true
+    ) == false)
 }
 
 @Test func rasterCharacterPackDecodesClippyAnimations() throws {

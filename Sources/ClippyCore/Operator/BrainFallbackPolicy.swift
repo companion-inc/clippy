@@ -1,0 +1,13 @@
+import Foundation
+
+public enum BrainFallbackPolicy {
+    public static func shouldSwitchToChatGPT(
+        afterProviderLimitText text: String,
+        selectedModel: ClippyModel,
+        isChatGPTAvailable: Bool
+    ) -> Bool {
+        selectedModel.backend == .claude
+            && isChatGPTAvailable
+            && ClippyUserFacingError.providerLimit(for: text) == .claude
+    }
+}
