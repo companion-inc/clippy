@@ -329,6 +329,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         tts.onSpeakingChanged = { [weak self] speaking in
             self?.handleTTSActivity(speaking)
         }
+        tts.onError = { [weak self] message in
+            self?.log("tts error: \(message)")
+        }
     }
 
     private func activeTTS() -> XAITTS? {

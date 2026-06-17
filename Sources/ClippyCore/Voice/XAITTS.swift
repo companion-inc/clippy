@@ -38,6 +38,7 @@ public final class XAITTS {
     private var lastNotifiedSpeaking = false
 
     public var onSpeakingChanged: ((Bool) -> Void)?
+    public var onError: ((String) -> Void)?
 
     public var isSpeaking: Bool {
         stateQueue.sync {
@@ -118,12 +119,22 @@ public final class XAITTS {
                     self.drainTextQueue()
                     self.scheduleIdleCheck()
                 }
-                guard error == nil,
-                      let http = response as? HTTPURLResponse,
-                      (200..<300).contains(http.statusCode),
-                      let data,
+                if let error {
+                    self.notifyError("request failed: \(error.localizedDescription)")
+                    return
+                }
+                guard let http = response as? HTTPURLResponse else {
+                    self.notifyError("missing HTTP response")
+                    return
+                }
+                guard (200..<300).contains(http.statusCode) else {
+                    self.notifyError("HTTP \(http.statusCode): \(Self.errorMessage(from: data))")
+                    return
+                }
+                guard let data,
                       let audio = Self.audioBytes(from: data),
                       !audio.isEmpty else {
+                    self.notifyError("empty or unsupported audio response")
                     return
                 }
                 self.playLinear16(audio)
@@ -153,13 +164,35 @@ public final class XAITTS {
         return request
     }
 
-    private static func audioBytes(from data: Data) -> Data? {
+    static func audioBytes(from data: Data) -> Data? {
         if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-           let base64 = object["audio"] as? String,
-           let decoded = Data(base64Encoded: base64) {
-            return decoded
+           let base64 = object["audio"] as? String {
+            return Data(base64Encoded: base64)
+        } else if (try? JSONSerialization.jsonObject(with: data)) != nil {
+            return nil
         }
         return data
+    }
+
+    static func errorMessage(from data: Data?) -> String {
+        guard let data else {
+            return "no response body"
+        }
+        if let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let error = object["error"] as? String {
+                return error
+            }
+            if let error = object["error"] as? [String: Any],
+               let message = error["message"] as? String {
+                return message
+            }
+            if let message = object["message"] as? String {
+                return message
+            }
+        }
+        let text = String(decoding: data.prefix(240), as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return text.isEmpty ? "\(data.count) bytes" : text
     }
 
     private func playLinear16(_ data: Data) {
@@ -248,6 +281,13 @@ public final class XAITTS {
         let callback = onSpeakingChanged
         DispatchQueue.main.async {
             callback?(speaking)
+        }
+    }
+
+    private func notifyError(_ message: String) {
+        let callback = onError
+        DispatchQueue.main.async {
+            callback?(message)
         }
     }
 }

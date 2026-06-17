@@ -1163,13 +1163,22 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(VoiceSpeechTags.instruction.contains("avoid deep"))
 }
 
-@Test func clippyVoiceCatalogUsesOnlyGraceAndDaniel() {
-    #expect(ClippyVoice.default.id == "grace")
-    #expect(ClippyVoice.all.map(\.id) == ["grace", "daniel"])
-    #expect(ClippyVoice.grace.displayName == "Grace")
-    #expect(ClippyVoice.grace.detail == "Female · English")
-    #expect(ClippyVoice.daniel.displayName == "Daniel")
-    #expect(ClippyVoice.daniel.detail == "Male · English")
+@Test func clippyVoiceCatalogUsesOnlyLiveXAIWomanAndManVoices() {
+    #expect(ClippyVoice.default.id == "eve")
+    #expect(ClippyVoice.all.map(\.id) == ["eve", "leo"])
+    #expect(ClippyVoice.eve.displayName == "Eve")
+    #expect(ClippyVoice.eve.detail == "Female · Multilingual")
+    #expect(ClippyVoice.leo.displayName == "Leo")
+    #expect(ClippyVoice.leo.detail == "Male · Multilingual")
+    #expect(ClippyVoice.by(id: "grace") == nil)
+    #expect(ClippyVoice.by(id: "daniel") == nil)
+}
+
+@Test func xaiTTSRejectsJSONErrorBodiesAsAudio() throws {
+    let error = try JSONSerialization.data(withJSONObject: ["error": "Voice not found"])
+
+    #expect(XAITTS.audioBytes(from: error) == nil)
+    #expect(XAITTS.errorMessage(from: error) == "Voice not found")
 }
 
 @Test func computerUseRoutePolicyRequiresFreshWindowSnapshot() async throws {
