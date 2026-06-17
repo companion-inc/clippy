@@ -14,7 +14,7 @@ public final class ClippySoundBank {
         soundDataByID.count
     }
 
-    public init(packRoot: URL, isMuted: Bool = true) throws {
+    public init(packRoot: URL, isMuted: Bool = false) throws {
         self.isMuted = isMuted
         let data = try Data(contentsOf: packRoot.appending(path: "sounds-mp3.json"))
         let dataURIs = try JSONDecoder().decode([String: String].self, from: data)

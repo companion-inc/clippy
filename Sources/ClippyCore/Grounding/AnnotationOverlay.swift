@@ -377,8 +377,8 @@ final class AnnotationDrawView: NSView {
     private func drawPointDot(_ ctx: CGContext, center: CGPoint, palette: AnnotationPalette, progress: CGFloat) {
         let clamped = min(1, max(0, progress))
         let pulse = 1 - clamped
-        let outerRadius = (6 + 5 * pulse) * markScale
-        let innerRadius = 4 * markScale
+        let outerRadius = (13 + 7 * pulse) * markScale
+        let innerRadius = 6 * markScale
         let outer = CGRect(
             x: center.x - outerRadius,
             y: center.y - outerRadius,
@@ -387,10 +387,9 @@ final class AnnotationDrawView: NSView {
         )
 
         ctx.saveGState()
-        ctx.setAlpha(0.45 * pulse)
-        ctx.setFillColor(palette.primary.cgColor)
-        ctx.addEllipse(in: outer.standardized)
-        ctx.fillPath()
+        ctx.setAlpha(0.40 + 0.25 * pulse)
+        let outerPath = CGPath(ellipseIn: outer.standardized, transform: nil)
+        strokePath(ctx, path: outerPath, color: palette.primary, width: 3 * markScale)
         ctx.restoreGState()
 
         let inner = CGRect(
@@ -400,23 +399,16 @@ final class AnnotationDrawView: NSView {
             height: innerRadius * 2
         )
         let innerPath = CGPath(ellipseIn: inner.standardized, transform: nil)
-        ctx.setFillColor(palette.primary.cgColor)
+        ctx.setFillColor(palette.primary.withAlphaComponent(0.24).cgColor)
         ctx.addPath(innerPath)
         ctx.fillPath()
 
-        let outlineColor = palette.backing ?? .black
-        strokePath(ctx, path: innerPath, color: outlineColor, width: 2 * markScale)
-
-        let highlightRadius = max(1.5 * markScale, innerRadius * 0.38)
-        let highlight = CGRect(
-            x: center.x - innerRadius * 0.55,
-            y: center.y + innerRadius * 0.20,
-            width: highlightRadius * 2,
-            height: highlightRadius * 2
-        )
-        ctx.setFillColor(NSColor.white.withAlphaComponent(0.95).cgColor)
-        ctx.addEllipse(in: highlight)
-        ctx.fillPath()
+        if let backing = palette.backing {
+            strokePath(ctx, path: innerPath, color: backing.withAlphaComponent(0.55), width: 2 * markScale)
+            strokePath(ctx, path: innerPath, color: palette.primary, width: 1.5 * markScale)
+        } else {
+            strokePath(ctx, path: innerPath, color: palette.primary, width: 2 * markScale)
+        }
     }
 
     private func drawRegion(_ ctx: CGContext, rect: CGRect, palette: AnnotationPalette, fill: Bool) {

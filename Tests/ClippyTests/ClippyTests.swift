@@ -797,6 +797,10 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         for: "codex app-server stream failed",
         isError: true
     ) == "Brain error. Details saved in Clippy Logs.")
+    #expect(ClippyUserFacingError.replacement(
+        for: "The ChatGPT connection timed out before a final response.",
+        isError: true
+    ) == "ChatGPT timed out. Try again or switch to Claude.")
 }
 
 @Test func clippyUserFacingErrorNamesProviderUsageLimitsDirectly() {
@@ -808,6 +812,8 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(friendly?.contains("local error") == false)
     #expect(ClippyUserFacingError.providerLimit(for: "OpenAI rate limit exceeded") == .chatGPT)
     #expect(ClippyUserFacingError.providerLimit(for: "xAI insufficient credits") == .xAI)
+    #expect(ClippyUserFacingError.providerIssue(for: raw) == .usageLimit(.claude))
+    #expect(ClippyUserFacingError.providerIssue(for: "The ChatGPT connection timed out before a final response.") == .connection(.chatGPT))
 }
 
 @Test func brainFallbackPolicyOffersChatGPTForClaudeUsageLimit() {
@@ -833,6 +839,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(offer?.actionTitle == "Switch to ChatGPT")
     #expect(offer?.keepTitle == "Keep Claude")
     #expect(offer?.toModel == .gpt55)
+    #expect(offer?.reason == .usageLimit)
     #expect(BrainFallbackPolicy.offer(
         afterProviderLimitText: "OpenAI rate limit exceeded",
         attemptedModel: .gpt55,
@@ -841,6 +848,28 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     )?.toModel == .opus48)
     #expect(BrainFallbackPolicy.offer(
         afterProviderLimitText: "OpenAI rate limit exceeded",
+        attemptedModel: .gpt55,
+        isChatGPTAvailable: true,
+        isClaudeAvailable: false
+    ) == nil)
+}
+
+@Test func brainFallbackPolicyOffersClaudeForChatGPTTimeout() {
+    let raw = "The ChatGPT connection timed out before a final response."
+    let offer = BrainFallbackPolicy.offer(
+        afterProviderIssueText: raw,
+        attemptedModel: .gpt55,
+        isChatGPTAvailable: true,
+        isClaudeAvailable: true
+    )
+
+    #expect(offer?.prompt == "ChatGPT timed out. Switch to Claude?")
+    #expect(offer?.actionTitle == "Switch to Claude")
+    #expect(offer?.keepTitle == "Keep ChatGPT")
+    #expect(offer?.toModel == .opus48)
+    #expect(offer?.reason == .connection)
+    #expect(BrainFallbackPolicy.offer(
+        afterProviderIssueText: raw,
         attemptedModel: .gpt55,
         isChatGPTAvailable: true,
         isClaudeAvailable: false
@@ -920,6 +949,14 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(pack.animationNames.contains("Thinking"))
     #expect(pack.animationNames.contains("GestureLeft"))
     #expect(FileManager.default.fileExists(atPath: root.appending(path: "map.png").path))
+}
+
+@Test @MainActor func clippySoundBankLoadsOriginalSoundsUnmutedByDefault() throws {
+    let root = clippyResourceRoot()
+    let soundBank = try ClippySoundBank(packRoot: root)
+
+    #expect(soundBank.loadedSoundCount == 15)
+    #expect(soundBank.isMuted == false)
 }
 
 @Test func clippySpecOwnsBubbleCopyAndActivityAnimations() throws {

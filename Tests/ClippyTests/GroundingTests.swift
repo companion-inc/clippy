@@ -19,7 +19,7 @@ import Testing
     #expect(tags.map(\.isRenderableVisual) == [true, true, true, false])
 }
 
-@Test func pointTagCreatesTinyPrecisionDot() {
+@Test func pointTagCreatesSoftAttentionDot() {
     let mark = AnnotationMark(tag: .point(CGPoint(x: 120, y: 210), label: "menu", screen: nil))
     #expect(mark == .dot(center: CGPoint(x: 120, y: 210), progress: 1))
     #expect(mark?.visualBeatDuration == 0.22)

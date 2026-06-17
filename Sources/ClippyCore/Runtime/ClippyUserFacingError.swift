@@ -8,9 +8,29 @@ public enum ClippyUserFacingError {
         case unknown
     }
 
+    public enum ProviderIssue: Equatable, Sendable {
+        case usageLimit(ProviderLimit)
+        case connection(ProviderLimit)
+
+        public var provider: ProviderLimit {
+            switch self {
+            case .usageLimit(let provider), .connection(let provider):
+                return provider
+            }
+        }
+
+        public var isUsageLimit: Bool {
+            if case .usageLimit = self { return true }
+            return false
+        }
+    }
+
     public static func replacement(for technicalText: String, isError: Bool) -> String? {
         if let providerLimit = providerLimitMessage(for: technicalText) {
             return providerLimit
+        }
+        if let providerConnection = providerConnectionMessage(for: technicalText) {
+            return providerConnection
         }
         if isError {
             return message(for: technicalText)
@@ -26,7 +46,22 @@ public enum ClippyUserFacingError {
         if containsAny(lower, ["cua", "computer-use", "mcp", "tool", "browser", "click", "type"]) {
             return "Computer-control error. Details saved in Clippy Logs."
         }
-        if containsAny(lower, ["codex", "app-server", "model", "stream"]) {
+        if containsAny(lower, [
+            "anthropic",
+            "app-server",
+            "chatgpt",
+            "claude",
+            "codex",
+            "connection closed",
+            "connection timed out",
+            "couldn't stream",
+            "model",
+            "openai",
+            "returned nothing",
+            "stream",
+            "timed out",
+            "timeout",
+        ]) {
             return "Brain error. Details saved in Clippy Logs."
         }
         return "Local error. Details saved in Clippy Logs."
@@ -84,6 +119,41 @@ public enum ClippyUserFacingError {
         return .unknown
     }
 
+    public static func providerIssue(for text: String) -> ProviderIssue? {
+        if let limit = providerLimit(for: text) {
+            return .usageLimit(limit)
+        }
+        if let connection = providerConnection(for: text) {
+            return .connection(connection)
+        }
+        return nil
+    }
+
+    public static func providerConnection(for text: String) -> ProviderLimit? {
+        let lower = text.lowercased()
+        guard containsAny(lower, [
+            "connection closed",
+            "connection timed out",
+            "couldn't stream",
+            "returned nothing",
+            "stream disconnected",
+            "timed out",
+            "timeout",
+        ]) else {
+            return nil
+        }
+        if lower.contains("claude") || lower.contains("anthropic") {
+            return .claude
+        }
+        if lower.contains("chatgpt") || lower.contains("openai") || lower.contains("codex") {
+            return .chatGPT
+        }
+        if lower.contains("xai") || lower.contains("grok") {
+            return .xAI
+        }
+        return .unknown
+    }
+
     private static func providerLimitMessage(for text: String) -> String? {
         guard let providerLimit = providerLimit(for: text) else {
             return nil
@@ -97,6 +167,22 @@ public enum ClippyUserFacingError {
             return "xAI usage limit hit. Check xAI billing or credits."
         case .unknown:
             return "Usage limit hit. Check the account billing or usage settings."
+        }
+    }
+
+    private static func providerConnectionMessage(for text: String) -> String? {
+        guard let provider = providerConnection(for: text) else {
+            return nil
+        }
+        switch provider {
+        case .claude:
+            return "Claude timed out. Try again or switch to ChatGPT."
+        case .chatGPT:
+            return "ChatGPT timed out. Try again or switch to Claude."
+        case .xAI:
+            return "xAI timed out. Try again."
+        case .unknown:
+            return "Brain timed out. Try again or switch models."
         }
     }
 }

@@ -978,7 +978,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func offerProviderFallbackIfAvailable(_ text: String) -> Bool {
         guard let activeUserRequest,
               let offer = BrainFallbackPolicy.offer(
-            afterProviderLimitText: text,
+            afterProviderIssueText: text,
             attemptedModel: activeUserRequest.attemptedModel,
             isChatGPTAvailable: BrainDiscovery.codexSignedIn(),
             isClaudeAvailable: BrainDiscovery.claudeSignedIn()
@@ -995,7 +995,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         playActivityState(.attention)
         chatBubble?.showChoicesTyping(offer.prompt, choices: [
             .init(title: offer.actionTitle) { [weak self] in
-                self?.selectProviderAfterLimit(offer, retrying: request)
+                self?.selectProviderAfterIssue(offer, retrying: request)
             },
             .init(title: offer.keepTitle) { [weak self] in
                 self?.chatBubble?.showReplyForReading("Still on \(offer.fromProviderName).")
@@ -1012,9 +1012,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func selectProviderAfterLimit(_ offer: BrainFallbackOffer, retrying request: ActiveUserRequest) {
+    private func selectProviderAfterIssue(_ offer: BrainFallbackOffer, retrying request: ActiveUserRequest) {
         applySelectedModel(offer.toModel)
-        log("model selected: \(offer.toModel.id) after \(offer.fromProviderName) usage limit option; retrying")
+        log("model selected: \(offer.toModel.id) after \(offer.fromProviderName) provider fallback; retrying")
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
         sendMessage(
             request.text,

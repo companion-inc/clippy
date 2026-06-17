@@ -1,12 +1,23 @@
 import Foundation
 
 public struct BrainFallbackOffer: Equatable, Sendable {
+    public enum Reason: Equatable, Sendable {
+        case usageLimit
+        case connection
+    }
+
     public let fromProviderName: String
     public let toProviderName: String
     public let toModel: ClippyModel
+    public let reason: Reason
 
     public var prompt: String {
-        "\(fromProviderName) usage limit hit. Switch to \(toProviderName)?"
+        switch reason {
+        case .usageLimit:
+            return "\(fromProviderName) usage limit hit. Switch to \(toProviderName)?"
+        case .connection:
+            return "\(fromProviderName) timed out. Switch to \(toProviderName)?"
+        }
     }
 
     public var actionTitle: String {
@@ -25,18 +36,40 @@ public enum BrainFallbackPolicy {
         isChatGPTAvailable: Bool,
         isClaudeAvailable: Bool
     ) -> BrainFallbackOffer? {
-        switch (attemptedModel.backend, ClippyUserFacingError.providerLimit(for: text)) {
-        case (.claude, .claude?) where isChatGPTAvailable:
+        offer(
+            afterProviderIssueText: text,
+            attemptedModel: attemptedModel,
+            isChatGPTAvailable: isChatGPTAvailable,
+            isClaudeAvailable: isClaudeAvailable
+        )
+    }
+
+    public static func offer(
+        afterProviderIssueText text: String,
+        attemptedModel: ClippyModel,
+        isChatGPTAvailable: Bool,
+        isClaudeAvailable: Bool
+    ) -> BrainFallbackOffer? {
+        guard let issue = ClippyUserFacingError.providerIssue(for: text) else {
+            return nil
+        }
+        let reason: BrainFallbackOffer.Reason = issue.isUsageLimit ? .usageLimit : .connection
+        switch (attemptedModel.backend, issue.provider) {
+        case (.claude, .claude), (.claude, .unknown):
+            guard isChatGPTAvailable else { return nil }
             return BrainFallbackOffer(
                 fromProviderName: "Claude",
                 toProviderName: "ChatGPT",
-                toModel: .gpt55
+                toModel: .gpt55,
+                reason: reason
             )
-        case (.codex, .chatGPT?) where isClaudeAvailable:
+        case (.codex, .chatGPT), (.codex, .unknown):
+            guard isClaudeAvailable else { return nil }
             return BrainFallbackOffer(
                 fromProviderName: "ChatGPT",
                 toProviderName: "Claude",
-                toModel: .opus48
+                toModel: .opus48,
+                reason: reason
             )
         default:
             return nil
