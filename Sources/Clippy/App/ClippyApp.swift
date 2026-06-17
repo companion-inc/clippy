@@ -16,6 +16,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var retroMenu = RetroMenuController()
     private var ptt: PushToTalkMonitor?
+    private var textInputShortcut: KeyboardShortcutMonitor?
     private var speech: SpeechCapture?
     private var deepgramSTT: DeepgramVoiceCapture?
     private var tts: XAITTS?
@@ -58,6 +59,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }()
     private var isTurnRunning = false
     private var currentBrainTask: Task<Void, Never>?
+    private var activeUserRequest: ActiveUserRequest?
     private var lastShot: ScreenPerception.Screenshot?
     private var overlayDismiss: DispatchWorkItem?
     private var turnProgressItems: [DispatchWorkItem] = []
@@ -74,6 +76,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var guidedHoverRest: DispatchWorkItem?
     private var nextGuidedTargetRound = 0
     private let guidedTargetMaxRounds = 4
+
+    private struct ActiveUserRequest: Sendable {
+        let text: String
+        let inputMode: AssistantInputMode
+        let attemptedModel: ClippyModel
+    }
 
     private struct VisualGroundingContext: Sendable {
         let originalUserText: String
@@ -144,6 +152,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         disarmGuidedTarget(reason: "terminate")
+        textInputShortcut?.stop()
+        ptt?.stop()
         log("applicationWillTerminate")
     }
 
@@ -152,6 +162,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         startClippy(Self.makeClippy(bodyScale: bodyScale))
         overlay = AnnotationOverlayWindow()
         setUpVoice()
+        setUpShortcuts()
         startCommandChannel()
         showInitialSetupIfNeeded()
     }
@@ -194,6 +205,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         bubble.showMessageForReading(clippy.spec.greetingText)
         scheduleDebugSnapshots()
+    }
+
+    private func setUpShortcuts() {
+        let shortcut = KeyboardShortcutMonitor(keyCode: 49, modifiers: [.control]) { [weak self] in
+            self?.showTextInputFromShortcut()
+        }
+        textInputShortcut = shortcut
+        shortcut.start()
     }
 
     private func scheduleNextIdle() {
@@ -492,6 +511,19 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func toggleChat() {
+        guard chatBubble?.isInputMode != true else {
+            chatBubble?.hide()
+            return
+        }
+        showTextInputBubble()
+    }
+
+    private func showTextInputFromShortcut() {
+        log("text shortcut: open input")
+        showTextInputBubble()
+    }
+
+    private func showTextInputBubble() {
         guard let clippy, let chatBubble else {
             return
         }
@@ -500,7 +532,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         chatBubble.setAnchor(clippy.frame)
         if chatBubble.isInputMode {
-            chatBubble.hide()
+            chatBubble.focusInput()
             return
         }
         clippy.play(clippy.spec.openInputAnimationName) { [weak clippy] _, state in
@@ -511,7 +543,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         chatBubble.openInput()
     }
 
-    private func sendMessage(_ text: String, inputMode: AssistantInputMode = .text) {
+    private func sendMessage(
+        _ text: String,
+        inputMode: AssistantInputMode = .text,
+        forcedModel: ClippyModel? = nil,
+        initialThinkingStatus: String? = nil
+    ) {
         guard let chatBubble else {
             return
         }
@@ -522,10 +559,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             }
             return
         }
+        let forceSelectedProvider = forcedModel != nil
         let needsToolLane = ClippyAgentInstructions.shouldUseCodexToolLane(text: text, inputMode: inputMode)
         let needsComputerControl = ClippyAgentInstructions.shouldUseComputerControl(text: text, inputMode: inputMode)
         let needsAnnotationTool = ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: text, inputMode: inputMode)
-        let activeBrain = needsToolLane ? (computerControlBrain() ?? conversation) : conversation
+        let toolLaneBrain = (!forceSelectedProvider && needsToolLane) ? computerControlBrain() : nil
+        let activeBrain = toolLaneBrain ?? conversation
+        let attemptedModel = forcedModel ?? (toolLaneBrain == nil ? selectedModel : .gpt55)
         guard let activeBrain else {
             if isClippyHidden == false {
                 syncBubbleAnchorToClippy()
@@ -541,6 +581,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         cancelTurnProgressUpdates()
         pendingIdle?.cancel()
         log("user: \(text)")
+        activeUserRequest = ActiveUserRequest(text: text, inputMode: inputMode, attemptedModel: attemptedModel)
 
         let brain = activeBrain
         if needsComputerControl {
@@ -566,7 +607,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if isClippyHidden == false {
             syncBubbleAnchorToClippy()
             chatBubble.recordUserLine(text)
-            chatBubble.showThinking(shot == nil ? "Starting the brain" : "Sending the screen")
+            chatBubble.showThinking(initialThinkingStatus ?? (shot == nil ? "Starting the brain" : "Sending the screen"))
         }
         scheduleTurnProgressUpdates(wantsScreen: wantsScreen, attachedScreenshot: shot != nil)
         scheduleTurnTimeout(reason: needsAnnotationTool ? "visual-grounding" : "message")
@@ -769,7 +810,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             return
         }
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
-        if offerChatGPTAfterClaudeLimitIfAvailable(turn.text) {
+        if offerProviderFallbackIfAvailable(turn.text) {
             log("clippy: \(turn.text.prefix(120))")
             return
         }
@@ -824,28 +865,30 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func offerChatGPTAfterClaudeLimitIfAvailable(_ text: String) -> Bool {
-        guard BrainFallbackPolicy.shouldOfferChatGPTSwitch(
+    private func offerProviderFallbackIfAvailable(_ text: String) -> Bool {
+        guard let activeUserRequest,
+              let offer = BrainFallbackPolicy.offer(
             afterProviderLimitText: text,
-            selectedModel: selectedModel,
-            isChatGPTAvailable: BrainDiscovery.codexSignedIn()
+            attemptedModel: activeUserRequest.attemptedModel,
+            isChatGPTAvailable: BrainDiscovery.codexSignedIn(),
+            isClaudeAvailable: BrainDiscovery.claudeSignedIn()
         )
         else {
             return false
         }
-        showChatGPTFallbackChoice()
+        showProviderFallbackChoice(offer, retrying: activeUserRequest)
         return true
     }
 
-    private func showChatGPTFallbackChoice() {
+    private func showProviderFallbackChoice(_ offer: BrainFallbackOffer, retrying request: ActiveUserRequest) {
         overlay?.clear()
         playActivityState(.attention)
-        chatBubble?.showChoicesTyping("Claude usage limit hit. Switch to ChatGPT?", choices: [
-            .init(title: "Switch to ChatGPT") { [weak self] in
-                self?.selectChatGPTAfterClaudeLimit()
+        chatBubble?.showChoicesTyping(offer.prompt, choices: [
+            .init(title: offer.actionTitle) { [weak self] in
+                self?.selectProviderAfterLimit(offer, retrying: request)
             },
-            .init(title: "Keep Claude") { [weak self] in
-                self?.chatBubble?.showReplyForReading("Still on Claude.")
+            .init(title: offer.keepTitle) { [weak self] in
+                self?.chatBubble?.showReplyForReading("Still on \(offer.fromProviderName).")
             },
         ])
         let animationName = clippy?.spec.replyAnimationName ?? "Explain"
@@ -859,11 +902,16 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func selectChatGPTAfterClaudeLimit() {
-        applySelectedModel(.gpt55)
-        log("model selected: \(ClippyModel.gpt55.id) after Claude usage limit option")
+    private func selectProviderAfterLimit(_ offer: BrainFallbackOffer, retrying request: ActiveUserRequest) {
+        applySelectedModel(offer.toModel)
+        log("model selected: \(offer.toModel.id) after \(offer.fromProviderName) usage limit option; retrying")
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
-        chatBubble?.showReplyForReading("Switched to ChatGPT.")
+        sendMessage(
+            request.text,
+            inputMode: request.inputMode,
+            forcedModel: offer.toModel,
+            initialThinkingStatus: "Switched to \(offer.toProviderName). Trying again"
+        )
     }
 
     private func shouldRepairVisualGrounding(
@@ -2066,11 +2114,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             } else if command.hasPrefix("askfront:") {
                 askFront(command: String(command.dropFirst("askfront:".count)))
             } else if command == "open" {
-                if isClippyHidden {
-                    showClippy()
-                }
-                if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
-                chatBubble?.openInput()
+                showTextInputBubble()
             } else if command == "snapshot" {
                 writeSnapshot(index: 99, directory: snapshotDirectory ?? "/tmp")
                 writeChatSnapshot(directory: snapshotDirectory ?? "/tmp")

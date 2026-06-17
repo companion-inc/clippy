@@ -288,6 +288,20 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         window.makeFirstResponder(inputTextView)
     }
 
+    public func focusInput() {
+        guard mode == .input, window.isVisible else {
+            openInput()
+            return
+        }
+        stopTyping()
+        stopThinking()
+        cancelAutoHide()
+        attachToAnchorWindow()
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(inputTextView)
+    }
+
     public func toggleInput() {
         if mode == .input && window.isVisible { hide() } else { openInput() }
     }

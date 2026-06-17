@@ -696,6 +696,12 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 
 @Test func brainFallbackPolicyOffersChatGPTForClaudeUsageLimit() {
     let raw = "You've hit your monthly spend limit · raise it at claude.ai/settings/usage"
+    let offer = BrainFallbackPolicy.offer(
+        afterProviderLimitText: raw,
+        attemptedModel: .opus48,
+        isChatGPTAvailable: true,
+        isClaudeAvailable: true
+    )
 
     #expect(BrainFallbackPolicy.shouldOfferChatGPTSwitch(
         afterProviderLimitText: raw,
@@ -707,10 +713,42 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         selectedModel: .opus48,
         isChatGPTAvailable: false
     ) == false)
-    #expect(BrainFallbackPolicy.shouldOfferChatGPTSwitch(
+    #expect(offer?.prompt == "Claude usage limit hit. Switch to ChatGPT?")
+    #expect(offer?.actionTitle == "Switch to ChatGPT")
+    #expect(offer?.keepTitle == "Keep Claude")
+    #expect(offer?.toModel == .gpt55)
+    #expect(BrainFallbackPolicy.offer(
         afterProviderLimitText: "OpenAI rate limit exceeded",
-        selectedModel: .gpt55,
-        isChatGPTAvailable: true
+        attemptedModel: .gpt55,
+        isChatGPTAvailable: true,
+        isClaudeAvailable: true
+    )?.toModel == .opus48)
+    #expect(BrainFallbackPolicy.offer(
+        afterProviderLimitText: "OpenAI rate limit exceeded",
+        attemptedModel: .gpt55,
+        isChatGPTAvailable: true,
+        isClaudeAvailable: false
+    ) == nil)
+}
+
+@Test func keyboardShortcutMatcherRequiresExactControlSpace() {
+    #expect(KeyboardShortcutMonitor.matches(
+        keyCode: 49,
+        modifierFlags: [.control],
+        requiredKeyCode: 49,
+        requiredModifiers: [.control]
+    ))
+    #expect(KeyboardShortcutMonitor.matches(
+        keyCode: 49,
+        modifierFlags: [.control, .option],
+        requiredKeyCode: 49,
+        requiredModifiers: [.control]
+    ) == false)
+    #expect(KeyboardShortcutMonitor.matches(
+        keyCode: 36,
+        modifierFlags: [.control],
+        requiredKeyCode: 49,
+        requiredModifiers: [.control]
     ) == false)
 }
 
