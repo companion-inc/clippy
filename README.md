@@ -40,6 +40,8 @@ The product path is local-first:
   renderer, and app packaging live in this repository.
 - The assistant brain runs through locally installed CLI sessions: Claude Code
   through `claude`, or Codex through `codex app-server`.
+- First launch opens a retro setup screen that detects Codex, Claude Code, voice
+  keys, and Mac permissions, then guides install/sign-in for the missing pieces.
 - Voice input uses Deepgram when `DEEPGRAM_API_KEY` is configured, with the
   Apple speech stack as the local fallback. Spoken replies use xAI TTS.
 - Computer-use calls run through the Clippy-bundled Cua helper in packaged

@@ -10,14 +10,52 @@ import Foundation
 /// We deliberately check files, not the Keychain, so detection never pops a
 /// "Clippy wants to use a credential" prompt.
 public enum BrainDiscovery {
+    public struct Status: Equatable, Sendable {
+        public let backend: ClippyModel.Backend
+        public let binaryPath: String?
+        public let signedIn: Bool
+
+        public var isInstalled: Bool {
+            binaryPath != nil
+        }
+
+        public var statusText: String {
+            if signedIn { return "Ready" }
+            if isInstalled { return "Installed, not signed in" }
+            return "Not installed"
+        }
+    }
+
+    public static func claudeStatus() -> Status {
+        let path = LocalCLIConversation.locateBinary()
+        return Status(backend: .claude, binaryPath: path, signedIn: claudeSignedIn(binaryPath: path))
+    }
+
+    public static func codexStatus() -> Status {
+        let path = CodexConversation.locateBinary()
+        return Status(backend: .codex, binaryPath: path, signedIn: codexSignedIn(binaryPath: path))
+    }
+
+    public static func anyBrainSignedIn() -> Bool {
+        codexSignedIn() || claudeSignedIn()
+    }
+
     public static func claudeSignedIn() -> Bool {
-        guard LocalCLIConversation.locateBinary() != nil else { return false }
+        claudeSignedIn(binaryPath: LocalCLIConversation.locateBinary())
+    }
+
+    private static func claudeSignedIn(binaryPath: String?) -> Bool {
+        guard binaryPath != nil else { return false }
         if ProcessInfo.processInfo.environment["ANTHROPIC_API_KEY"]?.isEmpty == false { return true }
         return anyFileExists([".claude/.credentials.json", ".claude.json"])
     }
 
     public static func codexSignedIn() -> Bool {
-        guard CodexConversation.locateBinary() != nil else { return false }
+        codexSignedIn(binaryPath: CodexConversation.locateBinary())
+    }
+
+    private static func codexSignedIn(binaryPath: String?) -> Bool {
+        guard binaryPath != nil else { return false }
         if ProcessInfo.processInfo.environment["OPENAI_API_KEY"]?.isEmpty == false { return true }
         return anyFileExists([".codex/auth.json"])
     }

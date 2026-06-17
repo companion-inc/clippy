@@ -5,6 +5,7 @@ import ClippyCore
 @MainActor
 final class ClippyApp: NSObject, NSApplicationDelegate {
     private static let bodyScaleKey = "ClippyBodyScale"
+    private static let setupCompletedKey = "ClippySetupCompleted"
 
     private var clippy: Clippy?
     private var pendingIdle: DispatchWorkItem?
@@ -19,6 +20,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var deepgramSTT: DeepgramVoiceCapture?
     private var tts: XAITTS?
     private var providerKeys: ProviderKeysController?
+    private var brainSetup: BrainSetupController?
     private var usingDeepgram = false
     private var codexComputerControlConversation: (any AgentBrain)?
     private var sttEnabled = UserDefaults.standard.object(forKey: "ClippySTTEnabled") as? Bool ?? true
@@ -104,6 +106,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         setUpBrain()
         setUpVoice()
         startCommandChannel()
+        showInitialSetupIfNeeded()
     }
 
     // MARK: - Clippy setup
@@ -256,11 +259,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             await MainActor.run { self?.ptt?.start() }
         }
 
-        if !ClippySecrets.missingRequiredProviderNames.isEmpty {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.showProviderKeys()
-            }
-        }
     }
 
     private func configureVoiceProviders() {
@@ -1224,6 +1222,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         items.append(.submenu("Voice", detail: selectedVoice.id, items: voiceItems))
 
         items.append(.separator())
+        items.append(.action("Setup...") { [weak self] in
+            self?.showBrainSetup()
+        })
         items.append(.action("Configure API Key...") { [weak self] in
             self?.showProviderKeys()
         })
@@ -1355,9 +1356,47 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if providerKeys == nil {
             providerKeys = ProviderKeysController { [weak self] in
                 self?.configureVoiceProviders()
+                self?.brainSetup?.refresh()
             }
         }
         providerKeys?.showWindow(nil)
+    }
+
+    private func showInitialSetupIfNeeded() {
+        let setupCompleted = UserDefaults.standard.bool(forKey: Self.setupCompletedKey)
+        let shouldShowSetup = !setupCompleted || !BrainDiscovery.anyBrainSignedIn()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self else { return }
+            if shouldShowSetup {
+                self.showBrainSetup()
+            } else if !ClippySecrets.missingRequiredProviderNames.isEmpty {
+                self.showProviderKeys()
+            }
+        }
+    }
+
+    private func showBrainSetup() {
+        if brainSetup == nil {
+            brainSetup = BrainSetupController(
+                selectedModelID: selectedModel.id,
+                actions: BrainSetupController.Actions(
+                    selectModel: { [weak self] id in
+                        self?.markSetupCompleted()
+                        self?.selectModel(id: id)
+                    },
+                    openVoiceKeys: { [weak self] in self?.showProviderKeys() },
+                    openAccessibility: { [weak self] in self?.grantAccessibility() },
+                    openScreenRecording: { [weak self] in self?.grantScreenRecording() },
+                    openMicrophone: { [weak self] in self?.grantMicrophone() },
+                    finish: { [weak self] in self?.markSetupCompleted() }
+                )
+            )
+        }
+        brainSetup?.showWindow(nil)
+    }
+
+    private func markSetupCompleted() {
+        UserDefaults.standard.set(true, forKey: Self.setupCompletedKey)
     }
 
     private func openPrivacyPane(_ anchor: String) {
