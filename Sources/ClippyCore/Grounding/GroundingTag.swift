@@ -64,6 +64,15 @@ public enum GroundingTag: Equatable, Sendable {
         }
     }
 
+    /// Whether this directive draws visible screen guidance. `[ACT]` changes
+    /// Clippy's body animation, but it is not a screen grounding mark.
+    public var isRenderableVisual: Bool {
+        switch self {
+        case .point, .target, .hover, .highlight, .shape: return true
+        case .act: return false
+        }
+    }
+
     /// Map this tag's coordinates from the screenshot's pixel space (what the model
     /// emitted, having Read the image) into global AppKit screen space, so the overlay
     /// and Clippy's body land where the model actually meant. Radii scale with the

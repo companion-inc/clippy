@@ -668,14 +668,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func renderableGroundingTagCount(in tags: [GroundingTag]) -> Int {
-        tags.filter { tag in
-            switch tag {
-            case .point, .highlight, .shape:
-                return true
-            case .target, .hover, .act:
-                return false
-            }
-        }.count
+        tags.filter(\.isRenderableVisual).count
     }
 
     private func repairVisualGrounding(

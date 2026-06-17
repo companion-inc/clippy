@@ -9,6 +9,15 @@ import Testing
     #expect(parsed.tags == [.target(CGPoint(x: 120, y: 210), radius: 40, label: "add modifier", screen: nil)])
 }
 
+@Test func targetAndHoverCountAsRenderableVisualGuidance() {
+    let tags: [GroundingTag] = [
+        .target(CGPoint(x: 120, y: 210), radius: 40, label: "add modifier", screen: nil),
+        .hover(CGPoint(x: 80, y: 90), radius: 24, label: "menu", screen: nil),
+        .act(animation: "Explain"),
+    ]
+    #expect(tags.map(\.isRenderableVisual) == [true, true, false])
+}
+
 @Test func parsesPointNoneAsNoDirective() {
     let parsed = GroundingParser.parse("All set. [POINT:none]")
     #expect(parsed.tags.isEmpty)

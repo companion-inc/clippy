@@ -131,7 +131,7 @@ internal tool plumbing.
     public static let visualGroundingTurnContract = """
     [Clippy-style guided visual turn]
     The user is asking for visible screen grounding or drawing. Read the current screenshot, then make the screen carry the answer with inline grounding tags.
-    Your final response must include at least one [POINT], [HIGHLIGHT], or [SHAPE] tag unless the screenshot is unavailable or unreadable.
+    Your final response must include at least one [POINT], [TARGET], [HOVER], [HIGHLIGHT], or [SHAPE] tag unless the screenshot is unavailable or unreadable.
     For drawn explanations, prefer ordered [SHAPE:line|arrow|curve|polygon:...] construction beats over label-only pointing; each separate SHAPE beat is drawn in order.
     For math, diagram, spatial, or area explanations, draw the missing construction when that is what teaches the concept: use [SHAPE:polygon:...] beats for regions/areas and [SHAPE:line]/[SHAPE:arrow] beats for edges or direction.
     Do not merely underline existing labels when the requested explanation depends on constructed shapes or regions.
@@ -170,7 +170,7 @@ internal tool plumbing.
         Previous assistant response:
         \(previousAssistantText)
 
-        Now produce the corrected final response. Read the screenshot path above, derive coordinates from that image, and include renderable [POINT], [HIGHLIGHT], or [SHAPE] tags. Keep the spoken text short. Do not use a subject-specific template.
+        Now produce the corrected final response. Read the screenshot path above, derive coordinates from that image, and include renderable [POINT], [TARGET], [HOVER], [HIGHLIGHT], or [SHAPE] tags. Keep the spoken text short. Do not use a subject-specific template.
         """)
         return blocks.joined(separator: "\n\n")
     }
