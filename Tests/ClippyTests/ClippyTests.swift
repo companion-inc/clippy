@@ -1114,12 +1114,13 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(VoiceSpeechTags.strip(text) == "that worked")
     #expect(VoiceSpeechTags.instruction.contains("[chuckle]"))
     #expect(VoiceSpeechTags.instruction.contains("<whisper>"))
+    #expect(VoiceSpeechTags.instruction.contains("avoid deep"))
 }
 
-@Test func clippyVoiceDefaultUsesClassicRexVoice() {
-    #expect(ClippyVoice.default.id == "rex")
-    #expect(ClippyVoice.all.first?.id == "rex")
-    #expect(ClippyVoice.default.displayName == "Clippy - classic")
+@Test func clippyVoiceDefaultUsesBrightEveVoice() {
+    #expect(ClippyVoice.default.id == "eve")
+    #expect(ClippyVoice.all.first?.id == "eve")
+    #expect(ClippyVoice.default.displayName == "Clippy - bright")
 }
 
 @Test func computerUseRoutePolicyRequiresFreshWindowSnapshot() async throws {

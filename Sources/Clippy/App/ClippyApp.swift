@@ -22,6 +22,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var providerKeys: ProviderKeysController?
     private var isOnboardingActive = false
     private var usingDeepgram = false
+    private var isVoiceCaptureActive = false
+    private var voicePartialText = ""
+    private var hideBubbleWhenSpeechFinishes = false
     private var codexComputerControlConversation: (any AgentBrain)?
     private var sttEnabled = UserDefaults.standard.object(forKey: "ClippySTTEnabled") as? Bool ?? true
     private var ttsEnabled = UserDefaults.standard.object(forKey: "ClippyTTSEnabled") as? Bool ?? true
@@ -274,11 +277,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func setUpVoice() {
         configureVoiceProviders()
-        deepgramSTT?.onPartialTranscript = { [weak self] text in
-            guard let self, !self.isTurnRunning, self.isClippyHidden == false else { return }
-            if let frame = self.clippy?.frame { self.chatBubble?.setAnchor(frame) }
-            self.chatBubble?.showStatus(text)
-        }
 
         let monitor = PushToTalkMonitor(modifiers: [.control, .option])
         monitor.onBegin = { [weak self] in self?.beginVoiceTurn() }
@@ -301,10 +299,31 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func configureVoiceProviders() {
         deepgramSTT?.cancel()
         tts?.stop()
+        isVoiceCaptureActive = false
+        usingDeepgram = false
         deepgramSTT = DeepgramVoiceCapture()
         tts = nil
         speech = deepgramSTT == nil ? SpeechCapture() : nil
+        installVoiceProviderCallbacks()
         log("voice: deepgram STT=\(deepgramSTT != nil) xAI TTS key=\(ClippySecrets.xaiAPIKey != nil)")
+    }
+
+    private func installVoiceProviderCallbacks() {
+        deepgramSTT?.onPartialTranscript = { [weak self] text in
+            self?.showLiveTranscript(text)
+        }
+        speech?.onPartialTranscript = { [weak self] text in
+            self?.showLiveTranscript(text)
+        }
+        if let tts {
+            installTTSCallbacks(tts)
+        }
+    }
+
+    private func installTTSCallbacks(_ tts: XAITTS) {
+        tts.onSpeakingChanged = { [weak self] speaking in
+            self?.handleTTSActivity(speaking)
+        }
     }
 
     private func activeTTS() -> XAITTS? {
@@ -316,7 +335,37 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             return nil
         }
         self.tts = tts
+        installTTSCallbacks(tts)
         return tts
+    }
+
+    private func showLiveTranscript(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              isVoiceCaptureActive,
+              !isTurnRunning,
+              isClippyHidden == false else {
+            return
+        }
+        voicePartialText = trimmed
+        if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
+        chatBubble?.showStatus(trimmed)
+    }
+
+    private func handleTTSActivity(_ speaking: Bool) {
+        if speaking {
+            pendingIdle?.cancel()
+            return
+        }
+        if hideBubbleWhenSpeechFinishes {
+            hideBubbleWhenSpeechFinishes = false
+            if isClippyHidden == false, !isTurnRunning {
+                chatBubble?.hide()
+            }
+        }
+        if !isTurnRunning {
+            scheduleNextIdle()
+        }
     }
 
     private func beginVoiceTurn() {
@@ -332,22 +381,31 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         // Clippy is currently saying or still generating, instead of being blocked.
         interruptSpeechAndResponse()
         usingDeepgram = false
+        isVoiceCaptureActive = false
+        voicePartialText = ""
+        hideBubbleWhenSpeechFinishes = false
+        var captureStarted = false
         if let deepgram = deepgramSTT {
             do {
                 try deepgram.start()
                 usingDeepgram = true
+                captureStarted = true
             } catch {
                 log("deepgram start failed: \(error)")
             }
         }
         if !usingDeepgram {
+            guard let speech else { return }
             do {
-                try speech?.start()
+                try speech.start()
+                captureStarted = true
             } catch {
                 log("apple stt start failed: \(error)")
                 return
             }
         }
+        guard captureStarted else { return }
+        isVoiceCaptureActive = true
         pendingIdle?.cancel()
         if isClippyHidden == false {
             if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
@@ -357,6 +415,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func endVoiceTurn() {
+        guard isVoiceCaptureActive else { return }
+        isVoiceCaptureActive = false
         if usingDeepgram, let deepgram = deepgramSTT {
             deepgram.finish { [weak self] transcript in self?.handleTranscript(transcript) }
             return
@@ -456,7 +516,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         playActivityState(.thinking)
         // Tell the brain how this turn arrives and leaves: spoken-and-transcribed input
         // (read past STT typos) and/or spoken output (write for the ear).
-        let speaking = ttsEnabled && tts != nil
+        let speaking = ttsEnabled && ClippySecrets.xaiAPIKey != nil
         let brainMessage = ClippyAgentInstructions.brainMessage(
             text: text,
             screenshotPath: shot?.path,
@@ -622,6 +682,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         tts?.stop()
         cancelTurnProgressUpdates()
         cancelTurnTimeout()
+        isVoiceCaptureActive = false
+        hideBubbleWhenSpeechFinishes = false
         turnHasStreamingText = false
         isTurnRunning = false
     }
@@ -676,8 +738,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         // Runtime failures get a Clippy-shaped sentence; normal replies show only
         // the stripped speech. A tag-only reply shows nothing — never raw brackets.
         let spoken = VoiceSpeechTags.strip(parsed.spokenText)
+        let replyTTS = turn.isError ? nil : activeTTS()
         if spoken.isEmpty {
             chatBubble?.hide()
+        } else if replyTTS != nil {
+            hideBubbleWhenSpeechFinishes = true
+            chatBubble?.showReply(spoken)
         } else {
             chatBubble?.showReplyForReading(spoken)
         }
@@ -1112,6 +1178,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         permissionDrag?.hide()
         deepgramSTT?.cancel()
         usingDeepgram = false
+        isVoiceCaptureActive = false
+        voicePartialText = ""
+        hideBubbleWhenSpeechFinishes = false
         _ = speech?.stop()
         tts?.stop()
         clippy?.windowController.hide()
@@ -1432,7 +1501,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func showWelcomeStep() {
         showOnboardingStep(
-            "Hi, I'm Clippy, your new desktop buddy. Let's get you set up.",
+            "Hey, I'm Clippy. I'm your new desktop buddy.",
             animation: "Greeting",
             choices: [
                 .init(title: "Next") { [weak self] in self?.showBrainChoiceStep() },

@@ -36,8 +36,8 @@ public enum VoiceSpeechTags {
 
     public static let instruction = """
     xAI speech tags are available for natural spoken expression. Use them sparingly \
-    for a Clippy-like delivery: bright, quick, crisp, and lightly expressive. Avoid soft or whispery \
-    delivery unless the user asks for it. Instant tags: \
+    for a Clippy-like delivery: bright, quick, crisp, upbeat, and lightly expressive. Prefer a lighter \
+    desktop-buddy sound; avoid deep, soft, breathy, or whispery delivery unless the user asks for it. Instant tags: \
     \(instant.joined(separator: ", ")). Wrapping tags wrap complete phrases with \
     matching closing tags: \(wrapping.map { "<\($0)>" }.joined(separator: ", ")). \
     Use only these tags; SSML is not supported. Do not tag every sentence, and never \

@@ -14,6 +14,9 @@ public final class SpeechCapture {
     private var task: SFSpeechRecognitionTask?
     private var latest = ""
 
+    /// Fires on the main queue with live Apple Speech partials when Deepgram is unavailable.
+    public var onPartialTranscript: ((String) -> Void)?
+
     public init() {}
 
     /// Requests Speech Recognition + Microphone access. Returns true only if both granted.
@@ -55,7 +58,13 @@ public final class SpeechCapture {
 
         task = recognizer.recognitionTask(with: request) { [weak self] result, _ in
             if let result {
-                self?.latest = result.bestTranscription.formattedString
+                let text = result.bestTranscription.formattedString
+                self?.latest = text
+                if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    DispatchQueue.main.async { [weak self] in
+                        self?.onPartialTranscript?(text)
+                    }
+                }
             }
         }
     }

@@ -35,6 +35,9 @@ public final class XAITTS {
     private var generation = 0
     private var pcmCarry = Data()
     private var idleWork: DispatchWorkItem?
+    private var lastNotifiedSpeaking = false
+
+    public var onSpeakingChanged: ((Bool) -> Void)?
 
     public var isSpeaking: Bool {
         stateQueue.sync {
@@ -60,6 +63,7 @@ public final class XAITTS {
         guard !trimmed.isEmpty else { return }
         stateQueue.async {
             self.active = true
+            self.notifySpeakingChanged(true)
             self.queuedText.append(trimmed)
             self.drainTextQueue()
         }
@@ -83,6 +87,7 @@ public final class XAITTS {
             self.pcmCarry.removeAll()
             self.active = false
             self.playerNode.stop()
+            self.notifySpeakingChanged(false)
         }
     }
 
@@ -229,10 +234,20 @@ public final class XAITTS {
                 guard let self else { return }
                 if self.queuedText.isEmpty, !self.requestInFlight, self.pendingAudioBuffers == 0 {
                     self.active = false
+                    self.notifySpeakingChanged(false)
                 }
             }
         }
         idleWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.75, execute: work)
+    }
+
+    private func notifySpeakingChanged(_ speaking: Bool) {
+        guard speaking != lastNotifiedSpeaking else { return }
+        lastNotifiedSpeaking = speaking
+        let callback = onSpeakingChanged
+        DispatchQueue.main.async {
+            callback?(speaking)
+        }
     }
 }
