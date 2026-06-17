@@ -1,6 +1,5 @@
 import AppKit
 import AVFoundation
-import Carbon.HIToolbox
 import Foundation
 import Testing
 @testable import ClippyCore
@@ -833,28 +832,6 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 
     #expect(count > 1)
     #expect(first === cached)
-}
-
-@Test @MainActor func globalHotkeyMatchesOnlyExactToggleChord() {
-    #expect(GlobalHotkeyMonitor.matches(
-        keyCode: GlobalHotkeyMonitor.toggleVisibilityKeyCode,
-        modifierFlags: [.control, .option, .command]
-    ))
-    #expect(GlobalHotkeyMonitor.matches(
-        keyCode: GlobalHotkeyMonitor.toggleVisibilityKeyCode,
-        modifierFlags: [.control, .option]
-    ) == false)
-    #expect(GlobalHotkeyMonitor.matches(
-        keyCode: GlobalHotkeyMonitor.toggleVisibilityKeyCode,
-        modifierFlags: [.control, .option, .command, .shift]
-    ) == false)
-    #expect(GlobalHotkeyMonitor.matches(
-        keyCode: 9,
-        modifierFlags: [.control, .option, .command]
-    ) == false)
-
-    #expect(GlobalHotkeyMonitor.carbonModifierMask(for: [.control, .option, .command])
-        == UInt32(controlKey | optionKey | cmdKey))
 }
 
 @Test @MainActor func clippyAnimatorStopsAfterOneShotAnimationExits() throws {

@@ -15,7 +15,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var retroMenu = RetroMenuController()
     private var ptt: PushToTalkMonitor?
-    private var visibilityHotkey: GlobalHotkeyMonitor?
     private var speech: SpeechCapture?
     private var deepgramSTT: DeepgramVoiceCapture?
     private var tts: XAITTS?
@@ -104,7 +103,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         overlay = AnnotationOverlayWindow()
         setUpBrain()
         setUpVoice()
-        setUpVisibilityHotkey()
         startCommandChannel()
     }
 
@@ -275,7 +273,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func beginVoiceTurn() {
-        guard sttEnabled, conversation != nil, isClippyHidden == false else {
+        if isClippyHidden {
+            showClippy()
+            log("wake shortcut: clippy shown")
+            return
+        }
+        guard sttEnabled, conversation != nil else {
             return
         }
         // Barge-in (the Clippy behavior): starting to talk interrupts whatever
@@ -1042,17 +1045,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - Visibility shortcut
-
-    private func setUpVisibilityHotkey() {
-        let monitor = GlobalHotkeyMonitor()
-        monitor.onPress = { [weak self] in
-            self?.toggleClippyVisibility()
-        }
-        monitor.start()
-        visibilityHotkey = monitor
-        log("visibility hotkey: \(GlobalHotkeyMonitor.toggleVisibilityLabel)")
-    }
+    // MARK: - Visibility
 
     @objc private func toggleClippyVisibility() {
         if isClippyHidden {
@@ -1173,7 +1166,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
         items.append(.action(
             isClippyHidden ? "Show Clippy" : "Hide Clippy",
-            detail: GlobalHotkeyMonitor.toggleVisibilityLabel,
+            detail: isClippyHidden ? "Hold Ctrl+Option" : nil,
             icon: isClippyHidden ? .eye : .eyeSlash
         ) { [weak self] in
             self?.toggleClippyVisibility()
