@@ -665,11 +665,30 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     let raw = "The Cua computer-use bridge is not connected in this session, so I can't click and type."
     let friendly = ClippyUserFacingError.replacement(for: raw, isError: false)
 
-    #expect(friendly == "I hit a local computer-control error. I saved the details in Clippy Logs.")
+    #expect(friendly == "Computer-control error. Details saved in Clippy Logs.")
     #expect(friendly?.contains("Cua") == false)
     #expect(friendly?.contains("MCP") == false)
     #expect(friendly?.contains("bridge") == false)
     #expect(friendly?.contains("session") == false)
+}
+
+@Test func clippyUserFacingErrorUsesShortCompleteLocalDiagnosticsCopy() {
+    #expect(ClippyUserFacingError.replacement(
+        for: "unexpected local failure",
+        isError: true
+    ) == "Local error. Details saved in Clippy Logs.")
+    #expect(ClippyUserFacingError.replacement(
+        for: "codex app-server stream failed",
+        isError: true
+    ) == "Brain error. Details saved in Clippy Logs.")
+}
+
+@Test func clippyUserFacingErrorNamesProviderUsageLimitsDirectly() {
+    let raw = "You've hit your monthly spend limit · raise it at claude.ai/settings/usage"
+    let friendly = ClippyUserFacingError.replacement(for: raw, isError: false)
+
+    #expect(friendly == "Claude usage limit hit. Raise it at claude.ai/settings/usage.")
+    #expect(friendly?.contains("local error") == false)
 }
 
 @Test func rasterCharacterPackDecodesClippyAnimations() throws {
