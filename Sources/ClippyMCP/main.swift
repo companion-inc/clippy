@@ -227,7 +227,7 @@ enum ClippyAnnotationMCP {
     private static let tools: [[String: Any]] = [
         [
             "name": "annotate",
-            "description": "Draw Clippy-owned teaching annotations: point, target ring, hover ring, highlight, or shape path. Coordinates are pixels in the current Clippy screenshot, top-left origin. Use this for explanations, highlights, arrows, regions, and multi-mark teaching. Cua's agent cursor overlay handles ordinary visible GUI action progress.",
+            "description": "Draw Clippy-owned teaching annotations: point, target ring, hover ring, highlight, or shape path. Coordinates are pixels in the current Clippy screenshot, top-left origin. Use this for explanations, highlights, arrows, regions, and multi-mark teaching. Use line/polygon shape marks for visible constructions; polygon shapes are closed outlines. Clippy's body is the visible pointer; do not rely on a separate cursor overlay.",
             "inputSchema": [
                 "type": "object",
                 "additionalProperties": false,

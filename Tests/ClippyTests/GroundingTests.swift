@@ -41,6 +41,24 @@ import Testing
     #expect(screen == 2)
 }
 
+@Test func parsesPolygonShapeForConstructiveAnnotations() {
+    let parsed = GroundingParser.parse("[SHAPE:polygon:10,10;30,10;30,30;10,30:closed region]")
+    #expect(parsed.tags.count == 1)
+    guard case let .shape(kind, points, label, screen)? = parsed.tags.first else {
+        Issue.record("expected a polygon directive")
+        return
+    }
+    #expect(kind == .polygon)
+    #expect(points == [
+        CGPoint(x: 10, y: 10),
+        CGPoint(x: 30, y: 10),
+        CGPoint(x: 30, y: 30),
+        CGPoint(x: 10, y: 30),
+    ])
+    #expect(label == "closed region")
+    #expect(screen == nil)
+}
+
 @Test func keepsMultipleTagsInDocumentOrder() {
     let parsed = GroundingParser.parse("[POINT:5,5:one] then [HIGHLIGHT:9,9,3:two]")
     #expect(parsed.tags.count == 2)

@@ -56,6 +56,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var activeActivityState: AgentActivityState = .idle
     private var isClippyHidden = false
 
+    private struct VisualGroundingContext: Sendable {
+        let originalUserText: String
+        let screenshotPath: String?
+        let screenshotPixelWidth: Int
+        let screenshotPixelHeight: Int
+        let desktopContext: DesktopContextSnapshot?
+    }
+
     static func main() {
         let app = NSApplication.shared
         let delegate = ClippyApp()
@@ -386,7 +394,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
             inputMode: inputMode,
             speaking: speaking,
-            desktopContext: desktopContext)
+            desktopContext: desktopContext,
+            requiresVisualGrounding: needsAnnotationTool)
+        let visualGroundingContext = needsAnnotationTool
+            ? VisualGroundingContext(
+                originalUserText: text,
+                screenshotPath: shot?.path,
+                screenshotPixelWidth: Int(shot?.pixelSize.width ?? 0),
+                screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
+                desktopContext: desktopContext
+            )
+            : nil
         ttsSpokenChars = 0
         currentBrainTask = Task { [weak self] in
             for await chunk in brain.stream(brainMessage) {
@@ -396,10 +414,16 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                     case .status(let status):
                         self?.showTurnProgress(status)
                     case .partial(let partial):
-                        self?.showStreamingReply(partial)
-                        self?.speakStreaming(partial, final: false)
+                        if visualGroundingContext == nil {
+                            self?.showStreamingReply(partial)
+                            self?.speakStreaming(partial, final: false)
+                        }
                     case .final(let turn):
-                        self?.receiveReply(turn)
+                        self?.receiveReply(
+                            turn,
+                            visualGroundingContext: visualGroundingContext,
+                            brain: brain
+                        )
                     }
                 }
             }
@@ -532,7 +556,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func receiveReply(_ turn: AgentTurn) {
+    private func receiveReply(
+        _ turn: AgentTurn,
+        visualGroundingContext: VisualGroundingContext? = nil,
+        brain: (any AgentBrain)? = nil
+    ) {
         cancelTurnProgressUpdates()
         currentBrainTask = nil
         turnHasStreamingText = false
@@ -545,6 +573,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let friendlyFailure = ClippyUserFacingError.replacement(for: turn.text, isError: turn.isError)
         let replyText = friendlyFailure ?? turn.text
         let parsed = GroundingParser.parse(replyText)
+        if visualGroundingContext != nil {
+            log("visual-grounding-tags: renderable=\(renderableGroundingTagCount(in: parsed.tags)) total=\(parsed.tags.count)")
+        }
+        if shouldRepairVisualGrounding(turn: turn, parsed: parsed, context: visualGroundingContext) {
+            repairVisualGrounding(context: visualGroundingContext!, previousTurn: turn, brain: brain)
+            return
+        }
         // Runtime failures get a Clippy-shaped sentence; normal replies show only
         // the stripped speech. A tag-only reply shows nothing — never raw brackets.
         let spoken = VoiceSpeechTags.strip(parsed.spokenText)
@@ -580,6 +615,59 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
+    private func shouldRepairVisualGrounding(
+        turn: AgentTurn,
+        parsed: GroundingDirectives,
+        context: VisualGroundingContext?
+    ) -> Bool {
+        guard context != nil, turn.isError == false else { return false }
+        return renderableGroundingTagCount(in: parsed.tags) == 0
+    }
+
+    private func renderableGroundingTagCount(in tags: [GroundingTag]) -> Int {
+        tags.filter { tag in
+            switch tag {
+            case .point, .highlight, .shape:
+                return true
+            case .target, .hover, .act:
+                return false
+            }
+        }.count
+    }
+
+    private func repairVisualGrounding(
+        context: VisualGroundingContext,
+        previousTurn: AgentTurn,
+        brain: (any AgentBrain)?
+    ) {
+        guard let brain else {
+            receiveReply(previousTurn)
+            return
+        }
+        log("visual-grounding-repair: missing renderable tags; retrying")
+        isTurnRunning = true
+        turnHasStreamingText = false
+        ttsSpokenChars = 0
+        syncBubbleAnchorToClippy()
+        chatBubble?.showThinking("Adding screen marks")
+        playActivityState(.thinking)
+        let repairMessage = ClippyAgentInstructions.visualGroundingRepairMessage(
+            originalUserText: context.originalUserText,
+            previousAssistantText: previousTurn.text,
+            screenshotPath: context.screenshotPath,
+            screenshotPixelWidth: context.screenshotPixelWidth,
+            screenshotPixelHeight: context.screenshotPixelHeight,
+            desktopContext: context.desktopContext
+        )
+        currentBrainTask = Task { [weak self] in
+            let repairTurn = await brain.send(repairMessage)
+            if Task.isCancelled { return }
+            await MainActor.run {
+                self?.receiveReply(repairTurn)
+            }
+        }
+    }
+
     /// Render parsed grounding directives: draw the marks, and move Clippy beside the
     /// first anchored target so it points at it with the matching body gesture.
     private func presentGrounding(_ rawTags: [GroundingTag]) {
@@ -600,6 +688,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         } else {
             tags = rawTags
         }
+        log("grounding-presented: renderable=\(renderableGroundingTagCount(in: tags)) total=\(tags.count)")
         overlay?.show(tags.compactMap(AnnotationMark.init(tag:)), on: screen)
         // Auto-dismiss the marks so they don't linger on screen forever.
         overlayDismiss?.cancel()

@@ -38,11 +38,9 @@ and `get_window_state`, act with the most specific tool by element or window-loc
 coordinate, then re-snapshot to verify the change landed; if nothing changed, say so rather
 than assuming success. Never change the user's foreground app, never warp the real cursor,
 and never use `open`, `osascript`, or Cmd-Tab to activate apps.
-The Cua lane includes an agent-cursor overlay: leave it enabled so clicks and other visible
-actions show where Clippy is acting without moving the real mouse. For "point at/show me where"
-with no action, use `move_cursor` or Clippy's grounding tags. Use `annotate` for teaching,
-multi-mark explanations, highlights, arrows, or regions that should persist longer than the
-cursor pulse.
+Cua's own agent-cursor overlay is disabled in Clippy. The visible cursor is Clippy's body:
+for "point at/show me where" with no GUI action, use Clippy grounding tags; for GUI actions,
+describe the target briefly and rely on Clippy's body/marks rather than a second pointer.
 
 Computer-control failures are Clippy's problem to diagnose, not the user's setup chore. Do not
 tell the user to start, connect, install, or run the bridge. First try the available local tools
@@ -62,13 +60,11 @@ see it, THEN emit your tag. Don't guess coordinates blind — if this turn has n
 use your Cua tools to inspect the app/window state before pointing or acting.
 
 Pointing at the screen — when a step is something on the user's screen, show the place you mean.
-For visible computer-control, rely on Cua's agent cursor overlay. For multi-mark teaching, call
-`annotate`. For one simple body-only pointer in a normal reply, add exactly ONE inline tag at the
-very end and Clippy will move to it and gesture with its body.
+For visible computer-control and guided visual work, use Clippy-style inline grounding tags;
+Clippy strips them from speech and renders the visible marks on screen. For static drawing or explanations, emit one or more [POINT], [HIGHLIGHT], or
+[SHAPE] tags in the final reply. Do not say you drew, circled, highlighted, or pointed at
+something unless the reply includes the matching tag(s).
 Coordinates are pixels in the screenshot you Read (top-left origin, x right, y down).
-When the `annotate` tool is available, prefer it for multiple marks or any drawing/highlight
-that should appear without stuffing raw tags into the spoken reply. Use inline tags for one
-simple pointer or when the annotation tool is unavailable.
 - [TARGET:x,y,r:label] — exactly one click/commit you can observe; Clippy recaptures and
   continues. The TARGET sentence must contain only that single action, never "click then drag then...".
 - [HOVER:x,y,r:label] — a hover-reveal step.
@@ -108,26 +104,81 @@ internal tool plumbing.
         screenshotPixelHeight: Int,
         inputMode: AssistantInputMode,
         speaking: Bool,
-        desktopContext: DesktopContextSnapshot? = nil
+        desktopContext: DesktopContextSnapshot? = nil,
+        requiresVisualGrounding: Bool = false
     ) -> String {
         var blocks: [String] = []
         if let desktopContext {
             blocks.append(desktopContext.promptBlock)
         }
         if let path = screenshotPath {
-            blocks.append("""
-            [Current full-display screenshot of the user's screen: \(path) (\(screenshotPixelWidth)x\(screenshotPixelHeight) px). \
-            Read it with your Read tool when you need to see the screen to point at, find, \
-            or describe something. Any [POINT]/[TARGET]/[HOVER]/[HIGHLIGHT]/[SHAPE] coordinates \
-            you emit MUST be real pixel coordinates in THAT image (top-left origin), not normalized \
-            0-1000 coordinates and not macOS/AppKit screen points.]
-            """)
+            blocks.append(screenshotPromptBlock(
+                path: path,
+                pixelWidth: screenshotPixelWidth,
+                pixelHeight: screenshotPixelHeight
+            ))
+        }
+        if requiresVisualGrounding {
+            blocks.append(visualGroundingTurnContract)
         }
         if let voice = voiceContextNote(inputMode: inputMode, speaking: speaking) {
             blocks.append(voice)
         }
         blocks.append(text)
         return blocks.joined(separator: "\n\n")
+    }
+
+    public static let visualGroundingTurnContract = """
+    [Clippy-style guided visual turn]
+    The user is asking for visible screen grounding or drawing. Read the current screenshot, then make the screen carry the answer with inline grounding tags.
+    Your final response must include at least one [POINT], [HIGHLIGHT], or [SHAPE] tag unless the screenshot is unavailable or unreadable.
+    For drawn explanations, use [SHAPE:line|arrow|curve|polygon:...] and/or [HIGHLIGHT]/[POINT]. Multiple static drawing tags are allowed when the explanation needs multiple marks.
+    Do not answer text-only, and do not claim something was drawn, circled, highlighted, or pointed at unless the reply includes the tag(s) that render it.
+    Derive the marks, labels, and coordinates from the screenshot and the user's goal; do not use a subject-specific template.
+    """
+
+    public static func visualGroundingRepairMessage(
+        originalUserText: String,
+        previousAssistantText: String,
+        screenshotPath: String?,
+        screenshotPixelWidth: Int,
+        screenshotPixelHeight: Int,
+        desktopContext: DesktopContextSnapshot?
+    ) -> String {
+        var blocks: [String] = []
+        if let desktopContext {
+            blocks.append(desktopContext.promptBlock)
+        }
+        if let screenshotPath {
+            blocks.append(screenshotPromptBlock(
+                path: screenshotPath,
+                pixelWidth: screenshotPixelWidth,
+                pixelHeight: screenshotPixelHeight
+            ))
+        }
+        blocks.append(visualGroundingTurnContract)
+        blocks.append("""
+        [Visual grounding repair]
+        The previous assistant response for this same user request had no renderable grounding tags, so it could not draw or point on screen.
+        Original user request:
+        \(originalUserText)
+
+        Previous assistant response:
+        \(previousAssistantText)
+
+        Now produce the corrected final response. Read the screenshot path above, derive coordinates from that image, and include renderable [POINT], [HIGHLIGHT], or [SHAPE] tags. Keep the spoken text short. Do not use a subject-specific template.
+        """)
+        return blocks.joined(separator: "\n\n")
+    }
+
+    private static func screenshotPromptBlock(path: String, pixelWidth: Int, pixelHeight: Int) -> String {
+        """
+        [Current full-display screenshot of the user's screen: \(path) (\(pixelWidth)x\(pixelHeight) px). \
+        Read it with your Read tool when you need to see the screen to point at, find, \
+        or describe something. Any [POINT]/[TARGET]/[HOVER]/[HIGHLIGHT]/[SHAPE] coordinates \
+        you emit MUST be real pixel coordinates in THAT image (top-left origin), not normalized \
+        0-1000 coordinates and not macOS/AppKit screen points.]
+        """
     }
 
     /// Current product policy is to give every turn eyes. The capture remains
@@ -157,37 +208,32 @@ internal tool plumbing.
         inputMode: AssistantInputMode
     ) -> Bool {
         let lower = text.lowercased()
-        let annotationPhrases = [
-            "annotate",
-            "draw on",
-            "draw over",
-            "draw an arrow",
-            "draw a circle",
-            "highlight this",
-            "highlight the",
-            "circle this",
-            "circle the",
-            "outline this",
-            "outline the",
-            "point at",
-            "point to",
-            "mark this",
-            "mark the",
-            "call out",
-            "show me where",
-            "show where",
-            "put an arrow",
-            "put a ring",
-        ]
-        if annotationPhrases.contains(where: { lower.contains($0) }) {
-            return true
-        }
-
         let words = lower
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
+        let wordSet = Set(words)
+
+        let directVisualActions = Set(["annotate", "highlight", "circle", "outline"])
+        if !wordSet.isDisjoint(with: directVisualActions) {
+            return true
+        }
+
+        let screenReferences = Set(["screen", "page", "window", "video", "image", "picture", "this", "that", "here", "there", "it", "menu", "button", "control"])
+        if wordSet.contains("draw"), !wordSet.isDisjoint(with: screenReferences) {
+            return true
+        }
+
+        let pointingActions = Set(["point", "mark"])
+        if !wordSet.isDisjoint(with: pointingActions), !wordSet.isDisjoint(with: screenReferences) {
+            return true
+        }
+
+        if lower.contains("show me where") || lower.contains("show where") || lower.contains("call out") {
+            return true
+        }
+
         if inputMode == .voice, words.count <= 10 {
-            let actionWords = Set(["annotate", "highlight", "circle", "outline", "point", "mark", "arrow"])
+            let actionWords = Set(["annotate", "draw", "highlight", "circle", "outline", "point", "mark", "arrow"])
             if words.contains(where: actionWords.contains) { return true }
         }
         return false

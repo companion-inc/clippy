@@ -33,7 +33,6 @@ cp "$cua_driver_source" "$app_dir/Contents/Helpers/ClippyComputerUseRuntime"
 chmod 755 "$app_dir/Contents/Helpers/ClippyComputerUseRuntime"
 cp -R "$repo_root/Resources/Characters/Clippy" "$app_dir/Contents/Resources/Characters/Clippy"
 cp "$repo_root/Resources/Clippy.icns" "$app_dir/Contents/Resources/Clippy.icns"
-cp "$repo_root/Resources/ClippyCursor.png" "$app_dir/Contents/Resources/ClippyCursor.png"
 mkdir -p "$app_dir/Contents/Resources/Fonts"
 cp "$repo_root"/Resources/Fonts/*.ttf "$app_dir/Contents/Resources/Fonts/" 2>/dev/null || true
 

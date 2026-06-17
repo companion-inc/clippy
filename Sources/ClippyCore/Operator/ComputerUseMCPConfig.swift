@@ -36,7 +36,6 @@ public struct MCPServerRuntime: Equatable, Sendable {
 
 public enum ComputerUseMCPConfig {
     public static let bundledHelperName = "ClippyComputerUseRuntime"
-    public static let cursorIconName = "ClippyCursor.png"
 
     public static let cuaDriverEnabledTools: [String] = [
         "check_permissions",
@@ -44,23 +43,17 @@ public enum ComputerUseMCPConfig {
         "double_click",
         "drag",
         "get_accessibility_tree",
-        "get_agent_cursor_state",
         "get_config",
-        "get_cursor_position",
         "get_screen_size",
         "get_window_state",
         "hotkey",
         "launch_app",
         "list_apps",
         "list_windows",
-        "move_cursor",
         "page",
         "press_key",
         "right_click",
         "scroll",
-        "set_agent_cursor_enabled",
-        "set_agent_cursor_motion",
-        "set_agent_cursor_style",
         "set_config",
         "set_value",
         "type_text",
@@ -70,7 +63,6 @@ public enum ComputerUseMCPConfig {
     public static let clippyEnabledTools: [String] = [
         "check_permissions",
         "click",
-        "get_agent_cursor_state",
         "get_config",
         "get_screen_size",
         "get_window_state",
@@ -83,9 +75,6 @@ public enum ComputerUseMCPConfig {
         "right_click",
         "screenshot",
         "scroll",
-        "set_agent_cursor_enabled",
-        "set_agent_cursor_motion",
-        "set_agent_cursor_style",
         "set_config",
         "set_value",
         "type_text",
@@ -99,16 +88,7 @@ public enum ComputerUseMCPConfig {
         executableDirectory: String? = Bundle.main.executableURL?.deletingLastPathComponent().path,
         workingDirectory: String = FileManager.default.currentDirectoryPath
     ) -> [String] {
-        var args = ["mcp", "--no-daemon-relaunch", "--cursor-id", "clippy"]
-        if let icon = cursorIconPath(
-            environment: environment,
-            fileManager: fileManager,
-            executableDirectory: executableDirectory,
-            workingDirectory: workingDirectory
-        ) {
-            args.append(contentsOf: ["--cursor-icon", icon])
-        }
-        return args
+        ["mcp", "--no-daemon-relaunch", "--no-overlay"]
     }
 
     public static func defaultRuntime(
@@ -166,24 +146,6 @@ public enum ComputerUseMCPConfig {
             }
         }
         return nil
-    }
-
-    private static func cursorIconPath(
-        environment: [String: String],
-        fileManager: FileManager,
-        executableDirectory: String?,
-        workingDirectory: String
-    ) -> String? {
-        var candidates: [String] = []
-        if let override = environment["CLIPPY_CURSOR_ICON"], !override.isEmpty {
-            candidates.append(override)
-        }
-        if let executableDirectory {
-            candidates.append(cleanPath("\(executableDirectory)/../Resources/\(cursorIconName)"))
-        }
-        candidates.append("\(workingDirectory)/Resources/\(cursorIconName)")
-        candidates.append("\(workingDirectory)/.build/debug/\(cursorIconName)")
-        return candidates.first { fileManager.fileExists(atPath: $0) }
     }
 
     public static func codexConfigOverrides(for runtimes: [MCPServerRuntime]) -> [String] {

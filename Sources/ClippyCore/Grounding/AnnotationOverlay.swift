@@ -24,7 +24,7 @@ public enum AnnotationMark: Equatable, Sendable {
 
 /// Borderless, transparent, click-through overlay that draws Clippy's on-screen marks
 /// (target/hover rings, highlight outlines, shape paths) in global screen coordinates.
-/// This is for teaching marks; Cua's agent cursor overlay shows live GUI actions.
+/// Clippy's body is the visible pointer; this overlay is only for marks that need ink.
 @MainActor
 public final class AnnotationOverlayWindow {
     private let window: NSWindow
@@ -258,6 +258,9 @@ final class AnnotationDrawView: NSView {
             for p in points.dropFirst() {
                 ctx.addLine(to: p)
             }
+        }
+        if shape == .polygon {
+            ctx.closePath()
         }
         ctx.strokePath()
     }

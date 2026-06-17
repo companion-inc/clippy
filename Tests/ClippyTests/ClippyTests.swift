@@ -122,6 +122,45 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(quiet.contains("Voice mode") == false)
     #expect(quiet.contains("hello"))
     #expect(quiet.contains("active app: Google Chrome"))
+
+    let guided = ClippyAgentInstructions.brainMessage(
+        text: "draw on this",
+        screenshotPath: "/tmp/shot.png",
+        screenshotPixelWidth: 1600,
+        screenshotPixelHeight: 1034,
+        inputMode: .text,
+        speaking: false,
+        desktopContext: context,
+        requiresVisualGrounding: true)
+    #expect(guided.contains("Clippy-style guided visual turn"))
+    #expect(guided.contains("Do not answer text-only"))
+    #expect(guided.contains("subject-specific template"))
+    #expect(guided.contains("Pythagorean") == false)
+}
+
+@Test func visualGroundingRepairMessageIsGenericAndScreenshotGrounded() {
+    let context = DesktopContextSnapshot(
+        app: .init(name: "Google Chrome", bundleIdentifier: "com.google.Chrome", processIdentifier: 123),
+        window: nil,
+        screen: nil,
+        browser: .init(title: "Demo", url: "http://127.0.0.1/demo")
+    )
+    let msg = ClippyAgentInstructions.visualGroundingRepairMessage(
+        originalUserText: "draw on this",
+        previousAssistantText: "Here is a text-only explanation.",
+        screenshotPath: "/tmp/shot.png",
+        screenshotPixelWidth: 1600,
+        screenshotPixelHeight: 1034,
+        desktopContext: context
+    )
+    #expect(msg.contains("Visual grounding repair"))
+    #expect(msg.contains("had no renderable grounding tags"))
+    #expect(msg.contains("/tmp/shot.png (1600x1034 px)"))
+    #expect(msg.contains("[POINT]"))
+    #expect(msg.contains("[HIGHLIGHT]"))
+    #expect(msg.contains("[SHAPE]"))
+    #expect(msg.contains("subject-specific template"))
+    #expect(msg.contains("Pythagorean") == false)
 }
 
 @Test func screenshotPolicyCapturesEveryTurn() {
@@ -147,19 +186,24 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 @Test func codexToolLaneRoutesScreenAnnotationWork() {
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "highlight this button", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw an arrow on the page", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "Can you draw my screen to explain this?", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw over this page", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw", inputMode: .voice))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "point at the menu", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "circle this", inputMode: .voice))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw a logo", inputMode: .text) == false)
 
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "highlight this button", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "Can you draw my screen to explain this?", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "fill out this form", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "summarize the docs", inputMode: .text) == false)
 }
 
-@Test func computerUsePromptKeepsCuaCursorForVisibleActions() {
-    #expect(ClippyAgentInstructions.systemPrompt.contains("The Cua lane includes an agent-cursor overlay"))
-    #expect(ClippyAgentInstructions.systemPrompt.contains("leave it enabled"))
-    #expect(ClippyAgentInstructions.systemPrompt.contains("Use `annotate` for teaching"))
+@Test func computerUsePromptDisablesCuaCursorForVisibleActions() {
+    #expect(ClippyAgentInstructions.systemPrompt.contains("Cua's own agent-cursor overlay is disabled in Clippy"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("The visible cursor is Clippy's body"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("Clippy-style inline grounding tags"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("Pythagorean") == false)
 }
 
 @Test func codexConversationResumesTheSameThreadAcrossTurns() async throws {
@@ -292,15 +336,16 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     let runtime = ComputerUseMCPConfig.defaultRuntime(environment: ["CLIPPY_CUA_DRIVER": cua.path])
     #expect(runtime?.serverName == "cua-driver")
     #expect(runtime?.command == cua.path)
-    #expect(runtime?.args.starts(with: ["mcp", "--no-daemon-relaunch", "--cursor-id", "clippy"]) == true)
-    #expect(runtime?.args.contains("--no-overlay") == false)
+    #expect(runtime?.args == ["mcp", "--no-daemon-relaunch", "--no-overlay"])
     #expect(runtime?.enabledTools.contains("drag") == true)
-    #expect(runtime?.enabledTools.contains("move_cursor") == true)
-    #expect(runtime?.enabledTools.contains("set_agent_cursor_style") == true)
+    #expect(runtime?.enabledTools.contains("move_cursor") == false)
+    #expect(runtime?.enabledTools.contains("set_agent_cursor_style") == false)
+    #expect(runtime?.enabledTools.contains("get_agent_cursor_state") == false)
     #expect(runtime?.enabledTools.contains("zoom") == true)
     #expect(runtime?.enabledTools.contains("screenshot") == false)
     #expect(ComputerUseMCPConfig.clippyEnabledTools.contains("screenshot"))
     #expect(ComputerUseMCPConfig.clippyEnabledTools.contains("drag") == false)
+    #expect(ComputerUseMCPConfig.clippyEnabledTools.contains("set_agent_cursor_enabled") == false)
 
     let overrides = ComputerUseMCPConfig.codexConfigOverrides(for: [try #require(runtime)])
     #expect(overrides.contains { $0.contains("mcp_servers.cua-driver.command") && $0.contains(cua.path) })
@@ -311,16 +356,12 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-bundled-cua-\(UUID().uuidString)", isDirectory: true)
     let macOSDir = tempDir.appendingPathComponent("Contents/MacOS", isDirectory: true)
     let helpersDir = tempDir.appendingPathComponent("Contents/Helpers", isDirectory: true)
-    let resourcesDir = tempDir.appendingPathComponent("Contents/Resources", isDirectory: true)
     try FileManager.default.createDirectory(at: macOSDir, withIntermediateDirectories: true)
     try FileManager.default.createDirectory(at: helpersDir, withIntermediateDirectories: true)
-    try FileManager.default.createDirectory(at: resourcesDir, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: tempDir) }
     let helper = helpersDir.appendingPathComponent(ComputerUseMCPConfig.bundledHelperName)
     FileManager.default.createFile(atPath: helper.path, contents: Data("#!/bin/sh\n".utf8))
     try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: helper.path)
-    let icon = resourcesDir.appendingPathComponent(ComputerUseMCPConfig.cursorIconName)
-    FileManager.default.createFile(atPath: icon.path, contents: Data("png".utf8))
 
     let runtime = ComputerUseMCPConfig.defaultRuntime(
         environment: [:],
@@ -331,9 +372,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     let resolved = try #require(runtime)
     #expect(resolved.serverName == "cua-driver")
     #expect(resolved.command == helper.path)
-    #expect(resolved.args.starts(with: ["mcp", "--no-daemon-relaunch", "--cursor-id", "clippy"]))
-    #expect(resolved.args.contains("--cursor-icon"))
-    #expect(resolved.args.contains { $0.hasSuffix("ClippyCursor.png") })
+    #expect(resolved.args == ["mcp", "--no-daemon-relaunch", "--no-overlay"])
 }
 
 @Test func codexConversationWiresCuaAndAnnotationMCPServers() async throws {
