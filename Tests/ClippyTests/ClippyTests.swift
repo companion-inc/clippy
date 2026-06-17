@@ -694,20 +694,20 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyUserFacingError.providerLimit(for: "xAI insufficient credits") == .xAI)
 }
 
-@Test func brainFallbackPolicySwitchesFromClaudeToChatGPTForClaudeUsageLimit() {
+@Test func brainFallbackPolicyOffersChatGPTForClaudeUsageLimit() {
     let raw = "You've hit your monthly spend limit · raise it at claude.ai/settings/usage"
 
-    #expect(BrainFallbackPolicy.shouldSwitchToChatGPT(
+    #expect(BrainFallbackPolicy.shouldOfferChatGPTSwitch(
         afterProviderLimitText: raw,
         selectedModel: .opus48,
         isChatGPTAvailable: true
     ))
-    #expect(BrainFallbackPolicy.shouldSwitchToChatGPT(
+    #expect(BrainFallbackPolicy.shouldOfferChatGPTSwitch(
         afterProviderLimitText: raw,
         selectedModel: .opus48,
         isChatGPTAvailable: false
     ) == false)
-    #expect(BrainFallbackPolicy.shouldSwitchToChatGPT(
+    #expect(BrainFallbackPolicy.shouldOfferChatGPTSwitch(
         afterProviderLimitText: "OpenAI rate limit exceeded",
         selectedModel: .gpt55,
         isChatGPTAvailable: true

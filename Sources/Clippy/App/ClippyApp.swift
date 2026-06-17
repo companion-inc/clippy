@@ -764,14 +764,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         currentBrainTask = nil
         turnHasStreamingText = false
         isTurnRunning = false
-        let switchedToChatGPT = switchToChatGPTAfterClaudeLimitIfAvailable(turn.text)
         if isClippyHidden {
             log("clippy: \(turn.text.prefix(120))")
             return
         }
         if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
-        if switchedToChatGPT {
-            showChatGPTFallbackNotice()
+        if offerChatGPTAfterClaudeLimitIfAvailable(turn.text) {
             log("clippy: \(turn.text.prefix(120))")
             return
         }
@@ -826,8 +824,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func switchToChatGPTAfterClaudeLimitIfAvailable(_ text: String) -> Bool {
-        guard BrainFallbackPolicy.shouldSwitchToChatGPT(
+    private func offerChatGPTAfterClaudeLimitIfAvailable(_ text: String) -> Bool {
+        guard BrainFallbackPolicy.shouldOfferChatGPTSwitch(
             afterProviderLimitText: text,
             selectedModel: selectedModel,
             isChatGPTAvailable: BrainDiscovery.codexSignedIn()
@@ -835,15 +833,21 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         else {
             return false
         }
-        applySelectedModel(.gpt55)
-        log("model auto-selected: \(ClippyModel.gpt55.id) after Claude usage limit")
+        showChatGPTFallbackChoice()
         return true
     }
 
-    private func showChatGPTFallbackNotice() {
+    private func showChatGPTFallbackChoice() {
         overlay?.clear()
-        chatBubble?.showReplyForReading("Claude usage limit hit. I switched to ChatGPT.")
         playActivityState(.attention)
+        chatBubble?.showChoicesTyping("Claude usage limit hit. Switch to ChatGPT?", choices: [
+            .init(title: "Switch to ChatGPT") { [weak self] in
+                self?.selectChatGPTAfterClaudeLimit()
+            },
+            .init(title: "Keep Claude") { [weak self] in
+                self?.chatBubble?.showReplyForReading("Still on Claude.")
+            },
+        ])
         let animationName = clippy?.spec.replyAnimationName ?? "Explain"
         clippy?.play(animationName) { [weak self, weak clippy] _, state in
             switch state {
@@ -853,6 +857,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 self?.scheduleNextIdle()
             }
         }
+    }
+
+    private func selectChatGPTAfterClaudeLimit() {
+        applySelectedModel(.gpt55)
+        log("model selected: \(ClippyModel.gpt55.id) after Claude usage limit option")
+        if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
+        chatBubble?.showReplyForReading("Switched to ChatGPT.")
     }
 
     private func shouldRepairVisualGrounding(

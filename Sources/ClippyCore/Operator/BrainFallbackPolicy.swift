@@ -1,7 +1,7 @@
 import Foundation
 
 public enum BrainFallbackPolicy {
-    public static func shouldSwitchToChatGPT(
+    public static func shouldOfferChatGPTSwitch(
         afterProviderLimitText text: String,
         selectedModel: ClippyModel,
         isChatGPTAvailable: Bool
