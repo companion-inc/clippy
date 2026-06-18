@@ -47,7 +47,7 @@ public actor CodexConversation: AgentBrain {
 
     public static func locateBinary() -> String? {
         if let managed = ClippyRuntimeLocator.codexExecutablePath() {
-            return managed
+            return resolvedExecutablePath(managed)
         }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let candidates = [
@@ -56,7 +56,7 @@ public actor CodexConversation: AgentBrain {
             "/usr/local/bin/codex",
         ]
         for path in candidates where FileManager.default.isExecutableFile(atPath: path) {
-            return path
+            return resolvedExecutablePath(path)
         }
         let probe = Process()
         probe.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -67,7 +67,73 @@ public actor CodexConversation: AgentBrain {
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         probe.waitUntilExit()
         let path = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        return (path?.isEmpty == false) ? path : nil
+        guard let path, path.isEmpty == false else { return nil }
+        return resolvedExecutablePath(path)
+    }
+
+    static func resolvedExecutablePath(_ path: String, fileManager: FileManager = .default) -> String {
+        nativeExecutableInsideNPMShim(path, fileManager: fileManager) ?? path
+    }
+
+    static func nativeExecutableInsideNPMShim(_ path: String, fileManager: FileManager = .default) -> String? {
+        guard
+            let data = fileManager.contents(atPath: path),
+            let script = String(data: Data(data.prefix(8192)), encoding: .utf8),
+            script.contains("@openai/codex"),
+            script.contains("PLATFORM_PACKAGE_BY_TARGET")
+        else {
+            return nil
+        }
+
+        #if arch(arm64)
+        let targetTriple = "aarch64-apple-darwin"
+        let platformPackage = "@openai/codex-darwin-arm64"
+        #elseif arch(x86_64)
+        let targetTriple = "x86_64-apple-darwin"
+        let platformPackage = "@openai/codex-darwin-x64"
+        #else
+        return nil
+        #endif
+
+        let scriptURL = URL(fileURLWithPath: path)
+        let realScriptURL = scriptURL.resolvingSymlinksInPath()
+        var roots: [URL] = []
+        for url in [scriptURL, realScriptURL] {
+            roots.append(url.deletingLastPathComponent().deletingLastPathComponent())
+            roots.append(url.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent())
+        }
+
+        let candidates = roots.flatMap { root in
+            [
+                root
+                    .appendingPathComponent("lib/node_modules/@openai/codex/node_modules", isDirectory: true)
+                    .appendingPathComponent(platformPackage, isDirectory: true)
+                    .appendingPathComponent("vendor", isDirectory: true)
+                    .appendingPathComponent(targetTriple, isDirectory: true)
+                    .appendingPathComponent("bin", isDirectory: true)
+                    .appendingPathComponent("codex", isDirectory: false),
+                root
+                    .appendingPathComponent("node_modules", isDirectory: true)
+                    .appendingPathComponent(platformPackage, isDirectory: true)
+                    .appendingPathComponent("vendor", isDirectory: true)
+                    .appendingPathComponent(targetTriple, isDirectory: true)
+                    .appendingPathComponent("bin", isDirectory: true)
+                    .appendingPathComponent("codex", isDirectory: false),
+                root
+                    .appendingPathComponent("vendor", isDirectory: true)
+                    .appendingPathComponent(targetTriple, isDirectory: true)
+                    .appendingPathComponent("bin", isDirectory: true)
+                    .appendingPathComponent("codex", isDirectory: false),
+            ]
+        }
+
+        var seen = Set<String>()
+        for url in candidates where seen.insert(url.path).inserted {
+            if fileManager.isExecutableFile(atPath: url.path) {
+                return url.path
+            }
+        }
+        return nil
     }
 
     public static var defaultDiagnosticsLogURL: URL {

@@ -51,6 +51,44 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyRuntimeLocator.claudeExecutablePath(baseDirectory: base) == claude.path)
 }
 
+@Test func codexConversationUnwrapsNPMShimToNativeExecutable() throws {
+    #if arch(arm64)
+    let platformPackage = "@openai/codex-darwin-arm64"
+    let targetTriple = "aarch64-apple-darwin"
+    #elseif arch(x86_64)
+    let platformPackage = "@openai/codex-darwin-x64"
+    let targetTriple = "x86_64-apple-darwin"
+    #else
+    return
+    #endif
+
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("clippy-codex-shim-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    let shim = root.appendingPathComponent("bin/codex")
+    let native = root
+        .appendingPathComponent("lib/node_modules/@openai/codex/node_modules", isDirectory: true)
+        .appendingPathComponent(platformPackage, isDirectory: true)
+        .appendingPathComponent("vendor", isDirectory: true)
+        .appendingPathComponent(targetTriple, isDirectory: true)
+        .appendingPathComponent("bin", isDirectory: true)
+        .appendingPathComponent("codex", isDirectory: false)
+
+    try FileManager.default.createDirectory(at: shim.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try FileManager.default.createDirectory(at: native.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try """
+    #!/usr/bin/env node
+    const PLATFORM_PACKAGE_BY_TARGET = {};
+    const platformPackage = "@openai/codex";
+    """.write(to: shim, atomically: true, encoding: .utf8)
+    try "#!/bin/sh\nexit 0\n".write(to: native, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: native.path)
+
+    #expect(CodexConversation.resolvedExecutablePath(shim.path) == native.path)
+}
+
 @Test func voiceContextNoteReflectsSpokenInputAndSpokenOutput() {
     // Plain typed, bubble-only turn — no voice note at all.
     #expect(ClippyAgentInstructions.voiceContextNote(inputMode: .text, speaking: false) == nil)
@@ -1322,6 +1360,15 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         selectedIndex: 0,
         choiceCount: 3
     ) == .cancel)
+}
+
+@Test func onboardingDemoCreatesLocalPageWithoutSeparateDemoChoice() {
+    let html = ClippyOnboardingDemoController.onboardingHTML()
+
+    #expect(html.contains("Built with Clippy"))
+    #expect(html.contains("during onboarding"))
+    #expect(html.localizedCaseInsensitiveContains("try" + " demo") == false)
+    #expect(html.contains("/Users/") == false)
 }
 
 @Test func annotationPaletteUsesSingleYellowStrokeUnlessBackgroundIsLight() {

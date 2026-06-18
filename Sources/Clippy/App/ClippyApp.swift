@@ -23,6 +23,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var userAnnotationController: UserAnnotationController?
     private var userAnnotation: UserScreenAnnotation?
     private var permissionDrag: PermissionDragController?
+    private var onboardingDemo: ClippyOnboardingDemoController?
+    private var onboardingDemoFinish: DispatchWorkItem?
     private var statusItem: NSStatusItem?
     private var retroMenu = RetroMenuController()
     private var ptt: PushToTalkMonitor?
@@ -196,6 +198,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         disarmGuidedTarget(reason: "terminate")
+        onboardingDemoFinish?.cancel()
+        onboardingDemo?.hide()
+        currentBrainTask?.cancel()
+        currentBrainTask = nil
+        conversation = nil
+        codexComputerControlConversation = nil
         cancelSetupProcess()
         textInputShortcut?.stop()
         annotationHold?.stop()
@@ -1447,9 +1455,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         guard isClippyHidden == false else {
             return
         }
-        guard let clippy else {
-            return
-        }
         let fallbackScreen = screenForClippy() ?? NSScreen.main ?? NSScreen.screens.first
         let screen = screenForGrounding(rawTags) ?? screenForLastShot() ?? fallbackScreen
         guard let screen else { return }
@@ -1468,19 +1473,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if let anchor = scene.primaryPoint(windowFrameProvider: { $0.currentFrame() ?? $0.initialFrame })
             ?? tags.first(where: { $0.anchor != nil })?.anchor {
             // Point at a target with Clippy's body.
-            pendingIdle?.cancel()
-            let size = clippy.frame.size
-            let origin = GroundingDirector.parkOrigin(beside: anchor, clippySize: size, in: screen.visibleFrame)
-            let finalFrame = CGRect(origin: origin, size: size)
-            clippy.windowController.move(to: origin, animated: true) { [weak self, weak clippy] in
-                if let frame = clippy?.frame {
-                    self?.chatBubble?.setAnchor(frame)
-                } else {
-                    self?.chatBubble?.setAnchor(finalFrame)
-                }
-            }
-            let center = CGPoint(x: finalFrame.midX, y: finalFrame.midY)
-            playOnce(GroundingDirector.pointingAnimationName(from: center, to: anchor))
+            moveClippyToPoint(at: anchor, in: screen)
         } else if let animation = firstActAnimation(in: tags) {
             // Emote: Clippy performs the animation it asked for, in place.
             pendingIdle?.cancel()
@@ -1489,6 +1482,23 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 scheduleNextIdle()
             }
         }
+    }
+
+    private func moveClippyToPoint(at anchor: CGPoint, in screen: NSScreen) {
+        guard let clippy else { return }
+        pendingIdle?.cancel()
+        let size = clippy.frame.size
+        let origin = GroundingDirector.parkOrigin(beside: anchor, clippySize: size, in: screen.visibleFrame)
+        let finalFrame = CGRect(origin: origin, size: size)
+        clippy.windowController.move(to: origin, animated: true) { [weak self, weak clippy] in
+            if let frame = clippy?.frame {
+                self?.chatBubble?.setAnchor(frame)
+            } else {
+                self?.chatBubble?.setAnchor(finalFrame)
+            }
+        }
+        let center = CGPoint(x: finalFrame.midX, y: finalFrame.midY)
+        playOnce(GroundingDirector.pointingAnimationName(from: center, to: anchor))
     }
 
     private func screenshot(for tag: GroundingTag) -> ScreenPerception.Screenshot? {
@@ -2208,6 +2218,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if isClippyHidden {
             showClippy()
         }
+        onboardingDemoFinish?.cancel()
+        onboardingDemo?.hide()
+        onboardingDemo = nil
         isOnboardingActive = true
         syncBubbleAnchorToClippy()
         showWelcomeStep()
@@ -2382,7 +2395,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             animation: "GetAttention",
             choices: [
                 .init(title: "Grant Permissions") { [weak self] in self?.startPermissionWalkthrough() },
-                .init(title: "Skip") { [weak self] in self?.finishBubbleOnboarding() },
+                .init(title: "Skip") { [weak self] in self?.startOnboardingDemo() },
             ]
         )
     }
@@ -2394,7 +2407,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func showNextPermissionDialog() {
         guard let permission = OnboardingPermission.allCases.first(where: { !$0.isGranted }) else {
             permissionDrag?.hide()
-            finishBubbleOnboarding()
+            startOnboardingDemo()
             return
         }
         switch permission {
@@ -2419,15 +2432,96 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         showListeningStep()
     }
 
-    private func finishBubbleOnboarding() {
+    private func startOnboardingDemo() {
+        permissionDrag?.hide()
+        if conversation == nil {
+            setUpBrain()
+        }
+        if isClippyHidden {
+            showClippy()
+        }
+        isOnboardingActive = true
+        showOnboardingStep(
+            "Now I'll show you how I work on screen.",
+            animation: "GetAttention",
+            choices: [
+                .init(title: "Next") { [weak self] in self?.showOnboardingDemoWindow() },
+            ]
+        )
+    }
+
+    private func showOnboardingDemoWindow() {
+        permissionDrag?.hide()
+        onboardingDemoFinish?.cancel()
+        overlay?.clear()
+
+        let controller = ClippyOnboardingDemoController(
+            onBuild: { [weak self] url in
+                self?.completeOnboardingDemo(createdPageURL: url)
+            },
+            onClose: { [weak self] in
+                self?.completeBubbleOnboarding(createdPageURL: nil)
+            }
+        )
+        onboardingDemo = controller
+        controller.show()
+        syncBubbleAnchorToClippy()
+        playOnboardingAnimation("Explain")
+        chatBubble?.showReplyForReading("Click the button I point at.")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.pointAtOnboardingDemoButton()
+        }
+    }
+
+    private func pointAtOnboardingDemoButton() {
+        guard let target = onboardingDemo?.buildTarget else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+                self?.pointAtOnboardingDemoButton()
+            }
+            return
+        }
+        let targetRect = CGRect(x: target.center.x - 1, y: target.center.y - 1, width: 2, height: 2)
+        let screen = ScreenPerception.screen(containing: targetRect) ?? screenForClippy() ?? NSScreen.main
+        overlay?.showSequence([
+            .ring(center: target.center, radius: target.radius, kind: .target),
+            .dot(center: target.center, progress: 1),
+        ], on: screen)
+        if let screen {
+            moveClippyToPoint(at: target.center, in: screen)
+        }
+        log("onboarding-demo: pointing at build button")
+    }
+
+    private func completeOnboardingDemo(createdPageURL: URL) {
+        overlay?.clear()
+        playOnboardingAnimation("Congratulate")
+        syncBubbleAnchorToClippy()
+        chatBubble?.showReplyForReading("Nice. That's the loop: I point, you act, and I keep going.")
+        let finish = DispatchWorkItem { [weak self] in
+            self?.completeBubbleOnboarding(createdPageURL: createdPageURL)
+        }
+        onboardingDemoFinish?.cancel()
+        onboardingDemoFinish = finish
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4, execute: finish)
+    }
+
+    private func completeBubbleOnboarding(createdPageURL: URL?) {
+        onboardingDemoFinish?.cancel()
+        onboardingDemoFinish = nil
         isOnboardingActive = false
         permissionDrag?.hide()
+        onboardingDemo?.hide()
+        onboardingDemo = nil
+        overlay?.clear()
         markSetupCompleted()
         if conversation == nil {
             setUpBrain()
         }
         playOnboardingAnimation("Congratulate")
-        chatBubble?.showReplyForReading("All set. Click me to type, or hold Control+Option to talk.")
+        if let createdPageURL {
+            log("onboarding-demo: created \(createdPageURL.path)")
+        }
+        chatBubble?.showReplyForReading("All set. Press Control+Space to type, or hold Control+Option to talk.")
     }
 
     private func voiceKeyStatusText() -> String {
