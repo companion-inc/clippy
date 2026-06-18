@@ -1396,25 +1396,32 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     ) == .cancel)
 }
 
-@Test func onboardingDemoCreatesLocalPageArtifact() throws {
+@Test func onboardingDemoPreparesLocalPageArtifact() throws {
     let base = FileManager.default.temporaryDirectory
         .appendingPathComponent("clippy-onboarding-\(UUID().uuidString)", isDirectory: true)
     defer { try? FileManager.default.removeItem(at: base) }
 
-    let url = try ClippyOnboardingDemo.createPage(supportDirectory: base)
+    let url = try ClippyOnboardingDemo.preparePage(supportDirectory: base)
     let html = try String(contentsOf: url)
     let target = ClippyOnboardingDemo.target(in: CGRect(x: 120, y: 80, width: 900, height: 640))
 
     #expect(url.lastPathComponent == "index.html")
-    #expect(html.contains("Hey, I'm Clippy."))
+    #expect(html.contains("Clean up a messy note."))
     #expect(html.contains("onboarding bubble"))
+    #expect(html.contains("Waiting for Clippy"))
+    #expect(html.contains("send deck tmrw"))
+    #expect(html.contains("Waiting for the plan"))
     #expect(html.localizedCaseInsensitiveContains("try" + " demo") == false)
     #expect(html.contains("/Users/") == false)
-    #expect(ClippyOnboardingDemo.guidedIntroText.contains("quick tour"))
+    #expect(ClippyOnboardingDemo.guidedIntroText.contains("Watch this"))
+    #expect(ClippyOnboardingDemo.guidedIntroText.contains("clean up a messy note"))
+    #expect(ClippyOnboardingDemo.guidedIntroText.contains("attached to the page"))
     #expect(ClippyOnboardingDemo.guidedIntroText.contains("press " + "Return") == false)
     #expect(ClippyOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("input") == false)
-    #expect(ClippyOnboardingDemo.guidedWorkingText == "Creating a page")
-    #expect(ClippyOnboardingDemo.pointingIntroText.contains("mark the part that matters"))
+    #expect(ClippyOnboardingDemo.guidedWorkingText == "Opening the demo page")
+    #expect(ClippyOnboardingDemo.taskIntroText.contains("messy note"))
+    #expect(ClippyOnboardingDemo.organizingText == "Cleaning up the note")
+    #expect(ClippyOnboardingDemo.pointingIntroText.contains("finished plan"))
     #expect(ClippyOnboardingDemo.controlsText.contains("click me"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Control+Space"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Control+Option"))
@@ -1425,6 +1432,14 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(target.center.x < 1020)
     #expect(target.center.y > 80)
     #expect(target.center.y < 720)
+
+    try ClippyOnboardingDemo.completePage(at: url)
+    let completed = try String(contentsOf: url)
+    #expect(completed.contains("Clippy finished"))
+    #expect(completed.contains("A simple plan"))
+    #expect(completed.contains("Send the deck before lunch."))
+    #expect(completed.contains("Waiting for the plan") == false)
+    #expect(completed.contains("/Users/") == false)
 }
 
 @Test func onboardingResumePointParsesSavedStepAndFallsBackToWelcome() {

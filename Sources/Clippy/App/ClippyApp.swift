@@ -2331,7 +2331,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let status = BrainDiscovery.codexStatus()
         if status.signedIn {
             showOnboardingStep(
-                "ChatGPT is signed in. Want me to use this account?",
+                "ChatGPT is signed in. I can use this account.",
                 animation: "GetTechy",
                 choices: [
                     .init(title: "Use ChatGPT") { [weak self] in
@@ -2351,7 +2351,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             )
         } else {
             showOnboardingStep(
-                "ChatGPT isn't installed yet. Want me to set it up?",
+                "ChatGPT support is missing. Setup runs in the background.",
                 animation: "GetTechy",
                 choices: [
                     .init(title: "Set Up ChatGPT") { [weak self] in self?.runCodexInstall() },
@@ -2366,7 +2366,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let status = BrainDiscovery.claudeStatus()
         if status.signedIn {
             showOnboardingStep(
-                "Claude is signed in. Want me to use this account?",
+                "Claude is signed in. I can use this account.",
                 animation: "GetWizardy",
                 choices: [
                     .init(title: "Use Claude") { [weak self] in
@@ -2386,7 +2386,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             )
         } else {
             showOnboardingStep(
-                "Claude isn't installed yet. Want me to set it up?",
+                "Claude support is missing. Setup runs in the background.",
                 animation: "GetWizardy",
                 choices: [
                     .init(title: "Set Up Claude") { [weak self] in self?.runClaudeInstall() },
@@ -2402,7 +2402,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         saveOnboardingResumePoint(.listening)
         if ClippySecrets.deepgramAPIKey != nil {
             showOnboardingStep(
-                "Found a Deepgram key. Want me to listen when you talk?",
+                "Found a Deepgram key. I can listen when you talk.",
                 animation: "Hearing_1",
                 choices: [
                     .init(title: "Yes, Listen") { [weak self] in
@@ -2414,7 +2414,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             )
         } else {
             showOnboardingStep(
-                "Want me to hear you? I'll need a Deepgram key to listen.",
+                "To hear you, I need a Deepgram key.",
                 animation: "Hearing_1",
                 choices: [
                     .init(title: "Add Listening Key") { [weak self] in self?.showProviderKeys() },
@@ -2428,7 +2428,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         saveOnboardingResumePoint(.voice)
         if ClippySecrets.xaiAPIKey != nil {
             showOnboardingStep(
-                "Found an xAI key. Want me to talk back out loud?",
+                "Found an xAI key. I can talk back out loud.",
                 animation: "Wave",
                 choices: [
                     .init(title: "Yes, Talk") { [weak self] in
@@ -2440,7 +2440,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             )
         } else {
             showOnboardingStep(
-                "Want me to talk back? I'll need an xAI key for my voice.",
+                "To talk back, I need an xAI key for my voice.",
                 animation: "Wave",
                 choices: [
                     .init(title: "Add Voice Key") { [weak self] in self?.showProviderKeys() },
@@ -2511,13 +2511,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             showClippy()
         }
         isOnboardingActive = true
-        showOnboardingStep(
-            ClippyOnboardingDemo.guidedIntroText,
-            animation: "GetAttention",
-            choices: [
-                .init(title: "Start Tour") { [weak self] in self?.runOnboardingDemo() },
-            ]
-        )
+        playOnboardingAnimation("GetAttention")
+        syncBubbleAnchorToClippy()
+        chatBubble?.showReplyForReading(ClippyOnboardingDemo.guidedIntroText)
+        scheduleOnboardingDemoWork(after: 1.4) { [weak self] in
+            self?.runOnboardingDemo()
+        }
     }
 
     private func runOnboardingDemo() {
@@ -2529,32 +2528,56 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         playActivityState(.working)
 
         do {
-            let url = try ClippyOnboardingDemo.createPage()
-            log("onboarding-demo: created \(url.path)")
+            let url = try ClippyOnboardingDemo.preparePage()
+            log("onboarding-demo: prepared \(url.path)")
             NSWorkspace.shared.open(url)
-            scheduleOnboardingDemoWork(after: 1.2) { [weak self] in
-                self?.showOnboardingDemoPointingIntro()
+            scheduleOnboardingDemoWork(after: 0.9) { [weak self] in
+                self?.showOnboardingDemoTaskIntro()
             }
-            scheduleOnboardingDemoWork(after: 2.0) { [weak self] in
+            scheduleOnboardingDemoWork(after: 1.7) { [weak self] in
+                self?.completeOnboardingDemoPage(url)
+            }
+            scheduleOnboardingDemoWork(after: 3.0) { [weak self] in
                 self?.pointAtOnboardingPage()
             }
-            scheduleOnboardingDemoWork(after: 6.0) { [weak self] in
+            scheduleOnboardingDemoWork(after: 5.8) { [weak self] in
                 self?.showOnboardingControlsStep(createdPageURL: url)
             }
         } catch {
             log("onboarding-demo error: \(error.localizedDescription)")
             playActivityState(.error)
-            chatBubble?.showReplyForReading("I couldn't make the local page, but the rest is ready.")
+            chatBubble?.showReplyForReading("I couldn't open the demo page, but the rest is ready.")
             scheduleOnboardingDemoWork(after: 2.0) { [weak self] in
                 self?.showOnboardingControlsStep(createdPageURL: nil)
             }
         }
     }
 
-    private func showOnboardingDemoPointingIntro() {
+    private func showOnboardingDemoTaskIntro() {
         playOnboardingAnimation("Explain")
         syncBubbleAnchorToClippy()
-        chatBubble?.showReplyForReading(ClippyOnboardingDemo.pointingIntroText)
+        chatBubble?.showReplyForReading(ClippyOnboardingDemo.taskIntroText)
+    }
+
+    private func completeOnboardingDemoPage(_ url: URL) {
+        guard isOnboardingActive else { return }
+        chatBubble?.showThinking(ClippyOnboardingDemo.organizingText)
+        playActivityState(.working)
+
+        do {
+            try ClippyOnboardingDemo.completePage(at: url)
+            log("onboarding-demo: completed \(url.path)")
+            NSWorkspace.shared.open(url)
+            scheduleOnboardingDemoWork(after: 0.8) { [weak self] in
+                self?.playOnboardingAnimation("Explain")
+                self?.syncBubbleAnchorToClippy()
+                self?.chatBubble?.showReplyForReading(ClippyOnboardingDemo.pointingIntroText)
+            }
+        } catch {
+            log("onboarding-demo completion error: \(error.localizedDescription)")
+            playActivityState(.error)
+            chatBubble?.showReplyForReading("I couldn't update the page, but the rest is ready.")
+        }
     }
 
     private func pointAtOnboardingPage() {
@@ -2613,7 +2636,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         playOnboardingAnimation("Congratulate")
         if let createdPageURL {
-            log("onboarding-demo: created \(createdPageURL.path)")
+            log("onboarding-demo: page \(createdPageURL.path)")
         }
         chatBubble?.showReplyForReading("All set. Press Control+Space to type, or hold Control+Option to talk.")
     }
