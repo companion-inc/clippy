@@ -455,21 +455,13 @@ final class AnnotationDrawView: NSView {
     }
 
     private func drawPath(_ ctx: CGContext, points: [CGPoint], shape: GroundingTag.ShapeKind, palette: AnnotationPalette) {
-        if let backing = palette.backing {
-            drawPathStroke(ctx, points: points, shape: shape, color: backing, width: 7 * markScale)
-            drawPathStroke(ctx, points: points, shape: shape, color: palette.primary, width: 3 * markScale)
-        } else {
-            drawPathStroke(ctx, points: points, shape: shape, color: palette.primary, width: 4 * markScale)
-        }
+        drawPathStroke(ctx, points: points, shape: shape, color: palette.inkBacking, width: 8 * markScale)
+        drawPathStroke(ctx, points: points, shape: shape, color: palette.primary, width: 4 * markScale)
     }
 
     private func drawLine(_ ctx: CGContext, from a: CGPoint, to b: CGPoint, palette: AnnotationPalette) {
-        if let backing = palette.backing {
-            drawPathStroke(ctx, points: [a, b], shape: .line, color: backing, width: 6 * markScale)
-            drawPathStroke(ctx, points: [a, b], shape: .line, color: palette.primary, width: 3 * markScale)
-        } else {
-            drawPathStroke(ctx, points: [a, b], shape: .line, color: palette.primary, width: 4 * markScale)
-        }
+        drawPathStroke(ctx, points: [a, b], shape: .line, color: palette.inkBacking, width: 7 * markScale)
+        drawPathStroke(ctx, points: [a, b], shape: .line, color: palette.primary, width: 3.5 * markScale)
     }
 
     private func strokePath(_ ctx: CGContext, path: CGPath, color: NSColor, width: CGFloat, dashed: Bool = false) {
@@ -677,10 +669,23 @@ public struct UserScreenAnnotation: Equatable, Sendable {
     }
 }
 
+public struct UserAnnotationToolbarActions {
+    public let done: () -> Void
+    public let clear: () -> Void
+    public let cancel: () -> Void
+
+    public init(done: @escaping () -> Void, clear: @escaping () -> Void, cancel: @escaping () -> Void) {
+        self.done = done
+        self.clear = clear
+        self.cancel = cancel
+    }
+}
+
 @MainActor
 public final class UserAnnotationController {
     private let window: NSWindow
     private let drawView: AnnotationDrawView
+    private let toolbar = UserAnnotationToolbarController()
     private var screen: NSScreen?
     private var screenIndex = 0
     private var strokes: [[CGPoint]] = []
@@ -702,7 +707,12 @@ public final class UserAnnotationController {
         drawView.onMouseUp = { [weak self] point in self?.endStroke(at: point) }
     }
 
-    public func begin(on requestedScreen: NSScreen? = nil, existing annotation: UserScreenAnnotation? = nil) {
+    public func begin(
+        on requestedScreen: NSScreen? = nil,
+        existing annotation: UserScreenAnnotation? = nil,
+        showsToolbar: Bool = false,
+        toolbarActions: UserAnnotationToolbarActions? = nil
+    ) {
         let mouseRect = CGRect(origin: NSEvent.mouseLocation, size: CGSize(width: 1, height: 1))
         let selectedScreen = requestedScreen
             ?? ScreenPerception.screen(containing: mouseRect)
@@ -722,11 +732,17 @@ public final class UserAnnotationController {
         drawView.backgroundSampler = AnnotationBackgroundSampler(screen: selectedScreen)
         refreshView()
         window.orderFrontRegardless()
+        if showsToolbar, let toolbarActions {
+            toolbar.show(on: selectedScreen, actions: toolbarActions)
+        } else {
+            toolbar.hide()
+        }
     }
 
     public func finish() -> UserScreenAnnotation? {
         commitCurrentStroke()
         window.orderOut(nil)
+        toolbar.hide()
         guard let screen, !strokes.isEmpty else { return nil }
         return UserScreenAnnotation(screenIndex: screenIndex, screenFrame: screen.frame, strokes: strokes)
     }
@@ -734,6 +750,13 @@ public final class UserAnnotationController {
     public func cancel() {
         currentStroke = []
         window.orderOut(nil)
+        toolbar.hide()
+    }
+
+    public func clear() {
+        currentStroke = []
+        strokes = []
+        refreshView()
     }
 
     private func beginStroke(at point: CGPoint) {
@@ -776,6 +799,72 @@ public final class UserAnnotationController {
     }
 }
 
+@MainActor
+private final class UserAnnotationToolbarController {
+    private final class ToolbarPanel: NSPanel {
+        override var canBecomeKey: Bool { true }
+    }
+
+    private let window: NSPanel
+    private let doneButton = RetroButton(title: "Done")
+    private let clearButton = RetroButton(title: "Clear")
+    private let cancelButton = RetroButton(title: "Cancel")
+
+    init() {
+        let size = CGSize(width: 260, height: 38)
+        window = ToolbarPanel(
+            contentRect: CGRect(origin: .zero, size: size),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        window.level = WindowLevelPolicy.bubbleLevel
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        window.isOpaque = true
+        window.backgroundColor = RetroPalette.face
+        window.hasShadow = true
+        window.hidesOnDeactivate = false
+
+        let panel = RetroPanel(frame: CGRect(origin: .zero, size: size))
+        let label = NSTextField(labelWithString: "Annotate")
+        label.font = RetroFont.ui(11, bold: true)
+        label.textColor = RetroPalette.text
+        label.frame = CGRect(x: 10, y: 11, width: 72, height: 16)
+        panel.addSubview(label)
+
+        doneButton.frame = CGRect(x: 88, y: 7, width: 50, height: 23)
+        clearButton.frame = CGRect(x: 143, y: 7, width: 52, height: 23)
+        cancelButton.frame = CGRect(x: 200, y: 7, width: 52, height: 23)
+        panel.addSubview(doneButton)
+        panel.addSubview(clearButton)
+        panel.addSubview(cancelButton)
+
+        window.contentView = panel
+    }
+
+    func show(on screen: NSScreen, actions: UserAnnotationToolbarActions) {
+        doneButton.onClick = actions.done
+        clearButton.onClick = actions.clear
+        cancelButton.onClick = actions.cancel
+
+        let visible = screen.visibleFrame
+        let size = window.frame.size
+        let origin = CGPoint(
+            x: visible.midX - size.width / 2,
+            y: visible.maxY - size.height - 14
+        )
+        window.setFrame(CGRect(origin: origin, size: size), display: true)
+        window.orderFrontRegardless()
+    }
+
+    func hide() {
+        window.orderOut(nil)
+        doneButton.onClick = nil
+        clearButton.onClick = nil
+        cancelButton.onClick = nil
+    }
+}
+
 enum AnnotationBackingTone: Equatable {
     case dark
 }
@@ -783,10 +872,12 @@ enum AnnotationBackingTone: Equatable {
 struct AnnotationPalette {
     let primary: NSColor
     let backing: NSColor?
+    let inkBacking: NSColor
 
     init(luminance: CGFloat?, fallbackAppearance: NSAppearance) {
-        primary = ClippyBalloonSpec.current.fillColor
+        primary = NSColor(calibratedRed: 1.0, green: 0.92, blue: 0.05, alpha: 1)
         backing = Self.backingTone(luminance: luminance, fallbackAppearance: fallbackAppearance)?.color
+        inkBacking = backing ?? NSColor.black.withAlphaComponent(0.72)
     }
 
     static func backingTone(luminance: CGFloat?, fallbackAppearance: NSAppearance) -> AnnotationBackingTone? {

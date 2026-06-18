@@ -1032,6 +1032,13 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ModifierHoldMonitor.matches(modifierFlags: [.control, .command], requiredModifiers: [.control]) == false)
 }
 
+@Test func modifierHoldMonitorRecognizesDoubleTapTiming() {
+    #expect(ModifierHoldMonitor.isTapDuration(start: 10, end: 10.12, maximum: 0.22))
+    #expect(ModifierHoldMonitor.isTapDuration(start: 10, end: 10.4, maximum: 0.22) == false)
+    #expect(ModifierHoldMonitor.isDoubleTap(previousTap: 10.12, currentTap: 10.38, maximumInterval: 0.36))
+    #expect(ModifierHoldMonitor.isDoubleTap(previousTap: 10.12, currentTap: 10.7, maximumInterval: 0.36) == false)
+}
+
 @Test func focusedExternalInputOnlyStartsFromPlainPrintableKeys() {
     #expect(ExternalInputKeyFilter.accepts(
         keyCode: 0,

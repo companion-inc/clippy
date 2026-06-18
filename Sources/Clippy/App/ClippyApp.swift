@@ -5,8 +5,14 @@ import Sparkle
 @main
 @MainActor
 final class ClippyApp: NSObject, NSApplicationDelegate {
+    private enum UserAnnotationMode {
+        case quick
+        case sticky
+    }
+
     private static let bodyScaleKey = "ClippyBodyScale"
     private static let setupCompletedKey = "ClippySetupCompleted"
+    private static let quickAnnotationHoldDelay: TimeInterval = 0.24
 
     private var clippy: Clippy?
     private var pendingIdle: DispatchWorkItem?
@@ -94,6 +100,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var activeTurnUsedUserAnnotation = false
     private var isUserAnnotating = false
     private var isAnnotationHoldActive = false
+    private var userAnnotationMode: UserAnnotationMode?
     private var annotationBeginWork: DispatchWorkItem?
     private var isClippyHidden = false
     private var guidedTarget: GuidedTarget?
@@ -258,8 +265,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         shortcut.start()
 
         let annotation = ModifierHoldMonitor(modifiers: [.control])
-        annotation.onBegin = { [weak self] in self?.beginUserAnnotationMode() }
-        annotation.onEnd = { [weak self] in self?.finishUserAnnotationMode() }
+        annotation.onBegin = { [weak self] in self?.beginQuickUserAnnotationMode() }
+        annotation.onEnd = { [weak self] in self?.finishQuickUserAnnotationMode() }
+        annotation.onDoubleTap = { [weak self] in self?.toggleStickyUserAnnotationMode() }
         annotationHold = annotation
         annotation.start()
     }
@@ -667,18 +675,22 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         return accepted
     }
 
-    private func beginUserAnnotationMode() {
+    private func beginQuickUserAnnotationMode() {
+        guard userAnnotationMode != .sticky else {
+            return
+        }
         isAnnotationHoldActive = true
         annotationBeginWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.startUserAnnotationModeIfStillHolding()
+            self?.startQuickUserAnnotationModeIfStillHolding()
         }
         annotationBeginWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.quickAnnotationHoldDelay, execute: work)
     }
 
-    private func startUserAnnotationModeIfStillHolding() {
+    private func startQuickUserAnnotationModeIfStillHolding() {
         guard isAnnotationHoldActive,
+              userAnnotationMode != .sticky,
               !isTurnRunning,
               !isVoiceCaptureActive,
               !isOnboardingActive
@@ -688,6 +700,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if isClippyHidden {
             showClippy()
         }
+        userAnnotationMode = .quick
         isUserAnnotating = true
         pendingIdle?.cancel()
         overlay?.clear()
@@ -697,18 +710,73 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         syncBubbleAnchorToClippy()
         chatBubble?.showStatus("Annotate mode. Drag to mark; release Control when done.")
         _ = playOnce("GetAttention")
-        log("user-annotation: begin")
+        log("user-annotation: quick-begin")
     }
 
-    private func finishUserAnnotationMode() {
+    private func finishQuickUserAnnotationMode() {
         isAnnotationHoldActive = false
         annotationBeginWork?.cancel()
         annotationBeginWork = nil
+        guard userAnnotationMode == .quick else { return }
+        finishCurrentUserAnnotationMode(logReason: "quick")
+    }
+
+    private func toggleStickyUserAnnotationMode() {
+        isAnnotationHoldActive = false
+        annotationBeginWork?.cancel()
+        annotationBeginWork = nil
+        if userAnnotationMode == .sticky, isUserAnnotating {
+            finishCurrentUserAnnotationMode(logReason: "sticky")
+        } else {
+            startStickyUserAnnotationMode()
+        }
+    }
+
+    private func startStickyUserAnnotationMode() {
+        guard !isTurnRunning,
+              !isVoiceCaptureActive,
+              !isOnboardingActive
+        else {
+            return
+        }
+        if isClippyHidden {
+            showClippy()
+        }
+        if isUserAnnotating {
+            userAnnotationController?.cancel()
+        }
+        userAnnotationMode = .sticky
+        isUserAnnotating = true
+        pendingIdle?.cancel()
+        overlay?.clear()
+        let controller = userAnnotationController ?? UserAnnotationController()
+        userAnnotationController = controller
+        controller.begin(
+            existing: userAnnotation,
+            showsToolbar: true,
+            toolbarActions: UserAnnotationToolbarActions(
+                done: { [weak self] in self?.finishCurrentUserAnnotationMode(logReason: "sticky") },
+                clear: { [weak self] in self?.clearStickyUserAnnotationMode() },
+                cancel: { [weak self] in self?.cancelUserAnnotationMode() }
+            )
+        )
+        syncBubbleAnchorToClippy()
+        chatBubble?.showStatus("Annotation mode. Draw, then click Done.")
+        _ = playOnce("GetAttention")
+        log("user-annotation: sticky-begin")
+    }
+
+    private func finishCurrentUserAnnotationMode(logReason: String) {
         guard isUserAnnotating else { return }
         isUserAnnotating = false
+        userAnnotationMode = nil
         guard let annotation = userAnnotationController?.finish(), !annotation.isEmpty else {
-            showUserAnnotationOverlay()
-            log("user-annotation: empty")
+            userAnnotation = nil
+            userAnnotationController?.cancel()
+            overlay?.clear()
+            syncBubbleAnchorToClippy()
+            chatBubble?.showReplyForReading("No marks yet.")
+            log("user-annotation: \(logReason)-empty")
             return
         }
         userAnnotation = annotation
@@ -716,15 +784,30 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         syncBubbleAnchorToClippy()
         chatBubble?.showReplyForReading("Marked. Ask me what you want to know.")
         _ = playOnce("Explain")
-        log("user-annotation: finish strokes=\(annotation.strokes.count) screen=\(annotation.screenIndex + 1)")
+        log("user-annotation: \(logReason)-finish strokes=\(annotation.strokes.count) screen=\(annotation.screenIndex + 1)")
+    }
+
+    private func clearStickyUserAnnotationMode() {
+        guard userAnnotationMode == .sticky, isUserAnnotating else { return }
+        userAnnotation = nil
+        userAnnotationController?.clear()
+        overlay?.clear()
+        syncBubbleAnchorToClippy()
+        chatBubble?.showStatus("Cleared. Draw again, then click Done.")
+        log("user-annotation: sticky-clear")
     }
 
     private func cancelUserAnnotationMode() {
         isAnnotationHoldActive = false
         annotationBeginWork?.cancel()
         annotationBeginWork = nil
-        guard isUserAnnotating else { return }
+        guard isUserAnnotating else {
+            userAnnotationMode = nil
+            userAnnotationController?.cancel()
+            return
+        }
         isUserAnnotating = false
+        userAnnotationMode = nil
         userAnnotationController?.cancel()
         showUserAnnotationOverlay()
         log("user-annotation: cancel")
@@ -756,7 +839,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             showClippy()
         }
         syncBubbleAnchorToClippy()
-        chatBubble?.showReplyForReading("Hold Control and drag anywhere to mark the screen.")
+        chatBubble?.showReplyForReading("Double-tap Control for annotation mode, or hold Control for a quick mark.")
         _ = playOnce("GetAttention")
     }
 
@@ -1851,8 +1934,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         items.append(.toggle("Speak Replies", isOn: ttsEnabled) { [weak self] in
             self?.toggleTTS()
         })
-        items.append(.action("Annotate Screen", detail: "Hold Ctrl") { [weak self] in
-            self?.showAnnotationHint()
+        items.append(.action("Annotate Screen", detail: "Ctrl Ctrl") { [weak self] in
+            self?.startStickyUserAnnotationMode()
         })
 
         let bodySizeItems: [RetroMenuItem] = [
