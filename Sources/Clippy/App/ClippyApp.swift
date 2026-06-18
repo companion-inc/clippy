@@ -2298,7 +2298,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func showBrainChoiceStep() {
         saveOnboardingResumePoint(.brainChoice)
         showOnboardingStep(
-            "First, pick the account I'll think with.",
+            "Connect ChatGPT or Claude to get started.",
             animation: "GetAttention",
             choices: [
                 .init(title: "ChatGPT") { [weak self] in self?.showCodexOnboarding() },
