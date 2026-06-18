@@ -169,6 +169,8 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private weak var anchorWindow: NSWindow?
     private var autoHideTimer: Timer?
     private var typingTimer: Timer?
+    private var inputDismissedByAnchorClickAt: TimeInterval?
+    private static let anchorClickDismissalReplayWindow: TimeInterval = 0.35
 
     public init(spec: ClippySpec = .current) {
         self.spec = spec
@@ -523,6 +525,19 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         window.orderOut(nil)
     }
 
+    func recordInputDismissedByAnchorClick(now: TimeInterval = ProcessInfo.processInfo.systemUptime) {
+        inputDismissedByAnchorClickAt = now
+    }
+
+    @discardableResult
+    public func consumeRecentInputDismissalByAnchorClick(now: TimeInterval = ProcessInfo.processInfo.systemUptime) -> Bool {
+        guard let dismissedAt = inputDismissedByAnchorClickAt else {
+            return false
+        }
+        inputDismissedByAnchorClickAt = nil
+        return now - dismissedAt <= Self.anchorClickDismissalReplayWindow
+    }
+
     // MARK: - Thinking indicator
 
     private var thinkingTimer: Timer?
@@ -755,7 +770,23 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     // MARK: - Click-away dismissal
 
     public func windowDidResignKey(_ notification: Notification) {
-        if mode == .input { hide() }
+        guard mode == .input else { return }
+        let dismissedByAnchorClick = currentEventIsMouseDownInAnchorWindow()
+        hide()
+        if dismissedByAnchorClick {
+            recordInputDismissedByAnchorClick()
+        }
+    }
+
+    private func currentEventIsMouseDownInAnchorWindow() -> Bool {
+        guard
+            let anchorWindow,
+            let event = NSApp.currentEvent,
+            event.windowNumber == anchorWindow.windowNumber
+        else {
+            return false
+        }
+        return event.type == .leftMouseDown
     }
 
     public func textDidChange(_ notification: Notification) {

@@ -1173,6 +1173,25 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(bubble.debugSelectedRange == NSRange(location: 0, length: "hello from paste".count))
 }
 
+@Test @MainActor func clippyBubbleConsumesAnchorClickDismissalOnce() {
+    let bubble = ClippyBubbleController()
+    defer { bubble.hide() }
+
+    bubble.recordInputDismissedByAnchorClick(now: 10)
+
+    #expect(bubble.consumeRecentInputDismissalByAnchorClick(now: 10.2))
+    #expect(bubble.consumeRecentInputDismissalByAnchorClick(now: 10.21) == false)
+}
+
+@Test @MainActor func clippyBubbleIgnoresStaleAnchorClickDismissal() {
+    let bubble = ClippyBubbleController()
+    defer { bubble.hide() }
+
+    bubble.recordInputDismissedByAnchorClick(now: 10)
+
+    #expect(bubble.consumeRecentInputDismissalByAnchorClick(now: 10.5) == false)
+}
+
 @Test @MainActor func clippyCharacterWindowRoutesFocusedTyping() {
     let rendererView = NSView(frame: NSRect(x: 0, y: 0, width: 80, height: 80))
     let controller = ClippyWindowController(rendererView: rendererView, size: CGSize(width: 80, height: 80)) { _ in true }

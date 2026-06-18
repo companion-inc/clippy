@@ -636,8 +636,15 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func toggleChat() {
-        guard chatBubble?.isInputMode != true else {
-            chatBubble?.hide()
+        guard let chatBubble else {
+            showTextInputBubble()
+            return
+        }
+        if chatBubble.isInputMode {
+            chatBubble.hide()
+            return
+        }
+        if chatBubble.consumeRecentInputDismissalByAnchorClick() {
             return
         }
         showTextInputBubble()
