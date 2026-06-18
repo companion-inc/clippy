@@ -8,7 +8,7 @@ public final class ClippyHitView: NSView {
     /// Custom right-click presenter. Used by the app for its period-styled menu.
     public var rightClickHandler: ((NSEvent, NSView) -> Void)?
 
-    /// Invoked on an intentional double-click — opens the Clippy input.
+    /// Invoked on an intentional character click — opens the Clippy input.
     public var onClick: (() -> Void)?
 
     /// Invoked when the focused character window receives typed input.
@@ -17,8 +17,6 @@ public final class ClippyHitView: NSView {
     private let visibleHitTest: (NSPoint) -> Bool
     private var mouseDownScreenLocation: NSPoint?
     private var mouseDownWindowOrigin: NSPoint?
-    private var lastClickScreenLocation: NSPoint?
-    private var lastClickTimestamp: TimeInterval?
     private var didDrag = false
 
     public init(frame: NSRect, visibleHitTest: @escaping (NSPoint) -> Bool) {
@@ -93,35 +91,8 @@ public final class ClippyHitView: NSView {
             didDrag = false
         }
         guard hadMouseDown, !didDrag else {
-            lastClickScreenLocation = nil
-            lastClickTimestamp = nil
             return
         }
-
-        if event.clickCount >= 2 {
-            lastClickScreenLocation = nil
-            lastClickTimestamp = nil
-            onClick?()
-            return
-        }
-
-        let clickLocation = NSEvent.mouseLocation
-        if
-            let previousLocation = lastClickScreenLocation,
-            let previousTimestamp = lastClickTimestamp,
-            event.timestamp - previousTimestamp <= 0.45
-        {
-            let dx = clickLocation.x - previousLocation.x
-            let dy = clickLocation.y - previousLocation.y
-            if (dx * dx + dy * dy) <= 16 {
-                lastClickScreenLocation = nil
-                lastClickTimestamp = nil
-                onClick?()
-                return
-            }
-        }
-
-        lastClickScreenLocation = clickLocation
-        lastClickTimestamp = event.timestamp
+        onClick?()
     }
 }

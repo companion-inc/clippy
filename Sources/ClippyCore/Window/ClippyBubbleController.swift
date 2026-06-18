@@ -2,9 +2,9 @@ import AppKit
 
 /// Clippy's one and only bubble. It shows exactly one thing at a time:
 ///   • a single message line (greeting or the latest reply), or
-///   • the input field (when you double-click Clippy).
+///   • the input field (when you click Clippy).
 /// While Clippy is thinking, the bubble shows the current backend phase instead
-/// of leaving the user with anonymous dots. Double-click Clippy to open the input;
+/// of leaving the user with anonymous dots. Click Clippy to open the input;
 /// click away and it disappears. Type face is Microsoft Sans Serif (the modern
 /// name for the MS Sans Serif the original balloon used).
 public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindowDelegate {
@@ -299,7 +299,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         showMessage(text, autoHide: Self.readingAutoHideDelay(for: text))
     }
 
-    /// Double-click Clippy: show only the input, focused. Click-away dismisses it.
+    /// Click Clippy: show only the input, focused. Click-away dismisses it.
     public func openInput() {
         stopTyping()
         stopThinking()

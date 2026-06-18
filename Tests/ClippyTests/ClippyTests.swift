@@ -1457,6 +1457,46 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(reportedFrame?.size == CGSize(width: 24, height: 24))
 }
 
+@Test @MainActor func clippyWindowSingleClickActivatesCharacter() throws {
+    let controller = ClippyWindowController(
+        rendererView: NSView(frame: CGRect(origin: .zero, size: CGSize(width: 24, height: 24))),
+        size: CGSize(width: 24, height: 24)
+    ) { _ in true }
+    let contentView = try #require(controller.window.contentView)
+    var clicks = 0
+    controller.onCharacterClick = {
+        clicks += 1
+    }
+
+    let down = try #require(NSEvent.mouseEvent(
+        with: .leftMouseDown,
+        location: CGPoint(x: 12, y: 12),
+        modifierFlags: [],
+        timestamp: 1,
+        windowNumber: controller.window.windowNumber,
+        context: nil,
+        eventNumber: 1,
+        clickCount: 1,
+        pressure: 1
+    ))
+    let up = try #require(NSEvent.mouseEvent(
+        with: .leftMouseUp,
+        location: CGPoint(x: 12, y: 12),
+        modifierFlags: [],
+        timestamp: 1.1,
+        windowNumber: controller.window.windowNumber,
+        context: nil,
+        eventNumber: 2,
+        clickCount: 1,
+        pressure: 0
+    ))
+
+    contentView.mouseDown(with: down)
+    contentView.mouseUp(with: up)
+
+    #expect(clicks == 1)
+}
+
 @Test @MainActor func spriteRendererResizeUpdatesViewAndSpriteAnchor() {
     let renderer = SpriteKitRasterCharacterRenderer(size: CGSize(width: 24, height: 24))
 
