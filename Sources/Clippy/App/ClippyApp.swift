@@ -27,6 +27,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var userAnnotation: UserScreenAnnotation?
     private var permissionDrag: PermissionDragController?
     private var onboardingDemoWorkItems: [DispatchWorkItem] = []
+    private var onboardingPermissionsRequested = Set<OnboardingPermission>()
     private var statusItem: NSStatusItem?
     private var retroMenu = RetroMenuController()
     private var ptt: PushToTalkMonitor?
@@ -97,7 +98,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var lastShots: [ScreenPerception.Screenshot] = []
     private var lastDesktopContext: DesktopContextSnapshot?
     private var turnProgressItems: [DispatchWorkItem] = []
-    private var turnTimeoutItem: DispatchWorkItem?
     private var turnHasStreamingText = false
     private var ttsSpokenChars = 0   // how much of the streaming reply has been queued to TTS
     private var streamingReplySegmentID: String?
@@ -146,7 +146,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let previousInstruction: String
     }
 
-    private enum OnboardingPermission: CaseIterable {
+    private enum OnboardingPermission: CaseIterable, Hashable {
         case accessibility
         case screenRecording
         case fullDiskAccess
@@ -1040,7 +1040,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             chatBubble.showThinking(initialThinkingStatus ?? (shot == nil ? "Starting the brain" : "Sending the screen"))
         }
         scheduleTurnProgressUpdates(wantsScreen: wantsScreen, attachedScreenshot: shot != nil)
-        scheduleTurnTimeout(reason: "message")
         playActivityState(.thinking)
         let screenshotContexts = Self.screenshotPromptContexts(for: shots, primary: shot)
         let visualGroundingContext = needsVisualGrounding
@@ -1096,11 +1095,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func scheduleTurnProgressUpdates(wantsScreen: Bool, attachedScreenshot: Bool) {
-        let screenStatus = attachedScreenshot ? "Reading the screen" : "Waiting for first words"
+        let screenStatus = attachedScreenshot ? "Reading the screen" : "Thinking"
         let phases: [(TimeInterval, String)] = [
-            (1.0, wantsScreen ? screenStatus : "Waiting for first words"),
+            (1.0, wantsScreen ? screenStatus : "Thinking"),
             (3.0, "Still thinking"),
-            (6.0, "Still waiting on the model"),
+            (6.0, "Still working"),
             (10.0, "Still working"),
         ]
         for (delay, status) in phases {
@@ -1123,36 +1122,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         turnProgressItems.removeAll()
     }
 
-    private func scheduleTurnTimeout(reason: String) {
-        turnTimeoutItem?.cancel()
-        let timeout = DispatchWorkItem { [weak self] in
-            guard let self, self.isTurnRunning else { return }
-            self.log("turn-timeout: reason=\(reason)")
-            self.currentBrainTask?.cancel()
-            self.currentBrainTask = nil
-            let text = self.activeUserRequest.map { Self.timeoutErrorText(for: $0.attemptedModel) }
-                ?? "The brain connection timed out before a final response."
-            self.receiveReply(AgentTurn(
-                text: text,
-                isError: true
-            ))
-        }
-        turnTimeoutItem = timeout
-        DispatchQueue.main.asyncAfter(deadline: .now() + 50, execute: timeout)
-    }
-
     private func cancelTurnTimeout() {
-        turnTimeoutItem?.cancel()
-        turnTimeoutItem = nil
-    }
-
-    private static func timeoutErrorText(for model: ClippyModel) -> String {
-        switch model.backend {
-        case .claude:
-            return "The Claude connection timed out before a final response."
-        case .codex:
-            return "The ChatGPT connection timed out before a final response."
-        }
+        // Clippy does not impose a local deadline on model turns. Provider errors
+        // and user interruption still end the turn through the normal paths.
     }
 
     private func captureTurnScreenshot(screen targetScreen: NSScreen?) -> ScreenPerception.Screenshot? {
@@ -1516,7 +1488,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         ttsSpokenChars = 0
         syncBubbleAnchorToClippy()
         chatBubble?.showThinking("Finding the spot")
-        scheduleTurnTimeout(reason: "visual-grounding-repair")
         playActivityState(.thinking)
         let repairMessage = ClippyAgentInstructions.visualGroundingRepairMessage(
             originalUserText: context.originalUserText,
@@ -1829,7 +1800,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             chatBubble?.showThinking("Checking that step")
         }
         scheduleTurnProgressUpdates(wantsScreen: true, attachedScreenshot: shot != nil)
-        scheduleTurnTimeout(reason: "guided-target-follow-up")
         playActivityState(.thinking)
 
         let message = ClippyAgentInstructions.guidedTargetFollowUpMessage(
@@ -2311,6 +2281,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             showClippy()
         }
         cancelOnboardingDemoWork()
+        onboardingPermissionsRequested.removeAll()
         isOnboardingActive = true
         syncBubbleAnchorToClippy()
         if force {
@@ -2351,10 +2322,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             showListeningStep()
         case .voice:
             showVoiceStep()
-        case .permission:
-            showPermissionStep()
-        case .permissionWalkthrough:
-            startPermissionWalkthrough()
+        case .screenHelp:
+            showScreenHelpStep()
+        case .fileAccess:
+            showFileAccessStep()
         case .demo:
             startOnboardingDemo()
         case .controls:
@@ -2480,14 +2451,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         saveOnboardingResumePoint(.listening)
         if ClippySecrets.deepgramAPIKey != nil {
             showOnboardingStep(
-                "Found a Deepgram key. I can listen when you talk.",
+                "Do you want to talk to me with your voice?",
                 animation: "Hearing_1",
                 choices: [
-                    .init(title: "Yes, Listen") { [weak self] in
-                        self?.configureVoiceProviders()
-                        self?.showVoiceStep()
-                    },
-                    .init(title: "Not Now") { [weak self] in self?.showVoiceStep() },
+                    .init(title: "Use Mic") { [weak self] in self?.enableOnboardingListening() },
+                    .init(title: "Not Now") { [weak self] in self?.skipOnboardingListening() },
                 ]
             )
         } else {
@@ -2506,14 +2474,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         saveOnboardingResumePoint(.voice)
         if ClippySecrets.xaiAPIKey != nil {
             showOnboardingStep(
-                "Found an xAI key. I can talk back out loud.",
+                "Do you want me to talk back out loud?",
                 animation: "Wave",
                 choices: [
-                    .init(title: "Yes, Talk") { [weak self] in
-                        self?.configureVoiceProviders()
-                        self?.showPermissionStep()
-                    },
-                    .init(title: "Stay Quiet") { [weak self] in self?.showPermissionStep() },
+                    .init(title: "Speak Replies") { [weak self] in self?.enableOnboardingSpeech() },
+                    .init(title: "Stay Quiet") { [weak self] in self?.skipOnboardingSpeech() },
                 ]
             )
         } else {
@@ -2522,7 +2487,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 animation: "Wave",
                 choices: [
                     .init(title: "Add Voice Key") { [weak self] in self?.showProviderKeys() },
-                    .init(title: "Stay Quiet") { [weak self] in self?.showPermissionStep() },
+                    .init(title: "Stay Quiet") { [weak self] in self?.skipOnboardingSpeech() },
                 ]
             )
         }
@@ -2532,42 +2497,125 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         showListeningStep()
     }
 
-    private func showPermissionStep() {
-        saveOnboardingResumePoint(.permission)
+    private func enableOnboardingListening() {
+        sttEnabled = true
+        UserDefaults.standard.set(true, forKey: "ClippySTTEnabled")
+        configureVoiceProviders()
+        if ptt == nil {
+            setUpVoice()
+        }
+        guard !MicrophonePermission.isGranted else {
+            showVoiceStep()
+            return
+        }
+        syncBubbleAnchorToClippy()
+        chatBubble?.showThinking("Asking for microphone")
+        Task { [weak self] in
+            let granted = await SpeechCapture.requestMicrophone()
+            await MainActor.run {
+                guard let self else { return }
+                if granted {
+                    self.showVoiceStep()
+                } else {
+                    self.showPermissionDialog(permission: .microphone, doneButtonTitle: "Done") { [weak self] in
+                        self?.showVoiceStep()
+                    }
+                }
+            }
+        }
+    }
+
+    private func skipOnboardingListening() {
+        sttEnabled = false
+        UserDefaults.standard.set(false, forKey: "ClippySTTEnabled")
+        if isVoiceCaptureActive {
+            _ = speech?.stop()
+        }
+        isVoiceCaptureActive = false
+        usingDeepgram = false
+        deepgramSTT?.cancel()
+        ptt?.stop()
+        ptt = nil
+        showVoiceStep()
+    }
+
+    private func enableOnboardingSpeech() {
+        ttsEnabled = true
+        UserDefaults.standard.set(true, forKey: "ClippyTTSEnabled")
+        configureVoiceProviders()
+        showScreenHelpStep()
+    }
+
+    private func skipOnboardingSpeech() {
+        ttsEnabled = false
+        UserDefaults.standard.set(false, forKey: "ClippyTTSEnabled")
+        hideBubbleWhenSpeechFinishes = false
+        spokenBubbleShownAt = nil
+        cancelSpokenBubbleHide()
+        tts?.stop()
+        showScreenHelpStep()
+    }
+
+    private func showScreenHelpStep() {
+        saveOnboardingResumePoint(.screenHelp)
+        if AccessibilityPermission.isTrusted && ScreenPerception.hasPermission {
+            showFileAccessStep()
+            return
+        }
         showOnboardingStep(
-            "Last step. I need Mac permissions: Accessibility to click, Screen Recording to see, Full Disk Access to read local app databases, and Microphone to hear you.",
+            "Do you want me to help with things on your screen? This lets me see pages and click only when you ask.",
             animation: "GetAttention",
             choices: [
-                .init(title: "Grant Permissions") { [weak self] in self?.startPermissionWalkthrough() },
-                .init(title: "Skip") { [weak self] in self?.startOnboardingDemo() },
+                .init(title: "Screen Help") { [weak self] in self?.requestScreenHelpPermissions() },
+                .init(title: "Not Now") { [weak self] in self?.showFileAccessStep() },
             ]
         )
     }
 
-    private func startPermissionWalkthrough() {
-        saveOnboardingResumePoint(.permissionWalkthrough)
-        showNextPermissionDialog()
-    }
-
-    private func showNextPermissionDialog() {
-        guard let permission = OnboardingPermission.allCases.first(where: { !$0.isGranted }) else {
-            permissionDrag?.hide()
-            startOnboardingDemo()
+    private func requestScreenHelpPermissions() {
+        saveOnboardingResumePoint(.screenHelp)
+        let permissionOrder: [OnboardingPermission] = [.screenRecording, .accessibility]
+        guard let permission = permissionOrder.first(where: {
+            !$0.isGranted && !onboardingPermissionsRequested.contains($0)
+        }) else {
+            showFileAccessStep()
             return
         }
+        onboardingPermissionsRequested.insert(permission)
         switch permission {
         case .accessibility:
             _ = AccessibilityPermission.requestIfNeeded(prompt: true)
         case .screenRecording:
             _ = ScreenPerception.requestPermission()
-        case .fullDiskAccess:
-            break
-        case .microphone:
-            Task { _ = await SpeechCapture.requestMicrophone() }
+        case .fullDiskAccess, .microphone:
+            return
         }
-        chatBubble?.hide()
         showPermissionDialog(permission: permission, doneButtonTitle: "Done") { [weak self] in
-            self?.showNextPermissionDialog()
+            self?.requestScreenHelpPermissions()
+        }
+    }
+
+    private func showFileAccessStep() {
+        saveOnboardingResumePoint(.fileAccess)
+        guard !FullDiskAccessPermission.isGranted else {
+            startOnboardingDemo()
+            return
+        }
+        showOnboardingStep(
+            "Do you want me to read local app files when you ask? This is for things like Messages or browser history.",
+            animation: "Processing",
+            choices: [
+                .init(title: "Access Files") { [weak self] in self?.requestFileAccessPermission() },
+                .init(title: "Not Now") { [weak self] in self?.startOnboardingDemo() },
+            ]
+        )
+    }
+
+    private func requestFileAccessPermission() {
+        saveOnboardingResumePoint(.fileAccess)
+        onboardingPermissionsRequested.insert(.fullDiskAccess)
+        showPermissionDialog(permission: .fullDiskAccess, doneButtonTitle: "Done") { [weak self] in
+            self?.startOnboardingDemo()
         }
     }
 

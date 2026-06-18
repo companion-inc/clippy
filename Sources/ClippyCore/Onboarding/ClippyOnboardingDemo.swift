@@ -8,8 +8,8 @@ public enum ClippyOnboardingResumePoint: String, CaseIterable, Sendable {
     case claude
     case listening
     case voice
-    case permission
-    case permissionWalkthrough
+    case screenHelp
+    case fileAccess
     case demo
     case controls
 
@@ -19,6 +19,9 @@ public enum ClippyOnboardingResumePoint: String, CaseIterable, Sendable {
         if rawValue == "demoComposer" {
             return .demo
         }
+        if rawValue == "permission" || rawValue == "permissionWalkthrough" {
+            return .screenHelp
+        }
         guard let rawValue, let point = Self(rawValue: rawValue) else {
             return .welcome
         }
@@ -27,9 +30,9 @@ public enum ClippyOnboardingResumePoint: String, CaseIterable, Sendable {
 }
 
 public enum ClippyOnboardingDemo {
-    public static let guidedIntroText = "Let's try something real. I'll open a tiny form, fill in your name, and draw on the screen so you can see what I did."
-    public static let guidedWorkingText = "Opening the form"
-    public static let visibleTaskLine = "Fill out this form with my name, then draw on it."
+    public static let guidedIntroText = "Let me show you something real. I'll fill out a small form with your name, save it, and point to the field I changed."
+    public static let guidedWorkingText = "Trying the form"
+    public static let visibleTaskLine = ""
     public static let controlsText = """
     Last thing: click me to open or close chat. Press Control+Space to type from anywhere. Hold Control+Option to talk. Hold Control to mark the screen, or tap Control twice for annotation mode. Right-click me for settings.
     """
@@ -106,19 +109,20 @@ public enum ClippyOnboardingDemo {
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Clippy Demo - Tiny Form</title>
+          <title>Clippy Demo - Form</title>
           <style>
             :root {
               color-scheme: light;
-              --ink: #171717;
-              --muted: #5f6673;
-              --line: #d4dbe7;
+              --ink: #191b20;
+              --muted: #626a78;
+              --line: #d7dee9;
               --panel: #ffffff;
-              --page: #eef2f7;
-              --blue: #134fa8;
-              --green: #087a4a;
+              --page: #f2f5f9;
+              --blue: #1557b0;
+              --green: #08724a;
               --red: #b42318;
-              --yellow: #fff29a;
+              --yellow: #fff3a3;
+              --soft: #f8fafc;
             }
             * { box-sizing: border-box; }
             body {
@@ -131,31 +135,62 @@ public enum ClippyOnboardingDemo {
               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             }
             main {
-              width: min(900px, calc(100vw - 40px));
+              width: min(820px, calc(100vw - 40px));
               background: var(--panel);
               border: 1px solid var(--line);
               border-radius: 8px;
-              box-shadow: 0 18px 60px rgba(18, 28, 45, 0.16);
+              box-shadow: 0 18px 48px rgba(28, 39, 57, 0.16);
               overflow: hidden;
             }
-            header {
+            .topbar {
               display: flex;
               align-items: center;
               justify-content: space-between;
-              gap: 18px;
-              padding: 24px 28px;
+              gap: 12px;
+              height: 46px;
+              padding: 0 16px;
               border-bottom: 1px solid var(--line);
-              background: #fbfcfe;
+              background: var(--soft);
+            }
+            .dots {
+              display: flex;
+              gap: 7px;
+            }
+            .dot {
+              width: 11px;
+              height: 11px;
+              border-radius: 50%;
+              background: #c9d1de;
+            }
+            .dot:first-child { background: #ec6a5e; }
+            .dot:nth-child(2) { background: #f5bf4f; }
+            .dot:nth-child(3) { background: #61c554; }
+            .title {
+              font-size: 14px;
+              font-weight: 900;
+              color: #3d4654;
+            }
+            .body {
+              display: grid;
+              grid-template-columns: minmax(0, 1fr) 230px;
+              gap: 24px;
+              padding: 28px;
+            }
+            .intro {
+              display: grid;
+              gap: 4px;
+              margin-bottom: 22px;
             }
             h1 {
               margin: 0;
-              font-size: clamp(28px, 4vw, 42px);
-              line-height: 1.05;
+              font-size: clamp(30px, 4vw, 40px);
+              line-height: 1.08;
             }
             .subhead {
-              margin: 8px 0 0;
+              margin: 0;
               color: var(--muted);
               font-size: 16px;
+              line-height: 1.45;
             }
             .status {
               border-radius: 999px;
@@ -164,31 +199,15 @@ public enum ClippyOnboardingDemo {
               color: var(--red);
               font-weight: 900;
               white-space: nowrap;
+              justify-self: start;
             }
             body.saved .status {
               background: #e8f8ef;
               color: var(--green);
             }
-            .content {
-              display: grid;
-              grid-template-columns: minmax(0, 1fr) minmax(250px, 0.75fr);
-              gap: 20px;
-              padding: 24px;
-            }
-            section {
-              border: 1px solid var(--line);
-              border-radius: 8px;
-              background: #fff;
-            }
-            section h2 {
-              margin: 0;
-              padding: 18px 18px 0;
-              font-size: 20px;
-            }
             form {
               display: grid;
-              gap: 14px;
-              padding: 18px;
+              gap: 15px;
             }
             label {
               display: grid;
@@ -201,9 +220,9 @@ public enum ClippyOnboardingDemo {
               width: 100%;
               border: 1px solid var(--line);
               border-radius: 8px;
-              padding: 12px 13px;
+              padding: 13px 14px;
               color: var(--ink);
-              background: #fbfcfe;
+              background: var(--soft);
               font: inherit;
               font-weight: 700;
             }
@@ -220,8 +239,9 @@ public enum ClippyOnboardingDemo {
             .actions {
               display: flex;
               align-items: center;
+              flex-wrap: wrap;
               gap: 12px;
-              margin-top: 2px;
+              margin-top: 4px;
             }
             button {
               height: 44px;
@@ -242,44 +262,39 @@ public enum ClippyOnboardingDemo {
               font-size: 14px;
               font-weight: 700;
             }
-            .panel {
+            aside {
+              display: grid;
+              align-content: start;
+              gap: 12px;
               padding: 18px;
+              border: 1px solid var(--line);
+              border-radius: 8px;
+              background: var(--soft);
             }
-            .panel h2 {
-              padding: 0;
+            aside h2 {
               margin: 0;
-              font-size: 24px;
+              font-size: 18px;
             }
-            .panel p {
-              margin: 10px 0 0;
+            aside p {
+              margin: 0;
               color: var(--muted);
               line-height: 1.45;
-              font-size: 16px;
+              font-size: 15px;
             }
-            .sketch {
-              margin-top: 18px;
-              min-height: 150px;
-              border: 2px dashed #b8c3d3;
-              border-radius: 8px;
+            .receipt {
               display: grid;
-              place-items: center;
-              background: #fbfcfe;
+              gap: 6px;
+              margin-top: 4px;
+              padding-top: 12px;
+              border-top: 1px solid var(--line);
+              font-size: 14px;
               color: var(--muted);
-              font-weight: 900;
-              text-align: center;
-              padding: 18px;
             }
-            body.saved .sketch {
-              border-color: var(--green);
-              background: #f0fbf5;
-              color: var(--green);
+            .receipt strong {
+              color: var(--ink);
             }
             @media (max-width: 720px) {
-              header {
-                align-items: flex-start;
-                flex-direction: column;
-              }
-              .content {
+              .body {
                 grid-template-columns: 1fr;
               }
             }
@@ -287,16 +302,22 @@ public enum ClippyOnboardingDemo {
         </head>
         <body>
           <main aria-label="Clippy demo form">
-            <header>
-              <div>
-                <h1>Let's try a form</h1>
-                <p class="subhead">Clippy will fill one field, save it, then draw on this screen.</p>
+            <div class="topbar" aria-hidden="true">
+              <div class="dots">
+                <span class="dot"></span>
+                <span class="dot"></span>
+                <span class="dot"></span>
               </div>
-              <div id="status" class="status">Waiting for name</div>
-            </header>
-            <div class="content">
+              <div class="title">Clippy Demo</div>
+              <div></div>
+            </div>
+            <div class="body">
               <section aria-label="Demo form">
-                <h2>Demo request</h2>
+                <div class="intro">
+                  <h1>Quick request</h1>
+                  <p class="subhead">Clippy will complete the missing name, save the form, and mark the changed field on screen.</p>
+                  <div id="status" class="status">Needs name</div>
+                </div>
                 <form id="demo-form">
                   <label for="full-name">
                     Full name
@@ -312,11 +333,14 @@ public enum ClippyOnboardingDemo {
                   </div>
                 </form>
               </section>
-              <section class="panel" aria-label="Result">
-                <h2 id="result-title">Ready when Clippy is</h2>
-                <p id="result-copy">This page is local. Nothing is submitted anywhere.</p>
-                <div id="sketch" class="sketch">Clippy's drawing goes on top of the screen, not inside this box.</div>
-              </section>
+              <aside aria-label="Result">
+                <h2 id="result-title">Waiting for Clippy</h2>
+                <p id="result-copy">This is a local demo page. Nothing is submitted anywhere.</p>
+                <div class="receipt">
+                  <span><strong>Status</strong></span>
+                  <span id="receipt-copy">No changes saved yet.</span>
+                </div>
+              </aside>
             </div>
           </main>
           <script>
@@ -327,12 +351,12 @@ public enum ClippyOnboardingDemo {
             const hint = document.getElementById('hint');
             const resultTitle = document.getElementById('result-title');
             const resultCopy = document.getElementById('result-copy');
-            const sketch = document.getElementById('sketch');
+            const receiptCopy = document.getElementById('receipt-copy');
 
             function sync() {
               const hasName = nameInput.value.trim().length > 0;
               saveButton.disabled = !hasName;
-              status.textContent = hasName ? 'Ready to save' : 'Waiting for name';
+              status.textContent = hasName ? 'Ready to save' : 'Needs name';
               hint.textContent = hasName ? 'Now save the demo.' : 'Enter a name to save.';
             }
 
@@ -349,7 +373,7 @@ public enum ClippyOnboardingDemo {
               hint.textContent = 'Saved locally.';
               resultTitle.textContent = 'Saved for ' + name;
               resultCopy.textContent = 'Clippy filled the form and saved the demo.';
-              sketch.textContent = 'Now Clippy can draw attention to the completed field.';
+              receiptCopy.textContent = 'Full name was completed and saved.';
             });
             sync();
           </script>
