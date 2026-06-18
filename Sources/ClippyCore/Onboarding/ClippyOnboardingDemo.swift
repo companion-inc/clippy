@@ -1,4 +1,3 @@
-import CoreGraphics
 import Foundation
 
 public enum ClippyOnboardingResumePoint: String, CaseIterable, Sendable {
@@ -28,42 +27,9 @@ public enum ClippyOnboardingResumePoint: String, CaseIterable, Sendable {
 }
 
 public enum ClippyOnboardingDemo {
-    public enum PageState: String, CaseIterable, Sendable {
-        case profile
-        case portfolioFixed
-        case screening
-        case screeningComplete
-        case review
-        case submitted
-    }
-
-    public enum FocusTarget: Sendable {
-        case portfolioField
-        case nextButton
-        case screeningAnswer
-        case submitButton
-        case confirmation
-    }
-
-    public struct Target: Equatable, Sendable {
-        public let center: CGPoint
-        public let radius: CGFloat
-
-        public init(center: CGPoint, radius: CGFloat) {
-            self.center = center
-            self.radius = radius
-        }
-    }
-
-    public static let guidedIntroText = "Watch this. I can read a screen, complete the next steps, and show you where I acted."
-    public static let guidedWorkingText = "Opening the demo page"
-    public static let taskIntroText = "I'll finish this application flow: fix the missing link, answer the question, and submit the review."
-    public static let portfolioFilledText = "Filled the missing portfolio link."
-    public static let screeningAnsweredText = "Answered the required screening question."
-    public static let organizingText = "Working through the form"
-    public static let submitText = "Final check looks good. Submitting it now."
-    public static let nextClickText = "Clicking Next."
-    public static let submittedText = "Done. The application is submitted."
+    public static let guidedIntroText = "Let's try something real. I'll open a tiny form, fill in your name, and draw on the screen so you can see what I did."
+    public static let guidedWorkingText = "Opening the form"
+    public static let visibleTaskLine = "Fill out this form with my name, then draw on it."
     public static let controlsText = """
     Last thing: click me to open or close chat. Press Control+Space to type from anywhere. Hold Control+Option to talk. Hold Control to mark the screen, or tap Control twice for annotation mode. Right-click me for settings.
     """
@@ -75,16 +41,12 @@ public enum ClippyOnboardingDemo {
         let root = try pageRoot(fileManager: fileManager, supportDirectory: supportDirectory)
         try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
         let url = root.appendingPathComponent("index.html")
-        try writePage(at: url, state: .profile)
+        try writePage(at: url)
         return url
     }
 
-    public static func writePage(at url: URL, state: PageState) throws {
-        try html(state: state).write(to: url, atomically: true, encoding: .utf8)
-    }
-
-    public static func completePage(at url: URL) throws {
-        try writePage(at: url, state: .submitted)
+    public static func writePage(at url: URL) throws {
+        try html().write(to: url, atomically: true, encoding: .utf8)
     }
 
     public static func pageRoot(
@@ -101,78 +63,60 @@ public enum ClippyOnboardingDemo {
         }
         return support
             .appendingPathComponent("Clippy", isDirectory: true)
-            .appendingPathComponent("OnboardingFirstTask", isDirectory: true)
+            .appendingPathComponent("OnboardingFormDemo", isDirectory: true)
     }
 
-    public static func target(_ focus: FocusTarget, in windowFrame: CGRect) -> Target {
-        let relative: CGPoint
-        let radius: CGFloat
-        switch focus {
-        case .portfolioField:
-            relative = CGPoint(x: 0.34, y: 0.51)
-            radius = 58
-        case .nextButton:
-            relative = CGPoint(x: 0.47, y: 0.22)
-            radius = 54
-        case .screeningAnswer:
-            relative = CGPoint(x: 0.37, y: 0.48)
-            radius = 72
-        case .submitButton:
-            relative = CGPoint(x: 0.47, y: 0.23)
-            radius = 58
-        case .confirmation:
-            relative = CGPoint(x: 0.50, y: 0.53)
-            radius = 82
+    public static func currentDisplayName() -> String {
+        displayName(fullName: NSFullUserName(), accountName: NSUserName())
+    }
+
+    public static func displayName(fullName: String?, accountName: String? = nil) -> String {
+        let candidates = [fullName, accountName]
+        for candidate in candidates {
+            let cleaned = cleanName(candidate)
+            if cleaned.isEmpty == false {
+                return cleaned
+            }
         }
-        let center = CGPoint(
-            x: windowFrame.minX + windowFrame.width * relative.x,
-            y: windowFrame.minY + windowFrame.height * relative.y
-        )
-        return Target(
-            center: CGPoint(
-                x: min(max(center.x, windowFrame.minX + 80), windowFrame.maxX - 80),
-                y: min(max(center.y, windowFrame.minY + 110), windowFrame.maxY - 100)
-            ),
-            radius: max(44, min(radius, windowFrame.width * 0.08))
-        )
+        return "Friend"
     }
 
-    public static func target(in windowFrame: CGRect) -> Target {
-        target(.portfolioField, in: windowFrame)
-    }
-
-    public static func isDemoContext(_ context: DesktopContextSnapshot, pageURL: URL) -> Bool {
-        let demoTitle = "Clippy Demo"
-        if context.browser?.title?.localizedCaseInsensitiveContains(demoTitle) == true
-            || context.window?.title?.localizedCaseInsensitiveContains(demoTitle) == true {
-            return true
-        }
-        guard let browserURL = context.browser?.url,
-              let url = URL(string: browserURL) else {
-            return false
-        }
-        return url.standardizedFileURL.path == pageURL.standardizedFileURL.path
-    }
-
-    public static func html(state: PageState = .profile) -> String {
-        let vm = PageViewModel(state: state)
+    public static func taskPrompt(displayName: String, pageURL: URL) -> String {
+        let name = Self.displayName(fullName: displayName)
         return """
+        [Clippy onboarding demo task]
+        The local browser should be showing this one-page demo form:
+        \(pageURL.absoluteString)
+
+        Do this as a real desktop task, using the same tools and screen context you use for normal user requests:
+        1. Use the visible browser page.
+        2. Fill the "Full name" field with "\(name)".
+        3. Click "Save demo".
+        4. Verify the page visibly shows the saved state.
+        5. Then draw one simple Clippy-style screen annotation that calls out the filled name field.
+
+        Do not describe the steps instead of doing them. Do not mention internal tool names. Keep the spoken reply to one short Clippy sentence.
+        """
+    }
+
+    public static func html() -> String {
+        """
         <!doctype html>
         <html lang="en">
         <head>
           <meta charset="utf-8">
           <meta name="viewport" content="width=device-width, initial-scale=1">
-          <title>Clippy Demo - Application Review</title>
+          <title>Clippy Demo - Tiny Form</title>
           <style>
             :root {
               color-scheme: light;
-              --ink: #151515;
-              --muted: #666c76;
-              --line: #d8dde6;
+              --ink: #171717;
+              --muted: #5f6673;
+              --line: #d4dbe7;
               --panel: #ffffff;
-              --page: #eef2f6;
-              --blue: #174ea6;
-              --green: #0a7b4f;
+              --page: #eef2f7;
+              --blue: #134fa8;
+              --green: #087a4a;
               --red: #b42318;
               --yellow: #fff29a;
             }
@@ -187,7 +131,7 @@ public enum ClippyOnboardingDemo {
               font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
             }
             main {
-              width: min(980px, calc(100vw - 40px));
+              width: min(900px, calc(100vw - 40px));
               background: var(--panel);
               border: 1px solid var(--line);
               border-radius: 8px;
@@ -198,14 +142,14 @@ public enum ClippyOnboardingDemo {
               display: flex;
               align-items: center;
               justify-content: space-between;
-              gap: 16px;
-              padding: 22px 26px;
+              gap: 18px;
+              padding: 24px 28px;
               border-bottom: 1px solid var(--line);
               background: #fbfcfe;
             }
             h1 {
               margin: 0;
-              font-size: clamp(26px, 4vw, 38px);
+              font-size: clamp(28px, 4vw, 42px);
               line-height: 1.05;
             }
             .subhead {
@@ -216,38 +160,20 @@ public enum ClippyOnboardingDemo {
             .status {
               border-radius: 999px;
               padding: 8px 12px;
-              font-weight: 800;
-              white-space: nowrap;
-            }
-            .status.blocked {
               background: #fff1ef;
               color: var(--red);
+              font-weight: 900;
+              white-space: nowrap;
             }
-            .status.ready,
-            .status.good {
+            body.saved .status {
               background: #e8f8ef;
               color: var(--green);
             }
-            .progress {
-              display: grid;
-              grid-template-columns: repeat(3, 1fr);
-              gap: 8px;
-              padding: 18px 24px 0;
-            }
-            .progress span {
-              height: 8px;
-              border-radius: 999px;
-              background: #dce2eb;
-            }
-            .progress .active,
-            .progress .done {
-              background: var(--blue);
-            }
             .content {
               display: grid;
-              grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr);
+              grid-template-columns: minmax(0, 1fr) minmax(250px, 0.75fr);
               gap: 20px;
-              padding: 20px 24px 24px;
+              padding: 24px;
             }
             section {
               border: 1px solid var(--line);
@@ -259,128 +185,94 @@ public enum ClippyOnboardingDemo {
               padding: 18px 18px 0;
               font-size: 20px;
             }
-            .fields {
+            form {
               display: grid;
-              gap: 10px;
-              padding: 16px 18px 18px;
+              gap: 14px;
+              padding: 18px;
             }
-            .field {
+            label {
               display: grid;
-              grid-template-columns: 150px 1fr auto;
-              align-items: center;
-              gap: 12px;
-              min-height: 48px;
-              border: 1px solid var(--line);
-              border-radius: 8px;
-              padding: 12px;
-              background: #fbfcfe;
-            }
-            .label {
+              gap: 7px;
               color: var(--muted);
-              font-weight: 700;
-            }
-            .value {
               font-weight: 800;
             }
-            .ok .badge {
-              color: var(--green);
+            input,
+            textarea {
+              width: 100%;
+              border: 1px solid var(--line);
+              border-radius: 8px;
+              padding: 12px 13px;
+              color: var(--ink);
+              background: #fbfcfe;
+              font: inherit;
+              font-weight: 700;
             }
-            .missing {
-              border-color: #f0b8b2;
-              background: #fff8f7;
-            }
-            .missing .badge {
-              color: var(--red);
-            }
-            .focus {
+            input:focus,
+            textarea:focus {
+              outline: 4px solid rgba(255, 242, 154, 0.9);
               border-color: var(--ink);
-              background: var(--yellow);
-              box-shadow: 0 0 0 4px rgba(255, 242, 154, 0.8);
+              background: #fff;
             }
-            .answer {
-              min-height: 146px;
-              align-items: start;
+            textarea {
+              min-height: 94px;
+              resize: vertical;
             }
-            .answer .value {
-              line-height: 1.45;
-            }
-            .button-row {
+            .actions {
               display: flex;
-              gap: 10px;
-              padding: 0 18px 18px;
+              align-items: center;
+              gap: 12px;
+              margin-top: 2px;
             }
-            .button {
-              flex: 1;
+            button {
               height: 44px;
               border: 0;
               border-radius: 8px;
-              background: #d4d9e2;
-              color: #69707c;
-              font-weight: 900;
-            }
-            .button.primary {
+              padding: 0 18px;
               background: var(--blue);
               color: white;
-            }
-            .pulse {
-              box-shadow: 0 0 0 4px rgba(23, 78, 166, 0.18);
-            }
-            .insight {
-              padding: 18px;
-            }
-            .pill {
-              display: inline-flex;
-              align-items: center;
-              border-radius: 999px;
-              padding: 6px 10px;
-              background: #eef4ff;
-              color: var(--blue);
+              font: inherit;
               font-weight: 900;
-              font-size: 13px;
             }
-            .insight.done .pill {
-              background: #e8f8ef;
-              color: var(--green);
+            button:disabled {
+              background: #d4d9e2;
+              color: #69707c;
             }
-            .insight h2 {
-              padding: 0;
-              margin-top: 18px;
-              font-size: 28px;
-            }
-            .insight p {
-              margin: 10px 0 0;
+            .hint {
               color: var(--muted);
-              font-size: 16px;
-              line-height: 1.45;
-            }
-            ol {
-              margin: 18px 0 0;
-              padding-left: 22px;
-              font-weight: 800;
-              line-height: 1.65;
-            }
-            .muted {
-              color: var(--muted);
+              font-size: 14px;
               font-weight: 700;
             }
-            .receipt {
-              display: grid;
-              place-items: center;
-              min-height: 310px;
-              text-align: center;
-              padding: 34px;
+            .panel {
+              padding: 18px;
             }
-            .check {
-              width: 76px;
-              height: 76px;
+            .panel h2 {
+              padding: 0;
+              margin: 0;
+              font-size: 24px;
+            }
+            .panel p {
+              margin: 10px 0 0;
+              color: var(--muted);
+              line-height: 1.45;
+              font-size: 16px;
+            }
+            .sketch {
+              margin-top: 18px;
+              min-height: 150px;
+              border: 2px dashed #b8c3d3;
+              border-radius: 8px;
               display: grid;
               place-items: center;
-              margin: 0 auto 18px;
-              border-radius: 50%;
-              background: #e8f8ef;
-              color: var(--green);
-              font-size: 42px;
+              background: #fbfcfe;
+              color: var(--muted);
               font-weight: 900;
+              text-align: center;
+              padding: 18px;
+            }
+            body.saved .sketch {
+              border-color: var(--green);
+              background: #f0fbf5;
+              color: var(--green);
             }
             @media (max-width: 720px) {
               header {
@@ -390,296 +282,90 @@ public enum ClippyOnboardingDemo {
               .content {
                 grid-template-columns: 1fr;
               }
-              .field {
-                grid-template-columns: 1fr;
-              }
             }
           </style>
         </head>
         <body>
-          <main aria-label="Clippy demo page">
+          <main aria-label="Clippy demo form">
             <header>
               <div>
-                <h1>Application Review</h1>
-                <p class="subhead">A realistic flow with three steps for Clippy to finish.</p>
+                <h1>Let's try a form</h1>
+                <p class="subhead">Clippy will fill one field, save it, then draw on this screen.</p>
               </div>
-              <div class="\(vm.statusClass)">\(vm.statusText)</div>
+              <div id="status" class="status">Waiting for name</div>
             </header>
-            <div class="progress" aria-label="Progress">
-              \(vm.progressHTML)
-            </div>
             <div class="content">
-              <section aria-label="Application task">
-                <h2>\(vm.formTitle)</h2>
-                \(vm.formHTML)
+              <section aria-label="Demo form">
+                <h2>Demo request</h2>
+                <form id="demo-form">
+                  <label for="full-name">
+                    Full name
+                    <input id="full-name" name="full-name" autocomplete="name" placeholder="Your name" autofocus>
+                  </label>
+                  <label for="request">
+                    What should Clippy help with?
+                    <textarea id="request" name="request">Help me finish a small desktop task.</textarea>
+                  </label>
+                  <div class="actions">
+                    <button id="save-demo" type="submit" disabled>Save demo</button>
+                    <span id="hint" class="hint">Enter a name to save.</span>
+                  </div>
+                </form>
               </section>
-              <section id="result" class="\(vm.insightClass)" aria-label="Clippy result">
-                <span class="pill">\(vm.insightEyebrow)</span>
-                <h2>\(vm.insightTitle)</h2>
-                <p>\(vm.insightBody)</p>
-                <ol>
-                \(vm.insightItems)
-                </ol>
+              <section class="panel" aria-label="Result">
+                <h2 id="result-title">Ready when Clippy is</h2>
+                <p id="result-copy">This page is local. Nothing is submitted anywhere.</p>
+                <div id="sketch" class="sketch">Clippy's drawing goes on top of the screen, not inside this box.</div>
               </section>
             </div>
           </main>
+          <script>
+            const form = document.getElementById('demo-form');
+            const nameInput = document.getElementById('full-name');
+            const saveButton = document.getElementById('save-demo');
+            const status = document.getElementById('status');
+            const hint = document.getElementById('hint');
+            const resultTitle = document.getElementById('result-title');
+            const resultCopy = document.getElementById('result-copy');
+            const sketch = document.getElementById('sketch');
+
+            function sync() {
+              const hasName = nameInput.value.trim().length > 0;
+              saveButton.disabled = !hasName;
+              status.textContent = hasName ? 'Ready to save' : 'Waiting for name';
+              hint.textContent = hasName ? 'Now save the demo.' : 'Enter a name to save.';
+            }
+
+            nameInput.addEventListener('input', sync);
+            form.addEventListener('submit', event => {
+              event.preventDefault();
+              const name = nameInput.value.trim();
+              if (!name) {
+                sync();
+                return;
+              }
+              document.body.classList.add('saved');
+              status.textContent = 'Saved';
+              hint.textContent = 'Saved locally.';
+              resultTitle.textContent = 'Saved for ' + name;
+              resultCopy.textContent = 'Clippy filled the form and saved the demo.';
+              sketch.textContent = 'Now Clippy can draw attention to the completed field.';
+            });
+            sync();
+          </script>
         </body>
         </html>
         """
     }
-}
 
-private struct PageViewModel {
-    let state: ClippyOnboardingDemo.PageState
-
-    var step: Int {
-        switch state {
-        case .profile, .portfolioFixed:
-            return 1
-        case .screening, .screeningComplete:
-            return 2
-        case .review, .submitted:
-            return 3
-        }
-    }
-
-    var statusText: String {
-        switch state {
-        case .profile:
-            return "Step 1 blocked"
-        case .portfolioFixed:
-            return "Step 1 ready"
-        case .screening:
-            return "Step 2 blocked"
-        case .screeningComplete:
-            return "Step 2 ready"
-        case .review:
-            return "Ready to submit"
-        case .submitted:
-            return "Submitted"
-        }
-    }
-
-    var statusClass: String {
-        switch state {
-        case .profile, .screening:
-            return "status blocked"
-        case .portfolioFixed, .screeningComplete, .review:
-            return "status ready"
-        case .submitted:
-            return "status good"
-        }
-    }
-
-    var progressHTML: String {
-        (1...3).map { index in
-            let klass = index < step || state == .submitted ? "done" : (index == step ? "active" : "")
-            return "<span class=\"\(klass)\"></span>"
-        }.joined(separator: "\n")
-    }
-
-    var formTitle: String {
-        switch state {
-        case .profile, .portfolioFixed:
-            return "Step 1: Profile"
-        case .screening, .screeningComplete:
-            return "Step 2: Screening"
-        case .review:
-            return "Step 3: Review"
-        case .submitted:
-            return "Application sent"
-        }
-    }
-
-    var formHTML: String {
-        switch state {
-        case .profile:
-            return profileHTML(portfolioValue: "Missing required URL", portfolioClass: "field missing focus", badge: "Fix", nextClass: "button", nextLabel: "Next")
-        case .portfolioFixed:
-            return profileHTML(portfolioValue: "example.com/portfolio", portfolioClass: "field ok focus", badge: "Ready", nextClass: "button primary pulse", nextLabel: "Next")
-        case .screening:
-            return screeningHTML(answer: "Missing answer", answerClass: "field missing answer focus", badge: "Fix", nextClass: "button", nextLabel: "Next")
-        case .screeningComplete:
-            return screeningHTML(
-                answer: "I care about fast, useful tools that remove busywork from creative teams.",
-                answerClass: "field ok answer focus",
-                badge: "Ready",
-                nextClass: "button primary pulse",
-                nextLabel: "Next"
-            )
-        case .review:
-            return """
-            <div class="fields">
-              <div class="field ok">
-                <div class="label">Profile</div>
-                <div class="value">Portfolio link added</div>
-                <div class="badge">Ready</div>
-              </div>
-              <div class="field ok">
-                <div class="label">Screening</div>
-                <div class="value">Short answer completed</div>
-                <div class="badge">Ready</div>
-              </div>
-              <div class="field ok focus">
-                <div class="label">Consent</div>
-                <div class="value">Checked</div>
-                <div class="badge">Ready</div>
-              </div>
-            </div>
-            <div class="button-row">
-              <button class="button primary pulse">Submit application</button>
-            </div>
-            """
-        case .submitted:
-            return """
-            <div class="receipt">
-              <div>
-                <div class="check">&#10003;</div>
-                <h2>Submitted</h2>
-                <p class="subhead">Clippy finished the three-step flow.</p>
-              </div>
-            </div>
-            """
-        }
-    }
-
-    var insightClass: String {
-        state == .submitted ? "insight done" : "insight"
-    }
-
-    var insightEyebrow: String {
-        state == .submitted ? "Finished" : "Clippy is working"
-    }
-
-    var insightTitle: String {
-        switch state {
-        case .profile:
-            return "Portfolio link is missing"
-        case .portfolioFixed:
-            return "Thing 1 done"
-        case .screening:
-            return "Question needs an answer"
-        case .screeningComplete:
-            return "Thing 2 done"
-        case .review:
-            return "Thing 3 is ready"
-        case .submitted:
-            return "All done"
-        }
-    }
-
-    var insightBody: String {
-        switch state {
-        case .profile:
-            return "The form looks close, but Next is blocked by one missing required field."
-        case .portfolioFixed:
-            return "I filled the missing portfolio URL. Now I can move to the next step."
-        case .screening:
-            return "The next screen needs a concise answer before it can continue."
-        case .screeningComplete:
-            return "I wrote the answer and the next button is ready."
-        case .review:
-            return "Everything is ready. I checked consent and can submit."
-        case .submitted:
-            return "I completed three actions on the demo screen."
-        }
-    }
-
-    var insightItems: String {
-        switch state {
-        case .profile:
-            return """
-              <li class="muted">Find the required missing field.</li>
-              <li class="muted">Fill it without bothering you.</li>
-              <li class="muted">Click through the flow.</li>
-            """
-        case .portfolioFixed:
-            return """
-              <li>Filled portfolio link.</li>
-              <li>Next button is available.</li>
-              <li class="muted">Moving to screening.</li>
-            """
-        case .screening:
-            return """
-              <li>Read the prompt.</li>
-              <li class="muted">Draft the short answer.</li>
-              <li class="muted">Click Next when ready.</li>
-            """
-        case .screeningComplete:
-            return """
-              <li>Answered the screening question.</li>
-              <li>Next button is available.</li>
-              <li class="muted">Moving to review.</li>
-            """
-        case .review:
-            return """
-              <li>Portfolio link added.</li>
-              <li>Screening answer added.</li>
-              <li>Consent checked.</li>
-            """
-        case .submitted:
-            return """
-              <li>Filled the missing field.</li>
-              <li>Answered the required question.</li>
-              <li>Submitted the application.</li>
-            """
-        }
-    }
-
-    private func profileHTML(
-        portfolioValue: String,
-        portfolioClass: String,
-        badge: String,
-        nextClass: String,
-        nextLabel: String
-    ) -> String {
-        """
-        <div class="fields">
-          <div class="field ok">
-            <div class="label">Resume</div>
-            <div class="value">Uploaded</div>
-            <div class="badge">Ready</div>
-          </div>
-          <div class="field ok">
-            <div class="label">Work authorization</div>
-            <div class="value">Yes</div>
-            <div class="badge">Ready</div>
-          </div>
-          <div class="\(portfolioClass)" id="portfolio-field">
-            <div class="label">Portfolio link</div>
-            <div class="value">\(portfolioValue)</div>
-            <div class="badge">\(badge)</div>
-          </div>
-        </div>
-        <div class="button-row">
-          <button class="\(nextClass)">\(nextLabel)</button>
-        </div>
-        """
-    }
-
-    private func screeningHTML(
-        answer: String,
-        answerClass: String,
-        badge: String,
-        nextClass: String,
-        nextLabel: String
-    ) -> String {
-        """
-        <div class="fields">
-          <div class="field ok">
-            <div class="label">Question</div>
-            <div class="value">Why are you interested in this role?</div>
-            <div class="badge">Required</div>
-          </div>
-          <div class="\(answerClass)" id="screening-answer">
-            <div class="label">Short answer</div>
-            <div class="value">\(answer)</div>
-            <div class="badge">\(badge)</div>
-          </div>
-        </div>
-        <div class="button-row">
-          <button class="\(nextClass)">\(nextLabel)</button>
-        </div>
-        """
+    private static func cleanName(_ value: String?) -> String {
+        guard let value else { return "" }
+        let cleaned = value
+            .components(separatedBy: .controlCharacters)
+            .joined(separator: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard cleaned.isEmpty == false else { return "" }
+        return String(cleaned.prefix(80))
     }
 }

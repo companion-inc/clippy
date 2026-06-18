@@ -363,9 +363,7 @@ internal tool plumbing.
         if shouldUseGuidedTargetGrounding(text: text) {
             return false
         }
-        if shouldUsePassiveVisualGrounding(text: text, inputMode: inputMode) {
-            return false
-        }
+        let passiveVisualGrounding = shouldUsePassiveVisualGrounding(text: text, inputMode: inputMode)
         let controlPhrases = [
             "click",
             "double click",
@@ -399,6 +397,18 @@ internal tool plumbing.
             "the form",
             "this form",
         ]
+        if passiveVisualGrounding {
+            if containsNoClickActionPhrase(lower) {
+                return false
+            }
+            let activeControlPhrases = controlPhrases.filter {
+                $0 != "submit" && $0 != "application form" && $0 != "the form" && $0 != "this form"
+            }
+            if activeControlPhrases.contains(where: { lower.contains($0) }) {
+                return true
+            }
+            return false
+        }
         if controlPhrases.contains(where: { lower.contains($0) }) {
             return true
         }
@@ -411,6 +421,20 @@ internal tool plumbing.
             if words.contains(where: actionWords.contains) { return true }
         }
         return false
+    }
+
+    private static func containsNoClickActionPhrase(_ lower: String) -> Bool {
+        let actionPhrases = [
+            "do not click",
+            "don't click",
+            "do not press",
+            "don't press",
+            "without clicking",
+            "without pressing",
+            "no clicking",
+            "no click",
+        ]
+        return actionPhrases.contains { lower.contains($0) }
     }
 
     private static func shouldUsePassiveVisualGrounding(
@@ -432,17 +456,7 @@ internal tool plumbing.
                 || lower.contains("call out") else {
             return false
         }
-        let actionPhrases = [
-            "do not click",
-            "don't click",
-            "do not press",
-            "don't press",
-            "without clicking",
-            "without pressing",
-            "no clicking",
-            "no click",
-        ]
-        if actionPhrases.contains(where: { lower.contains($0) }) {
+        if containsNoClickActionPhrase(lower) {
             return true
         }
         return shouldUseScreenAnnotationTool(text: text, inputMode: inputMode)

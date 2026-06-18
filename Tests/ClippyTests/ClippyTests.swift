@@ -374,6 +374,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 @Test func computerControlPolicyRoutesGuiWorkToCodexLane() {
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "fill out this application form", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "fill it out right away", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "fill out this form with my name, then draw on it", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "apply to this job in the browser", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "click the blue button", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseComputerControl(text: "Guide me to click the Start demo button. Mark it as the click target and continue after I click it.", inputMode: .text) == false)
@@ -391,6 +392,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw an arrow on the page", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "Can you draw my screen to explain this?", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw over this page", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "fill out this form with my name, then draw on it", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "draw", inputMode: .voice))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "point at the menu", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: "circle this", inputMode: .voice))
@@ -404,6 +406,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "show me where to click", inputMode: .text) == false)
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "draw an arrow on the page", inputMode: .text) == false)
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "fill out this form", inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "fill out this form with my name, then draw on it", inputMode: .text))
     #expect(ClippyAgentInstructions.shouldUseCodexToolLane(text: "summarize the docs", inputMode: .text) == false)
 }
 
@@ -1403,81 +1406,47 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 
     let url = try ClippyOnboardingDemo.preparePage(supportDirectory: base)
     let html = try String(contentsOf: url)
-    let frame = CGRect(x: 120, y: 80, width: 900, height: 640)
-    let target = ClippyOnboardingDemo.target(.portfolioField, in: frame)
-    let nextTarget = ClippyOnboardingDemo.target(.nextButton, in: frame)
+    let prompt = ClippyOnboardingDemo.taskPrompt(displayName: "Ada Lovelace", pageURL: url)
 
     #expect(url.lastPathComponent == "index.html")
-    #expect(html.contains("Application Review"))
-    #expect(html.contains("Step 1: Profile"))
-    #expect(html.contains("Portfolio link"))
-    #expect(html.contains("Missing required URL"))
-    #expect(html.contains("Step 1 blocked"))
-    #expect(html.localizedCaseInsensitiveContains("try" + " demo") == false)
+    #expect(html.contains("Let's try a form"))
+    #expect(html.contains("Full name"))
+    #expect(html.contains("id=\"full-name\""))
+    #expect(html.contains("Save demo"))
+    #expect(html.contains("Clippy's drawing goes on top of the screen"))
+    #expect(html.contains("addEventListener('submit'"))
+    #expect(html.contains("Application Review") == false)
+    #expect(html.contains("Step 1") == false)
+    #expect(html.contains("Step 2") == false)
+    #expect(html.contains("Step 3") == false)
+    #expect(html.contains("Portfolio link") == false)
+    #expect(html.contains("Missing required URL") == false)
     #expect(html.localizedCaseInsensitiveContains("clean up") == false)
     #expect(html.localizedCaseInsensitiveContains("messy note") == false)
     #expect(html.localizedCaseInsensitiveContains("draggable") == false)
     #expect(html.contains("/Users/") == false)
-    #expect(ClippyOnboardingDemo.PageState.allCases == [.profile, .portfolioFixed, .screening, .screeningComplete, .review, .submitted])
-    #expect(ClippyOnboardingDemo.guidedIntroText.contains("Watch this"))
-    #expect(ClippyOnboardingDemo.guidedIntroText.contains("complete the next steps"))
+    #expect(ClippyOnboardingDemo.guidedIntroText.contains("open a tiny form"))
+    #expect(ClippyOnboardingDemo.guidedIntroText.contains("fill in your name"))
+    #expect(ClippyOnboardingDemo.guidedIntroText.contains("draw on the screen"))
     #expect(ClippyOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("window") == false)
     #expect(ClippyOnboardingDemo.guidedIntroText.contains("press " + "Return") == false)
     #expect(ClippyOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("input") == false)
-    #expect(ClippyOnboardingDemo.guidedWorkingText == "Opening the demo page")
-    #expect(ClippyOnboardingDemo.taskIntroText.contains("fix the missing link"))
-    #expect(ClippyOnboardingDemo.taskIntroText.contains("answer the question"))
-    #expect(ClippyOnboardingDemo.taskIntroText.contains("submit the review"))
-    #expect(ClippyOnboardingDemo.nextClickText == "Clicking Next.")
-    #expect(ClippyOnboardingDemo.submittedText.contains("submitted"))
+    #expect(ClippyOnboardingDemo.guidedWorkingText == "Opening the form")
+    #expect(ClippyOnboardingDemo.visibleTaskLine == "Fill out this form with my name, then draw on it.")
+    #expect(prompt.contains("Ada Lovelace"))
+    #expect(prompt.contains("Fill the \"Full name\" field"))
+    #expect(prompt.contains("Click \"Save demo\""))
+    #expect(prompt.contains("Verify the page visibly shows the saved state"))
+    #expect(prompt.contains("draw one simple Clippy-style screen annotation"))
+    #expect(prompt.contains("Do not describe the steps instead of doing them"))
+    #expect(ClippyOnboardingDemo.displayName(fullName: "  Ada   Lovelace  ") == "Ada Lovelace")
+    #expect(ClippyOnboardingDemo.displayName(fullName: "   ", accountName: "ada") == "ada")
     #expect(ClippyOnboardingDemo.controlsText.contains("click me"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Control+Space"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Control+Option"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Hold Control"))
     #expect(ClippyOnboardingDemo.controlsText.contains("tap Control twice"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Right-click"))
-    #expect(target.center.x > 120)
-    #expect(target.center.x < 1020)
-    #expect(target.center.y > 80)
-    #expect(target.center.y < 720)
-    #expect(nextTarget.center.y < target.center.y)
-
-    try ClippyOnboardingDemo.writePage(at: url, state: .portfolioFixed)
-    let portfolioFixed = try String(contentsOf: url)
-    #expect(portfolioFixed.contains("example.com/portfolio"))
-    #expect(portfolioFixed.contains("Thing 1 done"))
-
-    try ClippyOnboardingDemo.writePage(at: url, state: .screeningComplete)
-    let screeningComplete = try String(contentsOf: url)
-    #expect(screeningComplete.contains("I care about fast, useful tools"))
-    #expect(screeningComplete.contains("Thing 2 done"))
-
-    try ClippyOnboardingDemo.writePage(at: url, state: .review)
-    let review = try String(contentsOf: url)
-    #expect(review.contains("Submit application"))
-    #expect(review.contains("Thing 3 is ready"))
-
-    try ClippyOnboardingDemo.completePage(at: url)
-    let completed = try String(contentsOf: url)
-    #expect(completed.contains("Application sent"))
-    #expect(completed.contains("Submitted the application"))
-    #expect(completed.contains("I completed three actions"))
-    #expect(completed.contains("/Users/") == false)
-
-    let demoContext = DesktopContextSnapshot(
-        app: nil,
-        window: .init(title: "Clippy Demo - Application Review", ownerName: "Safari", ownerProcessIdentifier: 1, windowIdentifier: 2, bounds: .zero),
-        screen: nil,
-        browser: nil
-    )
-    let otherContext = DesktopContextSnapshot(
-        app: nil,
-        window: .init(title: "Downloads", ownerName: "Finder", ownerProcessIdentifier: 1, windowIdentifier: 2, bounds: .zero),
-        screen: nil,
-        browser: nil
-    )
-    #expect(ClippyOnboardingDemo.isDemoContext(demoContext, pageURL: url))
-    #expect(ClippyOnboardingDemo.isDemoContext(otherContext, pageURL: url) == false)
 }
 
 @Test func onboardingResumePointParsesSavedStepAndFallsBackToWelcome() {
