@@ -13,6 +13,9 @@ public enum ClippyOnboardingDemo {
     }
 
     public static let prefilledPrompt = "Make me a tiny welcome page, then point out one interesting thing on it."
+    public static let controlsText = """
+    Last thing: click me to open or close chat. Press Control+Space to type from anywhere. Hold Control+Option to talk. Hold Control to mark the screen, or tap Control twice for annotation mode. Right-click me for settings.
+    """
 
     public static func createPage(
         fileManager: FileManager = .default,

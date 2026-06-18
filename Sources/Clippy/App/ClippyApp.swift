@@ -2503,14 +2503,14 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 self?.pointAtOnboardingPage()
             }
             scheduleOnboardingDemoWork(after: 6.0) { [weak self] in
-                self?.completeBubbleOnboarding(createdPageURL: url)
+                self?.showOnboardingControlsStep(createdPageURL: url)
             }
         } catch {
             log("onboarding-demo error: \(error.localizedDescription)")
             playActivityState(.error)
             chatBubble?.showReplyForReading("I couldn't make the local page, but the rest is ready.")
             scheduleOnboardingDemoWork(after: 2.0) { [weak self] in
-                self?.completeBubbleOnboarding(createdPageURL: nil)
+                self?.showOnboardingControlsStep(createdPageURL: nil)
             }
         }
     }
@@ -2548,6 +2548,19 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         syncBubbleAnchorToClippy()
         chatBubble?.showReplyForReading("That mark belongs to this window, so it follows the page instead of floating over other work.")
         log("onboarding-demo: pointed at page app=\(context.app?.name ?? "unknown") window=\"\(context.window?.title ?? "untitled")\"")
+    }
+
+    private func showOnboardingControlsStep(createdPageURL: URL?) {
+        guard isOnboardingActive else { return }
+        showOnboardingStep(
+            ClippyOnboardingDemo.controlsText,
+            animation: "GetAttention",
+            choices: [
+                .init(title: "Done") { [weak self] in
+                    self?.completeBubbleOnboarding(createdPageURL: createdPageURL)
+                },
+            ]
+        )
     }
 
     private func completeBubbleOnboarding(createdPageURL: URL?) {
