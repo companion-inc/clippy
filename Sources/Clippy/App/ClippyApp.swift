@@ -13,6 +13,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private var chatBubble: ClippyBubbleController?
     private var overlay: AnnotationOverlayWindow?
+    private var annotationHold: ModifierHoldMonitor?
+    private var userAnnotationController: UserAnnotationController?
+    private var userAnnotation: UserScreenAnnotation?
     private var permissionDrag: PermissionDragController?
     private var statusItem: NSStatusItem?
     private var retroMenu = RetroMenuController()
@@ -88,6 +91,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var streamingReplySegmentID: String?
     private var commandTimer: Timer?
     private var activeActivityState: AgentActivityState = .idle
+    private var activeTurnUsedUserAnnotation = false
+    private var isUserAnnotating = false
+    private var isAnnotationHoldActive = false
+    private var annotationBeginWork: DispatchWorkItem?
     private var isClippyHidden = false
     private var guidedTarget: GuidedTarget?
     private var guidedTargetClickMonitor: Any?
@@ -183,6 +190,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         disarmGuidedTarget(reason: "terminate")
         cancelSetupProcess()
         textInputShortcut?.stop()
+        annotationHold?.stop()
+        userAnnotationController?.cancel()
         ptt?.stop()
         log("applicationWillTerminate")
     }
@@ -229,6 +238,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         clippy.windowController.onCharacterClick = { [weak self] in
             self?.toggleChat()
         }
+        clippy.windowController.onKeyDown = { [weak self] event in
+            self?.handleClippyFocusedTyping(event) ?? false
+        }
         setUpMenuBarItem()
         clippy.show()
         clippy.play(clippy.spec.greetingAnimationName) { [weak self] _, _ in
@@ -244,6 +256,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         textInputShortcut = shortcut
         shortcut.start()
+
+        let annotation = ModifierHoldMonitor(modifiers: [.control])
+        annotation.onBegin = { [weak self] in self?.beginUserAnnotationMode() }
+        annotation.onEnd = { [weak self] in self?.finishUserAnnotationMode() }
+        annotationHold = annotation
+        annotation.start()
     }
 
     private func scheduleNextIdle() {
@@ -609,8 +627,137 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func showTextInputFromShortcut() {
+        cancelUserAnnotationMode()
         log("text shortcut: open input")
         showTextInputBubble()
+    }
+
+    private func handleClippyFocusedTyping(_ event: NSEvent) -> Bool {
+        guard !isTurnRunning,
+              !isVoiceCaptureActive,
+              !isUserAnnotating,
+              !isOnboardingActive,
+              let chatBubble
+        else {
+            return false
+        }
+        let inputAlreadyOpen = chatBubble.isInputMode
+        guard ClippyBubbleController.acceptsExternalInputKey(
+            keyCode: event.keyCode,
+            characters: event.characters,
+            modifierFlags: event.modifierFlags,
+            inputAlreadyOpen: inputAlreadyOpen
+        ) else {
+            return false
+        }
+        if isClippyHidden {
+            showClippy()
+        }
+        syncBubbleAnchorToClippy()
+        pendingIdle?.cancel()
+        let accepted = chatBubble.receiveExternalInputKey(event)
+        if accepted, !inputAlreadyOpen {
+            log("focused-type: captured keyCode=\(event.keyCode)")
+            clippy?.play(clippy?.spec.openInputAnimationName ?? "GetAttention") { [weak clippy] _, state in
+                if state == .waiting {
+                    clippy?.exitCurrentAnimation()
+                }
+            }
+        }
+        return accepted
+    }
+
+    private func beginUserAnnotationMode() {
+        isAnnotationHoldActive = true
+        annotationBeginWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.startUserAnnotationModeIfStillHolding()
+        }
+        annotationBeginWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.18, execute: work)
+    }
+
+    private func startUserAnnotationModeIfStillHolding() {
+        guard isAnnotationHoldActive,
+              !isTurnRunning,
+              !isVoiceCaptureActive,
+              !isOnboardingActive
+        else {
+            return
+        }
+        if isClippyHidden {
+            showClippy()
+        }
+        isUserAnnotating = true
+        pendingIdle?.cancel()
+        overlay?.clear()
+        let controller = userAnnotationController ?? UserAnnotationController()
+        userAnnotationController = controller
+        controller.begin(existing: userAnnotation)
+        syncBubbleAnchorToClippy()
+        chatBubble?.showStatus("Annotate mode. Drag to mark; release Control when done.")
+        _ = playOnce("GetAttention")
+        log("user-annotation: begin")
+    }
+
+    private func finishUserAnnotationMode() {
+        isAnnotationHoldActive = false
+        annotationBeginWork?.cancel()
+        annotationBeginWork = nil
+        guard isUserAnnotating else { return }
+        isUserAnnotating = false
+        guard let annotation = userAnnotationController?.finish(), !annotation.isEmpty else {
+            showUserAnnotationOverlay()
+            log("user-annotation: empty")
+            return
+        }
+        userAnnotation = annotation
+        showUserAnnotationOverlay()
+        syncBubbleAnchorToClippy()
+        chatBubble?.showReplyForReading("Marked. Ask me what you want to know.")
+        _ = playOnce("Explain")
+        log("user-annotation: finish strokes=\(annotation.strokes.count) screen=\(annotation.screenIndex + 1)")
+    }
+
+    private func cancelUserAnnotationMode() {
+        isAnnotationHoldActive = false
+        annotationBeginWork?.cancel()
+        annotationBeginWork = nil
+        guard isUserAnnotating else { return }
+        isUserAnnotating = false
+        userAnnotationController?.cancel()
+        showUserAnnotationOverlay()
+        log("user-annotation: cancel")
+    }
+
+    private func showUserAnnotationOverlay() {
+        guard let annotation = userAnnotation, !annotation.isEmpty else {
+            overlay?.clear()
+            return
+        }
+        let screen = screen(forUserAnnotation: annotation)
+        overlay?.show(annotation.scene, on: screen)
+    }
+
+    private func screen(forUserAnnotation annotation: UserScreenAnnotation) -> NSScreen? {
+        if NSScreen.screens.indices.contains(annotation.screenIndex) {
+            let indexed = NSScreen.screens[annotation.screenIndex]
+            if indexed.frame == annotation.screenFrame {
+                return indexed
+            }
+        }
+        return NSScreen.screens.first { $0.frame == annotation.screenFrame }
+            ?? (NSScreen.screens.indices.contains(annotation.screenIndex) ? NSScreen.screens[annotation.screenIndex] : nil)
+    }
+
+    private func showAnnotationHint() {
+        cancelUserAnnotationMode()
+        if isClippyHidden {
+            showClippy()
+        }
+        syncBubbleAnchorToClippy()
+        chatBubble?.showReplyForReading("Hold Control and drag anywhere to mark the screen.")
+        _ = playOnce("GetAttention")
     }
 
     private func showTextInputBubble() {
@@ -665,6 +812,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             return
         }
         isTurnRunning = true
+        activeTurnUsedUserAnnotation = false
         turnHasStreamingText = false
         streamingReplySegmentID = nil
         cancelSpokenBubbleHide()
@@ -703,6 +851,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         } else {
             log("screen-capture: skipped")
         }
+        let userAnnotationContext = userAnnotation?.promptBlock(for: shots)
+        activeTurnUsedUserAnnotation = userAnnotationContext != nil
         if isClippyHidden == false {
             syncBubbleAnchorToClippy()
             chatBubble.recordUserLine(text)
@@ -734,7 +884,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             inputMode: inputMode,
             speaking: speaking,
             desktopContext: desktopContext,
-            requiresVisualGrounding: needsVisualGrounding)
+            requiresVisualGrounding: needsVisualGrounding,
+            userAnnotationContext: userAnnotationContext)
         ttsSpokenChars = 0
         let localImagePaths = Self.localImagePaths(for: shots)
         currentBrainTask = Task { [weak self] in
@@ -814,7 +965,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let belowWindowNumber = clippyWindow?.isVisible == true ? clippyWindow?.windowNumber : nil
 
         overlay?.clear()
-        return ScreenPerception.captureToFile(screen: targetScreen, belowWindowNumber: belowWindowNumber)
+        let shot = ScreenPerception.captureToFile(screen: targetScreen, belowWindowNumber: belowWindowNumber)
+        showUserAnnotationOverlay()
+        return shot
     }
 
     private func captureTurnScreenshots(primaryScreen targetScreen: NSScreen?) -> [ScreenPerception.Screenshot] {
@@ -823,8 +976,13 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
         overlay?.clear()
         let shots = ScreenPerception.captureAllToFiles(belowWindowNumber: belowWindowNumber)
-        if shots.isEmpty == false { return shots }
-        return ScreenPerception.captureToFile(screen: targetScreen, belowWindowNumber: belowWindowNumber).map { [$0] } ?? []
+        if shots.isEmpty == false {
+            showUserAnnotationOverlay()
+            return shots
+        }
+        let fallback = ScreenPerception.captureToFile(screen: targetScreen, belowWindowNumber: belowWindowNumber).map { [$0] } ?? []
+        showUserAnnotationOverlay()
+        return fallback
     }
 
     private func primaryShot(
@@ -939,6 +1097,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         cancelTurnProgressUpdates()
         cancelTurnTimeout()
         isVoiceCaptureActive = false
+        activeTurnUsedUserAnnotation = false
         hideBubbleWhenSpeechFinishes = false
         spokenBubbleShownAt = nil
         turnHasStreamingText = false
@@ -949,6 +1108,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     @objc private func stopTalking() {
         interruptSpeechAndResponse()
         overlay?.clear()
+        userAnnotation = nil
         chatBubble?.hide()
         scheduleNextIdle()
     }
@@ -1008,6 +1168,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if shouldRepairVisualGrounding(turn: turn, parsed: parsed, context: visualGroundingContext) {
             repairVisualGrounding(context: visualGroundingContext!, previousTurn: turn, brain: brain)
             return
+        }
+        if activeTurnUsedUserAnnotation, turn.isError == false {
+            userAnnotation = nil
+            activeTurnUsedUserAnnotation = false
         }
         // Runtime failures get a Clippy-shaped sentence; normal replies show only
         // the stripped speech. A tag-only reply shows nothing — never raw brackets.
@@ -1558,8 +1722,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         isClippyHidden = true
         updateMenuBarItem()
         pendingIdle?.cancel()
+        cancelUserAnnotationMode()
         chatBubble?.hide()
         overlay?.clear()
+        userAnnotation = nil
         permissionDrag?.hide()
         deepgramSTT?.cancel()
         usingDeepgram = false
@@ -1684,6 +1850,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         })
         items.append(.toggle("Speak Replies", isOn: ttsEnabled) { [weak self] in
             self?.toggleTTS()
+        })
+        items.append(.action("Annotate Screen", detail: "Hold Ctrl") { [weak self] in
+            self?.showAnnotationHint()
         })
 
         let bodySizeItems: [RetroMenuItem] = [

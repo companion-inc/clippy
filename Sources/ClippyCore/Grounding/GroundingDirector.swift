@@ -37,6 +37,15 @@ public enum GroundingDirector {
         return CGPoint(x: x, y: y)
     }
 
+    /// Inverse of `screenPoint`: map a global AppKit screen point (bottom-left
+    /// origin, y-up) into screenshot pixel space (top-left origin, y-down).
+    public static func pixelPoint(fromScreen point: CGPoint, imageSize: CGSize, display: CGRect) -> CGPoint {
+        guard display.width > 0, display.height > 0 else { return .zero }
+        let xRatio = (point.x - display.minX) / display.width
+        let yRatio = (display.maxY - point.y) / display.height
+        return CGPoint(x: xRatio * imageSize.width, y: yRatio * imageSize.height)
+    }
+
     /// Pick the visible screen direction from Clippy's body toward `target`
     /// (both in AppKit coordinates, y-up).
     public static func screenDirection(from clippyCenter: CGPoint, to target: CGPoint) -> ScreenPointingDirection {

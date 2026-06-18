@@ -1026,6 +1026,74 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     ) == false)
 }
 
+@Test func modifierHoldMonitorRequiresExactControlOnlyForAnnotationMode() {
+    #expect(ModifierHoldMonitor.matches(modifierFlags: [.control], requiredModifiers: [.control]))
+    #expect(ModifierHoldMonitor.matches(modifierFlags: [.control, .option], requiredModifiers: [.control]) == false)
+    #expect(ModifierHoldMonitor.matches(modifierFlags: [.control, .command], requiredModifiers: [.control]) == false)
+}
+
+@Test func focusedExternalInputOnlyStartsFromPlainPrintableKeys() {
+    #expect(ExternalInputKeyFilter.accepts(
+        keyCode: 0,
+        characters: "a",
+        modifierFlags: [],
+        inputAlreadyOpen: false
+    ))
+    #expect(ExternalInputKeyFilter.accepts(
+        keyCode: 49,
+        characters: " ",
+        modifierFlags: [],
+        inputAlreadyOpen: false
+    ) == false)
+    #expect(ExternalInputKeyFilter.accepts(
+        keyCode: 51,
+        characters: nil,
+        modifierFlags: [],
+        inputAlreadyOpen: false
+    ) == false)
+    #expect(ExternalInputKeyFilter.accepts(
+        keyCode: 51,
+        characters: nil,
+        modifierFlags: [],
+        inputAlreadyOpen: true
+    ))
+    #expect(ExternalInputKeyFilter.accepts(
+        keyCode: 0,
+        characters: "a",
+        modifierFlags: [.command],
+        inputAlreadyOpen: false
+    ) == false)
+}
+
+@Test @MainActor func clippyCharacterWindowRoutesFocusedTyping() {
+    let rendererView = NSView(frame: NSRect(x: 0, y: 0, width: 80, height: 80))
+    let controller = ClippyWindowController(rendererView: rendererView, size: CGSize(width: 80, height: 80)) { _ in true }
+    var handled = false
+    controller.onKeyDown = { event in
+        handled = event.characters == "a"
+        return handled
+    }
+
+    let event = NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: 0,
+        windowNumber: controller.window.windowNumber,
+        context: nil,
+        characters: "a",
+        charactersIgnoringModifiers: "a",
+        isARepeat: false,
+        keyCode: 0
+    )
+
+    #expect(controller.window.canBecomeKey)
+    #expect(controller.window.canBecomeMain)
+    #expect(controller.window.contentView?.acceptsFirstResponder == true)
+    controller.window.keyDown(with: event!)
+    #expect(handled)
+}
+
 @Test func rasterCharacterPackDecodesClippyAnimations() throws {
     let json = """
     {

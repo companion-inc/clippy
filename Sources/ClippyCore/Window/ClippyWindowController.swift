@@ -2,6 +2,20 @@ import AppKit
 import QuartzCore
 
 public final class ClippyWindowController {
+    private final class KeyboardWindow: NSWindow {
+        var onKeyDown: ((NSEvent) -> Bool)?
+
+        override var canBecomeKey: Bool { true }
+        override var canBecomeMain: Bool { true }
+
+        override func keyDown(with event: NSEvent) {
+            if onKeyDown?(event) == true {
+                return
+            }
+            super.keyDown(with: event)
+        }
+    }
+
     private final class FrameObserver: NSObject, NSWindowDelegate {
         var onFrameChanged: (() -> Void)?
 
@@ -43,6 +57,15 @@ public final class ClippyWindowController {
         set { contentView.onClick = newValue }
     }
 
+    /// Fired when the focused character window receives keyboard input.
+    public var onKeyDown: ((NSEvent) -> Bool)? {
+        get { contentView.onKeyDown }
+        set {
+            contentView.onKeyDown = newValue
+            (window as? KeyboardWindow)?.onKeyDown = newValue
+        }
+    }
+
     public init(
         rendererLayer: CALayer,
         size: CGSize = CGSize(width: 160, height: 160),
@@ -50,7 +73,7 @@ public final class ClippyWindowController {
     ) {
         let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
         let origin = CGPoint(x: screen.midX - size.width / 2, y: screen.minY + 40)
-        self.window = NSWindow(
+        self.window = KeyboardWindow(
             contentRect: CGRect(origin: origin, size: size),
             styleMask: .borderless,
             backing: .buffered,
@@ -78,7 +101,7 @@ public final class ClippyWindowController {
     ) {
         let screen = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
         let origin = CGPoint(x: screen.midX - size.width / 2, y: screen.minY + 40)
-        self.window = NSWindow(
+        self.window = KeyboardWindow(
             contentRect: CGRect(origin: origin, size: size),
             styleMask: .borderless,
             backing: .buffered,

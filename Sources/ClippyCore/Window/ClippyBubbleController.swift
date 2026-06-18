@@ -163,7 +163,11 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         super.init()
 
         (window as? KeyPanel)?.onKeyDown = { [weak self] event in
-            self?.handleKeyDown(event) ?? false
+            guard let self else { return false }
+            if self.handleKeyDown(event) {
+                return true
+            }
+            return self.receiveExternalInputKey(event)
         }
 
         root.frame = window.frame
@@ -286,6 +290,54 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(inputTextView)
+    }
+
+    @discardableResult
+    public func receiveExternalInputKey(_ event: NSEvent) -> Bool {
+        guard Self.acceptsExternalInputKey(
+            keyCode: event.keyCode,
+            characters: event.characters,
+            modifierFlags: event.modifierFlags,
+            inputAlreadyOpen: isInputMode
+        ) else {
+            return false
+        }
+        if !isInputMode {
+            openInput()
+        } else {
+            focusInput()
+        }
+        switch event.keyCode {
+        case 36, 76:
+            submitInput()
+        case 53:
+            hide()
+        case 51:
+            inputTextView.deleteBackward(nil)
+            relayout()
+        case 117:
+            inputTextView.deleteForward(nil)
+            relayout()
+        default:
+            guard let characters = event.characters, !characters.isEmpty else { return false }
+            inputTextView.insertText(characters, replacementRange: inputTextView.selectedRange())
+            relayout()
+        }
+        return true
+    }
+
+    public nonisolated static func acceptsExternalInputKey(
+        keyCode: UInt16,
+        characters: String?,
+        modifierFlags: NSEvent.ModifierFlags,
+        inputAlreadyOpen: Bool
+    ) -> Bool {
+        ExternalInputKeyFilter.accepts(
+            keyCode: keyCode,
+            characters: characters,
+            modifierFlags: modifierFlags,
+            inputAlreadyOpen: inputAlreadyOpen
+        )
     }
 
     public func focusInput() {

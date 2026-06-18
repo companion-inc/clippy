@@ -243,10 +243,26 @@ final class AnnotationDrawView: NSView {
     var scene: DrawingScene?
     var screenOrigin: CGPoint = .zero
     var backgroundSampler: AnnotationBackgroundSampler?
+    var onMouseDown: ((CGPoint) -> Void)?
+    var onMouseDragged: ((CGPoint) -> Void)?
+    var onMouseUp: ((CGPoint) -> Void)?
     private let markScale: CGFloat = 1
 
     override var isFlipped: Bool { false }
     override var isOpaque: Bool { false }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        onMouseDown?(globalPoint(for: event))
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        onMouseDragged?(globalPoint(for: event))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        onMouseUp?(globalPoint(for: event))
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         guard let ctx = NSGraphicsContext.current?.cgContext else { return }
@@ -570,6 +586,193 @@ final class AnnotationDrawView: NSView {
 
     private func local(_ p: CGPoint) -> CGPoint {
         CGPoint(x: p.x - screenOrigin.x, y: p.y - screenOrigin.y)
+    }
+
+    private func globalPoint(for event: NSEvent) -> CGPoint {
+        let local = convert(event.locationInWindow, from: nil)
+        return CGPoint(x: local.x + screenOrigin.x, y: local.y + screenOrigin.y)
+    }
+}
+
+public struct UserScreenAnnotation: Equatable, Sendable {
+    public let screenIndex: Int
+    public let screenFrame: CGRect
+    public let strokes: [[CGPoint]]
+
+    public init(screenIndex: Int, screenFrame: CGRect, strokes: [[CGPoint]]) {
+        self.screenIndex = screenIndex
+        self.screenFrame = screenFrame
+        self.strokes = strokes.map { Self.simplified($0) }.filter { $0.count >= 2 }
+    }
+
+    public var isEmpty: Bool { strokes.isEmpty }
+
+    public var marks: [AnnotationMark] {
+        strokes.map { .path(points: $0, shape: .curve) }
+    }
+
+    public var scene: DrawingScene {
+        DrawingScene(marks: marks)
+    }
+
+    public func promptBlock(for screenshots: [ScreenPerception.Screenshot]) -> String? {
+        guard !strokes.isEmpty else { return nil }
+        let screenshot = screenshots.first { $0.screenIndex == screenIndex && $0.screenFrame == screenFrame }
+            ?? screenshots.first { $0.screenIndex == screenIndex }
+        guard let screenshot else {
+            return fallbackPromptBlock()
+        }
+        let lines = strokes.enumerated().map { index, stroke -> String in
+            let points = Self.sampled(stroke, maxPoints: 48).map {
+                let pixel = GroundingDirector.pixelPoint(
+                    fromScreen: $0,
+                    imageSize: screenshot.pixelSize,
+                    display: screenshot.screenFrame
+                )
+                return "\(Int(pixel.x.rounded())),\(Int(pixel.y.rounded()))"
+            }.joined(separator: ";")
+            return "Stroke \(index + 1) on screen\(screenshot.screenIndex + 1): \(points)"
+        }
+        return """
+        [User screen annotations]
+        The user drew \(strokes.count) freehand stroke(s) before this question. Treat these as user-authored yellow ink over the current screenshot, used to point out what they mean by "this", "that", or "what do you think". Do not call them Clippy's own marks.
+        \(lines.joined(separator: "\n"))
+        """
+    }
+
+    private func fallbackPromptBlock() -> String {
+        let lines = strokes.enumerated().map { index, stroke -> String in
+            let points = Self.sampled(stroke, maxPoints: 48).map {
+                "\(Int($0.x.rounded())),\(Int($0.y.rounded()))"
+            }.joined(separator: ";")
+            return "Stroke \(index + 1) AppKit screen points: \(points)"
+        }
+        return """
+        [User screen annotations]
+        The user drew \(strokes.count) freehand stroke(s) before this question. A matching screenshot was not available, so coordinates are AppKit screen points.
+        \(lines.joined(separator: "\n"))
+        """
+    }
+
+    private static func simplified(_ points: [CGPoint]) -> [CGPoint] {
+        guard points.count > 2 else { return points }
+        var kept: [CGPoint] = []
+        var last: CGPoint?
+        for point in points {
+            if let previous = last, hypot(point.x - previous.x, point.y - previous.y) < 3 {
+                continue
+            }
+            kept.append(point)
+            last = point
+        }
+        return kept
+    }
+
+    private static func sampled(_ points: [CGPoint], maxPoints: Int) -> [CGPoint] {
+        guard points.count > maxPoints, maxPoints > 1 else { return points }
+        return (0..<maxPoints).map { index in
+            let sourceIndex = Int((Double(index) / Double(maxPoints - 1)) * Double(points.count - 1))
+            return points[sourceIndex]
+        }
+    }
+}
+
+@MainActor
+public final class UserAnnotationController {
+    private let window: NSWindow
+    private let drawView: AnnotationDrawView
+    private var screen: NSScreen?
+    private var screenIndex = 0
+    private var strokes: [[CGPoint]] = []
+    private var currentStroke: [CGPoint] = []
+
+    public init() {
+        let frame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
+        window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.hasShadow = false
+        window.level = .floating
+        window.ignoresMouseEvents = false
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        drawView = AnnotationDrawView(frame: CGRect(origin: .zero, size: frame.size))
+        window.contentView = drawView
+        drawView.onMouseDown = { [weak self] point in self?.beginStroke(at: point) }
+        drawView.onMouseDragged = { [weak self] point in self?.extendStroke(to: point) }
+        drawView.onMouseUp = { [weak self] point in self?.endStroke(at: point) }
+    }
+
+    public func begin(on requestedScreen: NSScreen? = nil, existing annotation: UserScreenAnnotation? = nil) {
+        let mouseRect = CGRect(origin: NSEvent.mouseLocation, size: CGSize(width: 1, height: 1))
+        let selectedScreen = requestedScreen
+            ?? ScreenPerception.screen(containing: mouseRect)
+            ?? NSScreen.main
+            ?? NSScreen.screens.first
+        guard let selectedScreen else { return }
+        screen = selectedScreen
+        screenIndex = NSScreen.screens.firstIndex { $0 === selectedScreen || $0.frame == selectedScreen.frame } ?? 0
+        strokes = annotation?.screenFrame == selectedScreen.frame ? annotation?.strokes ?? [] : []
+        currentStroke = []
+        let frame = selectedScreen.frame
+        window.orderOut(nil)
+        window.setFrame(frame, display: false)
+        window.ignoresMouseEvents = false
+        drawView.frame = CGRect(origin: .zero, size: frame.size)
+        drawView.screenOrigin = frame.origin
+        drawView.backgroundSampler = AnnotationBackgroundSampler(screen: selectedScreen)
+        refreshView()
+        window.orderFrontRegardless()
+    }
+
+    public func finish() -> UserScreenAnnotation? {
+        commitCurrentStroke()
+        window.orderOut(nil)
+        guard let screen, !strokes.isEmpty else { return nil }
+        return UserScreenAnnotation(screenIndex: screenIndex, screenFrame: screen.frame, strokes: strokes)
+    }
+
+    public func cancel() {
+        currentStroke = []
+        window.orderOut(nil)
+    }
+
+    private func beginStroke(at point: CGPoint) {
+        currentStroke = [point]
+        refreshView()
+    }
+
+    private func extendStroke(to point: CGPoint) {
+        guard !currentStroke.isEmpty else {
+            beginStroke(at: point)
+            return
+        }
+        currentStroke.append(point)
+        refreshView()
+    }
+
+    private func endStroke(at point: CGPoint) {
+        if currentStroke.isEmpty {
+            currentStroke = [point]
+        } else {
+            currentStroke.append(point)
+        }
+        commitCurrentStroke()
+        refreshView()
+    }
+
+    private func commitCurrentStroke() {
+        let simplified = UserScreenAnnotation(screenIndex: screenIndex, screenFrame: screen?.frame ?? .zero, strokes: [currentStroke]).strokes.first
+        if let simplified {
+            strokes.append(simplified)
+        }
+        currentStroke = []
+    }
+
+    private func refreshView() {
+        let active = currentStroke.count >= 2 ? strokes + [currentStroke] : strokes
+        drawView.scene = DrawingScene(marks: active.map { .path(points: $0, shape: .curve) })
+        drawView.marks = []
+        drawView.needsDisplay = true
     }
 }
 

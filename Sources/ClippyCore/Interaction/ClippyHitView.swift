@@ -11,6 +11,9 @@ public final class ClippyHitView: NSView {
     /// Invoked on an intentional double-click — opens the Clippy input.
     public var onClick: (() -> Void)?
 
+    /// Invoked when the focused character window receives typed input.
+    public var onKeyDown: ((NSEvent) -> Bool)?
+
     private let visibleHitTest: (NSPoint) -> Bool
     private var mouseDownScreenLocation: NSPoint?
     private var mouseDownWindowOrigin: NSPoint?
@@ -34,8 +37,19 @@ public final class ClippyHitView: NSView {
         false
     }
 
+    public override var acceptsFirstResponder: Bool {
+        true
+    }
+
     public override func hitTest(_ point: NSPoint) -> NSView? {
         bounds.contains(point) && visibleHitTest(point) ? self : nil
+    }
+
+    public override func keyDown(with event: NSEvent) {
+        if onKeyDown?(event) == true {
+            return
+        }
+        super.keyDown(with: event)
     }
 
     public override func rightMouseDown(with event: NSEvent) {
@@ -51,6 +65,8 @@ public final class ClippyHitView: NSView {
     }
 
     public override func mouseDown(with event: NSEvent) {
+        window?.makeKey()
+        window?.makeFirstResponder(self)
         mouseDownScreenLocation = NSEvent.mouseLocation
         mouseDownWindowOrigin = window?.frame.origin
         didDrag = false

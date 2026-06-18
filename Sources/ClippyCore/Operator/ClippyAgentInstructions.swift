@@ -111,7 +111,8 @@ internal tool plumbing.
         inputMode: AssistantInputMode,
         speaking: Bool,
         desktopContext: DesktopContextSnapshot? = nil,
-        requiresVisualGrounding: Bool = false
+        requiresVisualGrounding: Bool = false,
+        userAnnotationContext: String? = nil
     ) -> String {
         var blocks: [String] = []
         if let desktopContext {
@@ -125,6 +126,9 @@ internal tool plumbing.
                 pixelWidth: screenshotPixelWidth,
                 pixelHeight: screenshotPixelHeight
             ))
+        }
+        if let userAnnotationContext, !userAnnotationContext.isEmpty {
+            blocks.append(userAnnotationContext)
         }
         if requiresVisualGrounding {
             blocks.append(visualGroundingTurnContract)
