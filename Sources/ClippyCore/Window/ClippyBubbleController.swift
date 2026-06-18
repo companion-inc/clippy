@@ -23,6 +23,13 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
         override var canBecomeKey: Bool { true }
 
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            if onKeyDown?(event) == true {
+                return true
+            }
+            return super.performKeyEquivalent(with: event)
+        }
+
         override func keyDown(with event: NSEvent) {
             if onKeyDown?(event) == true {
                 return
@@ -34,8 +41,19 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private final class InputTextView: NSTextView {
         var onSubmit: (() -> Void)?
         var onCancel: (() -> Void)?
+        var onEditingCommand: ((NSEvent) -> Bool)?
+
+        override func performKeyEquivalent(with event: NSEvent) -> Bool {
+            if onEditingCommand?(event) == true {
+                return true
+            }
+            return super.performKeyEquivalent(with: event)
+        }
 
         override func keyDown(with event: NSEvent) {
+            if onEditingCommand?(event) == true {
+                return
+            }
             switch event.keyCode {
             case 36 where !event.modifierFlags.contains(.shift),
                  76 where !event.modifierFlags.contains(.shift):
@@ -127,6 +145,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     }
 
     private enum Mode { case message, input, choices }
+    private enum InputEditingCommand { case selectAll, copy, cut, paste }
 
     private func uiFont(_ size: CGFloat, bold: Bool = false) -> NSFont {
         ClippyBalloonStyle.font(size, bold: bold, spec: spec.balloon)
@@ -183,6 +202,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         inputTextView.delegate = self
         inputTextView.onSubmit = { [weak self] in self?.submitInput() }
         inputTextView.onCancel = { [weak self] in self?.hide() }
+        inputTextView.onEditingCommand = { [weak self] event in self?.handleInputEditingCommand(event) ?? false }
 
         configureInputTextView(inputPlaceholderView, textColor: spec.balloon.mutedTextColor)
         inputPlaceholderView.string = spec.askPlaceholder
@@ -226,6 +246,8 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     public var isVisible: Bool { window.isVisible }
     public var isInputMode: Bool { mode == .input && window.isVisible }
+    var debugInputText: String { inputTextView.string }
+    var debugSelectedRange: NSRange { inputTextView.selectedRange() }
 
     public func setAnchor(_ frame: CGRect, repositionVisible: Bool = true) {
         anchorFrame = frame
@@ -294,6 +316,9 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     @discardableResult
     public func receiveExternalInputKey(_ event: NSEvent) -> Bool {
+        if handleInputEditingCommand(event) {
+            return true
+        }
         guard Self.acceptsExternalInputKey(
             keyCode: event.keyCode,
             characters: event.characters,
@@ -324,6 +349,59 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             relayout()
         }
         return true
+    }
+
+    public nonisolated static func acceptsInputEditingCommand(
+        charactersIgnoringModifiers: String?,
+        modifierFlags: NSEvent.ModifierFlags
+    ) -> Bool {
+        inputEditingCommand(charactersIgnoringModifiers: charactersIgnoringModifiers, modifierFlags: modifierFlags) != nil
+    }
+
+    private func handleInputEditingCommand(_ event: NSEvent) -> Bool {
+        guard let command = Self.inputEditingCommand(
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+            modifierFlags: event.modifierFlags
+        ) else {
+            return false
+        }
+        if !isInputMode {
+            guard command == .paste else { return false }
+            openInput()
+        } else {
+            focusInput()
+        }
+        switch command {
+        case .selectAll:
+            inputTextView.selectAll(nil)
+        case .copy:
+            inputTextView.copy(nil)
+        case .cut:
+            inputTextView.cut(nil)
+            relayout()
+        case .paste:
+            if let pasted = NSPasteboard.general.string(forType: .string), !pasted.isEmpty {
+                inputTextView.insertText(pasted, replacementRange: inputTextView.selectedRange())
+                relayout()
+            }
+        }
+        return true
+    }
+
+    private nonisolated static func inputEditingCommand(
+        charactersIgnoringModifiers: String?,
+        modifierFlags: NSEvent.ModifierFlags
+    ) -> InputEditingCommand? {
+        guard modifierFlags.contains(.command) else { return nil }
+        let disallowed: NSEvent.ModifierFlags = [.control, .option, .function]
+        guard modifierFlags.intersection(disallowed).isEmpty else { return nil }
+        switch charactersIgnoringModifiers?.lowercased() {
+        case "a": return .selectAll
+        case "c": return .copy
+        case "x": return .cut
+        case "v": return .paste
+        default: return nil
+        }
     }
 
     public nonisolated static func acceptsExternalInputKey(

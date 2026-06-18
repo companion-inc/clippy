@@ -967,6 +967,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(offer?.prompt == "Claude usage limit hit. Switch to ChatGPT?")
     #expect(offer?.actionTitle == "Switch to ChatGPT")
     #expect(offer?.keepTitle == "Keep Claude")
+    #expect(offer?.discardTitle == "Discard")
     #expect(offer?.toModel == .gpt55)
     #expect(offer?.reason == .usageLimit)
     #expect(BrainFallbackPolicy.offer(
@@ -994,7 +995,8 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 
     #expect(offer?.prompt == "ChatGPT timed out. Switch to Claude?")
     #expect(offer?.actionTitle == "Switch to Claude")
-    #expect(offer?.keepTitle == "Keep ChatGPT")
+    #expect(offer?.keepTitle == "Keep and retry")
+    #expect(offer?.discardTitle == "Discard")
     #expect(offer?.toModel == .opus48)
     #expect(offer?.reason == .connection)
     #expect(BrainFallbackPolicy.offer(
@@ -1070,6 +1072,67 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         modifierFlags: [.command],
         inputAlreadyOpen: false
     ) == false)
+}
+
+@Test func clippyBubbleAcceptsStandardInputEditingCommands() {
+    #expect(ClippyBubbleController.acceptsInputEditingCommand(
+        charactersIgnoringModifiers: "a",
+        modifierFlags: [.command]
+    ))
+    #expect(ClippyBubbleController.acceptsInputEditingCommand(
+        charactersIgnoringModifiers: "v",
+        modifierFlags: [.command]
+    ))
+    #expect(ClippyBubbleController.acceptsInputEditingCommand(
+        charactersIgnoringModifiers: "c",
+        modifierFlags: [.command]
+    ))
+    #expect(ClippyBubbleController.acceptsInputEditingCommand(
+        charactersIgnoringModifiers: "x",
+        modifierFlags: [.command]
+    ))
+    #expect(ClippyBubbleController.acceptsInputEditingCommand(
+        charactersIgnoringModifiers: "v",
+        modifierFlags: [.command, .option]
+    ) == false)
+}
+
+@Test @MainActor func clippyBubblePastesAndSelectsInputText() {
+    let bubble = ClippyBubbleController()
+    defer { bubble.hide() }
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString("hello from paste", forType: .string)
+
+    let pasteEvent = NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: [.command],
+        timestamp: 0,
+        windowNumber: bubble.window.windowNumber,
+        context: nil,
+        characters: "v",
+        charactersIgnoringModifiers: "v",
+        isARepeat: false,
+        keyCode: 9
+    )
+    #expect(bubble.receiveExternalInputKey(pasteEvent!) == true)
+    #expect(bubble.debugInputText == "hello from paste")
+
+    let selectAllEvent = NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: [.command],
+        timestamp: 0,
+        windowNumber: bubble.window.windowNumber,
+        context: nil,
+        characters: "a",
+        charactersIgnoringModifiers: "a",
+        isARepeat: false,
+        keyCode: 0
+    )
+    #expect(bubble.receiveExternalInputKey(selectAllEvent!) == true)
+    #expect(bubble.debugSelectedRange == NSRange(location: 0, length: "hello from paste".count))
 }
 
 @Test @MainActor func clippyCharacterWindowRoutesFocusedTyping() {

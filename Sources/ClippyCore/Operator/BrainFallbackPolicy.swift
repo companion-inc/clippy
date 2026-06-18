@@ -25,7 +25,14 @@ public struct BrainFallbackOffer: Equatable, Sendable {
     }
 
     public var keepTitle: String {
-        "Keep \(fromProviderName)"
+        if reason == .connection {
+            return "Keep and retry"
+        }
+        return "Keep \(fromProviderName)"
+    }
+
+    public var discardTitle: String {
+        "Discard"
     }
 }
 

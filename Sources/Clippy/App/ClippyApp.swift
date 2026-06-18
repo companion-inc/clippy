@@ -98,6 +98,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var commandTimer: Timer?
     private var activeActivityState: AgentActivityState = .idle
     private var activeTurnUsedUserAnnotation = false
+    private var turnGeneration = 0
     private var isUserAnnotating = false
     private var isAnnotationHoldActive = false
     private var userAnnotationMode: UserAnnotationMode?
@@ -641,8 +642,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func handleClippyFocusedTyping(_ event: NSEvent) -> Bool {
-        guard !isTurnRunning,
-              !isVoiceCaptureActive,
+        guard !isVoiceCaptureActive,
               !isUserAnnotating,
               !isOnboardingActive,
               let chatBubble
@@ -872,12 +872,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         guard let chatBubble else {
             return
         }
-        guard !isTurnRunning else {
-            if isClippyHidden == false {
-                syncBubbleAnchorToClippy()
-                chatBubble.showReplyForReading("(One sec - still working on your last message.)")
-            }
-            return
+        if isTurnRunning {
+            log("turn interrupted by follow-up")
+            interruptSpeechAndResponse()
         }
         let forceSelectedProvider = forcedModel != nil
         let needsToolLane = ClippyAgentInstructions.shouldUseCodexToolLane(text: text, inputMode: inputMode)
@@ -905,6 +902,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         pendingIdle?.cancel()
         log("user: \(text)")
         activeUserRequest = ActiveUserRequest(text: text, inputMode: inputMode, attemptedModel: attemptedModel)
+        turnGeneration += 1
+        let turnID = turnGeneration
         guidedCompletedSteps = []
         nextGuidedTargetRound = 0
 
@@ -974,16 +973,19 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         currentBrainTask = Task { [weak self] in
             for await chunk in brain.stream(brainMessage, localImagePaths: localImagePaths) {
                 if Task.isCancelled { break }
-                await MainActor.run {
+                await MainActor.run { [weak self] in
+                    guard let self, self.turnGeneration == turnID else {
+                        return
+                    }
                     switch chunk {
                     case .status(let status):
-                        self?.showTurnProgress(status)
-	                    case .partial(let partial):
-	                        self?.handleStreamingPartial(partial, segmentID: nil)
-	                    case .partialMessage(let partial, let id):
-	                        self?.handleStreamingPartial(partial, segmentID: id)
-	                    case .final(let turn):
-	                        self?.receiveReply(
+                        self.showTurnProgress(status)
+                    case .partial(let partial):
+                        self.handleStreamingPartial(partial, segmentID: nil)
+                    case .partialMessage(let partial, let id):
+                        self.handleStreamingPartial(partial, segmentID: id)
+                    case .final(let turn):
+                        self.receiveReply(
                             turn,
                             visualGroundingContext: visualGroundingContext,
                             brain: brain
@@ -1029,8 +1031,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             self.log("turn-timeout: reason=\(reason)")
             self.currentBrainTask?.cancel()
             self.currentBrainTask = nil
+            let text = self.activeUserRequest.map { Self.timeoutErrorText(for: $0.attemptedModel) }
+                ?? "The brain connection timed out before a final response."
             self.receiveReply(AgentTurn(
-                text: "The ChatGPT connection timed out before a final response.",
+                text: text,
                 isError: true
             ))
         }
@@ -1041,6 +1045,15 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func cancelTurnTimeout() {
         turnTimeoutItem?.cancel()
         turnTimeoutItem = nil
+    }
+
+    private static func timeoutErrorText(for model: ClippyModel) -> String {
+        switch model.backend {
+        case .claude:
+            return "The Claude connection timed out before a final response."
+        case .codex:
+            return "The ChatGPT connection timed out before a final response."
+        }
     }
 
     private func captureTurnScreenshot(screen targetScreen: NSScreen?) -> ScreenPerception.Screenshot? {
@@ -1173,6 +1186,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     /// explicit "Stop Talking" — takes over cleanly. Cancelling the consuming task
     /// also tears down the brain's subprocess via the stream's onTermination.
     private func interruptSpeechAndResponse() {
+        turnGeneration += 1
         currentBrainTask?.cancel()
         currentBrainTask = nil
         tts?.stop()
@@ -1320,7 +1334,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 self?.selectProviderAfterIssue(offer, retrying: request)
             },
             .init(title: offer.keepTitle) { [weak self] in
-                self?.chatBubble?.showReplyForReading("Still on \(offer.fromProviderName).")
+                self?.keepProviderAfterIssue(offer, retrying: request)
+            },
+            .init(title: offer.discardTitle) { [weak self] in
+                self?.discardProviderIssue(offer)
             },
         ])
         let animationName = clippy?.spec.replyAnimationName ?? "Explain"
@@ -1344,6 +1361,29 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             forcedModel: offer.toModel,
             initialThinkingStatus: "Switched to \(offer.toProviderName). Trying again"
         )
+    }
+
+    private func keepProviderAfterIssue(_ offer: BrainFallbackOffer, retrying request: ActiveUserRequest) {
+        guard offer.reason == .connection else {
+            activeUserRequest = nil
+            chatBubble?.showReplyForReading("Still on \(offer.fromProviderName).")
+            return
+        }
+        log("model retry: \(offer.fromProviderName) after timeout")
+        if let frame = clippy?.frame { chatBubble?.setAnchor(frame) }
+        sendMessage(
+            request.text,
+            inputMode: request.inputMode,
+            initialThinkingStatus: "Trying \(offer.fromProviderName) again"
+        )
+    }
+
+    private func discardProviderIssue(_ offer: BrainFallbackOffer) {
+        activeUserRequest = nil
+        overlay?.clear()
+        syncBubbleAnchorToClippy()
+        chatBubble?.showReplyForReading("Discarded.")
+        log("model fallback: discarded \(offer.fromProviderName) \(offer.reason)")
     }
 
     private func shouldRepairVisualGrounding(
