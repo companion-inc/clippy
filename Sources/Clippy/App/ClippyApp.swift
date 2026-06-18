@@ -24,7 +24,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var userAnnotation: UserScreenAnnotation?
     private var permissionDrag: PermissionDragController?
     private var onboardingDemoWorkItems: [DispatchWorkItem] = []
-    private var onboardingDemoAwaitingSubmit = false
     private var statusItem: NSStatusItem?
     private var retroMenu = RetroMenuController()
     private var ptt: PushToTalkMonitor?
@@ -882,11 +881,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func handleSubmittedText(_ text: String) {
-        if onboardingDemoAwaitingSubmit {
-            onboardingDemoAwaitingSubmit = false
-            runOnboardingDemoRequest(text)
-            return
-        }
         sendMessage(text)
     }
 
@@ -2285,8 +2279,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             startPermissionWalkthrough()
         case .demo:
             startOnboardingDemo()
-        case .demoComposer:
-            showOnboardingDemoComposer()
         case .controls:
             showOnboardingControlsStep(createdPageURL: nil)
         }
@@ -2520,36 +2512,20 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         isOnboardingActive = true
         showOnboardingStep(
-            "Let's do one real task. I'll put the request in my bubble; press Return and I'll make a tiny page, open it, and point at it.",
+            ClippyOnboardingDemo.guidedIntroText,
             animation: "GetAttention",
             choices: [
-                .init(title: "Show Request") { [weak self] in self?.showOnboardingDemoComposer() },
+                .init(title: "Start Tour") { [weak self] in self?.runOnboardingDemo() },
             ]
         )
     }
 
-    private func showOnboardingDemoComposer() {
-        saveOnboardingResumePoint(.demoComposer)
-        permissionDrag?.hide()
+    private func runOnboardingDemo() {
+        guard isOnboardingActive else { return }
         cancelOnboardingDemoWork()
         overlay?.clear()
         syncBubbleAnchorToClippy()
-        onboardingDemoAwaitingSubmit = true
-        playOnboardingAnimation("Writing")
-        showTextInputBubble(prefilledText: ClippyOnboardingDemo.prefilledPrompt)
-    }
-
-    private func runOnboardingDemoRequest(_ userText: String) {
-        guard isOnboardingActive else {
-            sendMessage(userText)
-            return
-        }
-
-        cancelOnboardingDemoWork()
-        overlay?.clear()
-        syncBubbleAnchorToClippy()
-        chatBubble?.recordUserLine(userText)
-        chatBubble?.showThinking("Building the page")
+        chatBubble?.showThinking(ClippyOnboardingDemo.guidedWorkingText)
         playActivityState(.working)
 
         do {
@@ -2578,7 +2554,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func showOnboardingDemoPointingIntro() {
         playOnboardingAnimation("Explain")
         syncBubbleAnchorToClippy()
-        chatBubble?.showReplyForReading("I made the page and opened it. Now I'll point at the part we're talking about.")
+        chatBubble?.showReplyForReading(ClippyOnboardingDemo.pointingIntroText)
     }
 
     private func pointAtOnboardingPage() {
@@ -2651,7 +2627,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func cancelOnboardingDemoWork() {
         onboardingDemoWorkItems.forEach { $0.cancel() }
         onboardingDemoWorkItems.removeAll()
-        onboardingDemoAwaitingSubmit = false
     }
 
     private func voiceKeyStatusText() -> String {

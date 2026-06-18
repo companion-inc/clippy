@@ -12,12 +12,14 @@ public enum ClippyOnboardingResumePoint: String, CaseIterable, Sendable {
     case permission
     case permissionWalkthrough
     case demo
-    case demoComposer
     case controls
 
     public static let defaultsKey = "ClippyOnboardingResumePoint"
 
     public static func savedPoint(from rawValue: String?) -> Self {
+        if rawValue == "demoComposer" {
+            return .demo
+        }
         guard let rawValue, let point = Self(rawValue: rawValue) else {
             return .welcome
         }
@@ -36,7 +38,9 @@ public enum ClippyOnboardingDemo {
         }
     }
 
-    public static let prefilledPrompt = "Make me a tiny welcome page, then point out one interesting thing on it."
+    public static let guidedIntroText = "I'll give you a quick tour on your desktop: create a page, open it, and point to the part that matters."
+    public static let guidedWorkingText = "Creating a page"
+    public static let pointingIntroText = "I created a page and opened it. Now I'll mark the part that matters."
     public static let controlsText = """
     Last thing: click me to open or close chat. Press Control+Space to type from anywhere. Hold Control+Option to talk. Hold Control to mark the screen, or tap Control twice for annotation mode. Right-click me for settings.
     """

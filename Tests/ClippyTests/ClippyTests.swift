@@ -1176,13 +1176,14 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 @Test @MainActor func clippyBubbleCanOpenWithPrefilledPrompt() {
     let bubble = ClippyBubbleController()
     defer { bubble.hide() }
+    let prompt = "Draft a short note."
 
-    bubble.openInput(prefilledText: ClippyOnboardingDemo.prefilledPrompt)
+    bubble.openInput(prefilledText: prompt)
 
     #expect(bubble.isInputMode)
-    #expect(bubble.debugInputText == ClippyOnboardingDemo.prefilledPrompt)
+    #expect(bubble.debugInputText == prompt)
     #expect(bubble.debugSelectedRange == NSRange(
-        location: (ClippyOnboardingDemo.prefilledPrompt as NSString).length,
+        location: (prompt as NSString).length,
         length: 0
     ))
 }
@@ -1409,7 +1410,11 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(html.contains("onboarding bubble"))
     #expect(html.localizedCaseInsensitiveContains("try" + " demo") == false)
     #expect(html.contains("/Users/") == false)
-    #expect(ClippyOnboardingDemo.prefilledPrompt.contains("point out"))
+    #expect(ClippyOnboardingDemo.guidedIntroText.contains("quick tour"))
+    #expect(ClippyOnboardingDemo.guidedIntroText.contains("press " + "Return") == false)
+    #expect(ClippyOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("input") == false)
+    #expect(ClippyOnboardingDemo.guidedWorkingText == "Creating a page")
+    #expect(ClippyOnboardingDemo.pointingIntroText.contains("mark the part that matters"))
     #expect(ClippyOnboardingDemo.controlsText.contains("click me"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Control+Space"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Control+Option"))
@@ -1427,7 +1432,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(ClippyOnboardingResumePoint.savedPoint(from: nil) == .welcome)
     #expect(ClippyOnboardingResumePoint.savedPoint(from: "not-a-step") == .welcome)
     #expect(ClippyOnboardingResumePoint.savedPoint(from: "permissionWalkthrough") == .permissionWalkthrough)
-    #expect(ClippyOnboardingResumePoint.savedPoint(from: "demoComposer") == .demoComposer)
+    #expect(ClippyOnboardingResumePoint.savedPoint(from: "demoComposer") == .demo)
     #expect(ClippyOnboardingResumePoint.allCases.contains(.controls))
 }
 
