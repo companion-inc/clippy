@@ -1457,7 +1457,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(reportedFrame?.size == CGSize(width: 24, height: 24))
 }
 
-@Test @MainActor func clippyWindowSingleClickActivatesCharacter() throws {
+@Test @MainActor func clippyWindowEverySingleClickActivatesCharacter() throws {
     let controller = ClippyWindowController(
         rendererView: NSView(frame: CGRect(origin: .zero, size: CGSize(width: 24, height: 24))),
         size: CGSize(width: 24, height: 24)
@@ -1468,33 +1468,39 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         clicks += 1
     }
 
-    let down = try #require(NSEvent.mouseEvent(
-        with: .leftMouseDown,
-        location: CGPoint(x: 12, y: 12),
-        modifierFlags: [],
-        timestamp: 1,
-        windowNumber: controller.window.windowNumber,
-        context: nil,
-        eventNumber: 1,
-        clickCount: 1,
-        pressure: 1
-    ))
-    let up = try #require(NSEvent.mouseEvent(
-        with: .leftMouseUp,
-        location: CGPoint(x: 12, y: 12),
-        modifierFlags: [],
-        timestamp: 1.1,
-        windowNumber: controller.window.windowNumber,
-        context: nil,
-        eventNumber: 2,
-        clickCount: 1,
-        pressure: 0
-    ))
+    func sendClick(timestamp: TimeInterval, eventNumber: Int, clickCount: Int) throws {
+        let down = try #require(NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: CGPoint(x: 12, y: 12),
+            modifierFlags: [],
+            timestamp: timestamp,
+            windowNumber: controller.window.windowNumber,
+            context: nil,
+            eventNumber: eventNumber,
+            clickCount: clickCount,
+            pressure: 1
+        ))
+        let up = try #require(NSEvent.mouseEvent(
+            with: .leftMouseUp,
+            location: CGPoint(x: 12, y: 12),
+            modifierFlags: [],
+            timestamp: timestamp + 0.1,
+            windowNumber: controller.window.windowNumber,
+            context: nil,
+            eventNumber: eventNumber + 1,
+            clickCount: clickCount,
+            pressure: 0
+        ))
 
-    contentView.mouseDown(with: down)
-    contentView.mouseUp(with: up)
+        contentView.mouseDown(with: down)
+        contentView.mouseUp(with: up)
+    }
 
+    try sendClick(timestamp: 1, eventNumber: 1, clickCount: 1)
     #expect(clicks == 1)
+
+    try sendClick(timestamp: 1.2, eventNumber: 3, clickCount: 2)
+    #expect(clicks == 2)
 }
 
 @Test @MainActor func spriteRendererResizeUpdatesViewAndSpriteAnchor() {
