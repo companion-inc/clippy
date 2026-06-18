@@ -23,8 +23,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var userAnnotationController: UserAnnotationController?
     private var userAnnotation: UserScreenAnnotation?
     private var permissionDrag: PermissionDragController?
-    private var onboardingDemo: ClippyOnboardingDemoController?
-    private var onboardingDemoFinish: DispatchWorkItem?
+    private var onboardingDemoWorkItems: [DispatchWorkItem] = []
+    private var onboardingDemoAwaitingSubmit = false
     private var statusItem: NSStatusItem?
     private var retroMenu = RetroMenuController()
     private var ptt: PushToTalkMonitor?
@@ -198,8 +198,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         disarmGuidedTarget(reason: "terminate")
-        onboardingDemoFinish?.cancel()
-        onboardingDemo?.hide()
+        cancelOnboardingDemoWork()
         currentBrainTask?.cancel()
         currentBrainTask = nil
         conversation = nil
@@ -242,7 +241,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         bubble.setAnchor(clippy.frame)
         bubble.setAnchorWindow(clippy.windowController.window)
         bubble.configure { [weak self] text in
-            self?.sendMessage(text)
+            self?.handleSubmittedText(text)
         }
         clippy.windowController.onFrameChanged = { [weak self] frame in
             self?.chatBubble?.setAnchor(frame, repositionVisible: false)
@@ -858,7 +857,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         _ = playOnce("GetAttention")
     }
 
-    private func showTextInputBubble() {
+    private func showTextInputBubble(prefilledText: String = "") {
         guard let clippy, let chatBubble else {
             return
         }
@@ -867,6 +866,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         chatBubble.setAnchor(clippy.frame)
         if chatBubble.isInputMode {
+            if prefilledText.isEmpty == false {
+                chatBubble.openInput(prefilledText: prefilledText)
+                return
+            }
             chatBubble.focusInput()
             return
         }
@@ -875,7 +878,16 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
                 clippy?.exitCurrentAnimation()
             }
         }
-        chatBubble.openInput()
+        chatBubble.openInput(prefilledText: prefilledText)
+    }
+
+    private func handleSubmittedText(_ text: String) {
+        if onboardingDemoAwaitingSubmit {
+            onboardingDemoAwaitingSubmit = false
+            runOnboardingDemoRequest(text)
+            return
+        }
+        sendMessage(text)
     }
 
     private func sendMessage(
@@ -2225,9 +2237,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if isClippyHidden {
             showClippy()
         }
-        onboardingDemoFinish?.cancel()
-        onboardingDemo?.hide()
-        onboardingDemo = nil
+        cancelOnboardingDemoWork()
         isOnboardingActive = true
         syncBubbleAnchorToClippy()
         showWelcomeStep()
@@ -2441,6 +2451,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func startOnboardingDemo() {
         permissionDrag?.hide()
+        cancelOnboardingDemoWork()
+        overlay?.clear()
         if conversation == nil {
             setUpBrain()
         }
@@ -2449,77 +2461,102 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         }
         isOnboardingActive = true
         showOnboardingStep(
-            "Now I'll show you how I work on screen.",
+            "Let's do one real task. I'll put the request in my bubble; press Return and I'll make a tiny page, open it, and point at it.",
             animation: "GetAttention",
             choices: [
-                .init(title: "Next") { [weak self] in self?.showOnboardingDemoWindow() },
+                .init(title: "Show Request") { [weak self] in self?.showOnboardingDemoComposer() },
             ]
         )
     }
 
-    private func showOnboardingDemoWindow() {
+    private func showOnboardingDemoComposer() {
         permissionDrag?.hide()
-        onboardingDemoFinish?.cancel()
+        cancelOnboardingDemoWork()
         overlay?.clear()
+        syncBubbleAnchorToClippy()
+        onboardingDemoAwaitingSubmit = true
+        playOnboardingAnimation("Writing")
+        showTextInputBubble(prefilledText: ClippyOnboardingDemo.prefilledPrompt)
+    }
 
-        let controller = ClippyOnboardingDemoController(
-            onBuild: { [weak self] url in
-                self?.completeOnboardingDemo(createdPageURL: url)
-            },
-            onClose: { [weak self] in
+    private func runOnboardingDemoRequest(_ userText: String) {
+        guard isOnboardingActive else {
+            sendMessage(userText)
+            return
+        }
+
+        cancelOnboardingDemoWork()
+        overlay?.clear()
+        syncBubbleAnchorToClippy()
+        chatBubble?.recordUserLine(userText)
+        chatBubble?.showThinking("Building the page")
+        playActivityState(.working)
+
+        do {
+            let url = try ClippyOnboardingDemo.createPage()
+            log("onboarding-demo: created \(url.path)")
+            NSWorkspace.shared.open(url)
+            scheduleOnboardingDemoWork(after: 1.2) { [weak self] in
+                self?.showOnboardingDemoPointingIntro()
+            }
+            scheduleOnboardingDemoWork(after: 2.0) { [weak self] in
+                self?.pointAtOnboardingPage()
+            }
+            scheduleOnboardingDemoWork(after: 6.0) { [weak self] in
+                self?.completeBubbleOnboarding(createdPageURL: url)
+            }
+        } catch {
+            log("onboarding-demo error: \(error.localizedDescription)")
+            playActivityState(.error)
+            chatBubble?.showReplyForReading("I couldn't make the local page, but the rest is ready.")
+            scheduleOnboardingDemoWork(after: 2.0) { [weak self] in
                 self?.completeBubbleOnboarding(createdPageURL: nil)
             }
-        )
-        onboardingDemo = controller
-        controller.show()
-        syncBubbleAnchorToClippy()
-        playOnboardingAnimation("Explain")
-        chatBubble?.showReplyForReading("Click the button I point at.")
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            self?.pointAtOnboardingDemoButton()
         }
     }
 
-    private func pointAtOnboardingDemoButton() {
-        guard let target = onboardingDemo?.buildTarget else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-                self?.pointAtOnboardingDemoButton()
-            }
-            return
-        }
-        let targetRect = CGRect(x: target.center.x - 1, y: target.center.y - 1, width: 2, height: 2)
-        let screen = ScreenPerception.screen(containing: targetRect) ?? screenForClippy() ?? NSScreen.main
-        overlay?.showSequence([
+    private func showOnboardingDemoPointingIntro() {
+        playOnboardingAnimation("Explain")
+        syncBubbleAnchorToClippy()
+        chatBubble?.showReplyForReading("I made the page and opened it. Now I'll point at the part we're talking about.")
+    }
+
+    private func pointAtOnboardingPage() {
+        guard isOnboardingActive else { return }
+
+        let context = DesktopContextSnapshot.capture()
+        lastDesktopContext = context
+        let screen = context.targetScreen() ?? screenForClippy() ?? NSScreen.main
+        let windowFrame = context.window.flatMap {
+            DesktopContextSnapshot.appKitFrame(for: $0, screen: context.screen)
+        } ?? screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
+        let target = ClippyOnboardingDemo.target(in: windowFrame)
+        let marks: [AnnotationMark] = [
             .ring(center: target.center, radius: target.radius, kind: .target),
             .dot(center: target.center, progress: 1),
-        ], on: screen)
+        ]
+        let scene: DrawingScene
+        if let anchor = DrawingWindowAnchor(desktopContext: context) {
+            scene = DrawingScene(marks: marks, anchor: .window(anchor))
+        } else {
+            scene = DrawingScene(marks: marks)
+        }
+        overlay?.showSequence(scene, on: screen)
         if let screen {
             moveClippyToPoint(at: target.center, in: screen)
         }
-        log("onboarding-demo: pointing at build button")
-    }
-
-    private func completeOnboardingDemo(createdPageURL: URL) {
-        overlay?.clear()
-        playOnboardingAnimation("Congratulate")
         syncBubbleAnchorToClippy()
-        chatBubble?.showReplyForReading("Nice. That's the loop: I point, you act, and I keep going.")
-        let finish = DispatchWorkItem { [weak self] in
-            self?.completeBubbleOnboarding(createdPageURL: createdPageURL)
-        }
-        onboardingDemoFinish?.cancel()
-        onboardingDemoFinish = finish
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.4, execute: finish)
+        chatBubble?.showReplyForReading("That mark belongs to this window, so it follows the page instead of floating over other work.")
+        log("onboarding-demo: pointed at page app=\(context.app?.name ?? "unknown") window=\"\(context.window?.title ?? "untitled")\"")
     }
 
     private func completeBubbleOnboarding(createdPageURL: URL?) {
-        onboardingDemoFinish?.cancel()
-        onboardingDemoFinish = nil
+        cancelOnboardingDemoWork()
         isOnboardingActive = false
         permissionDrag?.hide()
-        onboardingDemo?.hide()
-        onboardingDemo = nil
-        overlay?.clear()
+        if createdPageURL == nil {
+            overlay?.clear()
+        }
         markSetupCompleted()
         if conversation == nil {
             setUpBrain()
@@ -2529,6 +2566,18 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             log("onboarding-demo: created \(createdPageURL.path)")
         }
         chatBubble?.showReplyForReading("All set. Press Control+Space to type, or hold Control+Option to talk.")
+    }
+
+    private func scheduleOnboardingDemoWork(after delay: TimeInterval, _ action: @escaping () -> Void) {
+        let work = DispatchWorkItem(block: action)
+        onboardingDemoWorkItems.append(work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func cancelOnboardingDemoWork() {
+        onboardingDemoWorkItems.forEach { $0.cancel() }
+        onboardingDemoWorkItems.removeAll()
+        onboardingDemoAwaitingSubmit = false
     }
 
     private func voiceKeyStatusText() -> String {

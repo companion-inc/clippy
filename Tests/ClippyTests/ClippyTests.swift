@@ -1173,6 +1173,20 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(bubble.debugSelectedRange == NSRange(location: 0, length: "hello from paste".count))
 }
 
+@Test @MainActor func clippyBubbleCanOpenWithPrefilledPrompt() {
+    let bubble = ClippyBubbleController()
+    defer { bubble.hide() }
+
+    bubble.openInput(prefilledText: ClippyOnboardingDemo.prefilledPrompt)
+
+    #expect(bubble.isInputMode)
+    #expect(bubble.debugInputText == ClippyOnboardingDemo.prefilledPrompt)
+    #expect(bubble.debugSelectedRange == NSRange(
+        location: (ClippyOnboardingDemo.prefilledPrompt as NSString).length,
+        length: 0
+    ))
+}
+
 @Test @MainActor func clippyBubbleConsumesAnchorClickDismissalOnce() {
     let bubble = ClippyBubbleController()
     defer { bubble.hide() }
@@ -1381,13 +1395,25 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     ) == .cancel)
 }
 
-@Test func onboardingDemoCreatesLocalPageWithoutSeparateDemoChoice() {
-    let html = ClippyOnboardingDemoController.onboardingHTML()
+@Test func onboardingDemoCreatesLocalPageArtifact() throws {
+    let base = FileManager.default.temporaryDirectory
+        .appendingPathComponent("clippy-onboarding-\(UUID().uuidString)", isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: base) }
 
-    #expect(html.contains("Built with Clippy"))
-    #expect(html.contains("during onboarding"))
+    let url = try ClippyOnboardingDemo.createPage(supportDirectory: base)
+    let html = try String(contentsOf: url)
+    let target = ClippyOnboardingDemo.target(in: CGRect(x: 120, y: 80, width: 900, height: 640))
+
+    #expect(url.lastPathComponent == "index.html")
+    #expect(html.contains("Hey, I'm Clippy."))
+    #expect(html.contains("onboarding bubble"))
     #expect(html.localizedCaseInsensitiveContains("try" + " demo") == false)
     #expect(html.contains("/Users/") == false)
+    #expect(ClippyOnboardingDemo.prefilledPrompt.contains("point out"))
+    #expect(target.center.x > 120)
+    #expect(target.center.x < 1020)
+    #expect(target.center.y > 80)
+    #expect(target.center.y < 720)
 }
 
 @Test func annotationPaletteUsesSingleYellowStrokeUnlessBackgroundIsLight() {

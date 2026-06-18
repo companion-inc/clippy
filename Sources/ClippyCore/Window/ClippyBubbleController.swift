@@ -302,18 +302,20 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     }
 
     /// Click Clippy: show only the input, focused. Click-away dismisses it.
-    public func openInput() {
+    public func openInput(prefilledText: String = "") {
         stopTyping()
         stopThinking()
         cancelAutoHide()
         clearChoices()
         mode = .input
-        inputTextView.string = ""
+        inputTextView.string = prefilledText
         relayout()
         attachToAnchorWindow()
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(inputTextView)
+        inputTextView.setSelectedRange(NSRange(location: (prefilledText as NSString).length, length: 0))
+        inputTextView.scrollRangeToVisible(inputTextView.selectedRange())
     }
 
     @discardableResult
