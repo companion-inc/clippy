@@ -2231,19 +2231,69 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func markSetupCompleted() {
         UserDefaults.standard.set(true, forKey: Self.setupCompletedKey)
+        clearOnboardingResumePoint()
     }
 
-    private func startBubbleOnboarding(force _: Bool) {
+    private func startBubbleOnboarding(force: Bool) {
         if isClippyHidden {
             showClippy()
         }
         cancelOnboardingDemoWork()
         isOnboardingActive = true
         syncBubbleAnchorToClippy()
-        showWelcomeStep()
+        if force {
+            clearOnboardingResumePoint()
+            showWelcomeStep()
+        } else {
+            resumeBubbleOnboarding()
+        }
+    }
+
+    private func saveOnboardingResumePoint(_ point: ClippyOnboardingResumePoint) {
+        UserDefaults.standard.set(point.rawValue, forKey: ClippyOnboardingResumePoint.defaultsKey)
+    }
+
+    private func clearOnboardingResumePoint() {
+        UserDefaults.standard.removeObject(forKey: ClippyOnboardingResumePoint.defaultsKey)
+    }
+
+    private func savedOnboardingResumePoint() -> ClippyOnboardingResumePoint {
+        ClippyOnboardingResumePoint.savedPoint(
+            from: UserDefaults.standard.string(forKey: ClippyOnboardingResumePoint.defaultsKey)
+        )
+    }
+
+    private func resumeBubbleOnboarding() {
+        switch savedOnboardingResumePoint() {
+        case .welcome:
+            showWelcomeStep()
+        case .brainChoice:
+            showBrainChoiceStep()
+        case .brainHelp:
+            showBrainHelpStep()
+        case .chatGPT:
+            showCodexOnboarding()
+        case .claude:
+            showClaudeOnboarding()
+        case .listening:
+            showListeningStep()
+        case .voice:
+            showVoiceStep()
+        case .permission:
+            showPermissionStep()
+        case .permissionWalkthrough:
+            startPermissionWalkthrough()
+        case .demo:
+            startOnboardingDemo()
+        case .demoComposer:
+            showOnboardingDemoComposer()
+        case .controls:
+            showOnboardingControlsStep(createdPageURL: nil)
+        }
     }
 
     private func showWelcomeStep() {
+        saveOnboardingResumePoint(.welcome)
         showOnboardingStep(
             "Hey, I'm Clippy. I'm your new desktop buddy.",
             animation: "Greeting",
@@ -2254,6 +2304,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func showBrainChoiceStep() {
+        saveOnboardingResumePoint(.brainChoice)
         showOnboardingStep(
             "First, pick the account I'll think with.",
             animation: "GetAttention",
@@ -2266,6 +2317,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func showBrainHelpStep() {
+        saveOnboardingResumePoint(.brainHelp)
         let codex = BrainDiscovery.codexStatus()
         let claude = BrainDiscovery.claudeStatus()
         let prompt = """
@@ -2283,6 +2335,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func showCodexOnboarding() {
+        saveOnboardingResumePoint(.chatGPT)
         let status = BrainDiscovery.codexStatus()
         if status.signedIn {
             showOnboardingStep(
@@ -2317,6 +2370,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func showClaudeOnboarding() {
+        saveOnboardingResumePoint(.claude)
         let status = BrainDiscovery.claudeStatus()
         if status.signedIn {
             showOnboardingStep(
@@ -2353,6 +2407,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     // Listening (me hearing you) and my own voice (me talking back) are two different
     // things, so they get two separate steps: Deepgram powers my ears, xAI powers my mouth.
     private func showListeningStep() {
+        saveOnboardingResumePoint(.listening)
         if ClippySecrets.deepgramAPIKey != nil {
             showOnboardingStep(
                 "Found a Deepgram key. Want me to listen when you talk?",
@@ -2378,6 +2433,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func showVoiceStep() {
+        saveOnboardingResumePoint(.voice)
         if ClippySecrets.xaiAPIKey != nil {
             showOnboardingStep(
                 "Found an xAI key. Want me to talk back out loud?",
@@ -2407,6 +2463,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func showPermissionStep() {
+        saveOnboardingResumePoint(.permission)
         showOnboardingStep(
             "Last step. I need Mac permissions: Accessibility to click, Screen Recording to see, Full Disk Access to read local app databases, and Microphone to hear you.",
             animation: "GetAttention",
@@ -2418,6 +2475,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func startPermissionWalkthrough() {
+        saveOnboardingResumePoint(.permissionWalkthrough)
         showNextPermissionDialog()
     }
 
@@ -2450,6 +2508,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func startOnboardingDemo() {
+        saveOnboardingResumePoint(.demo)
         permissionDrag?.hide()
         cancelOnboardingDemoWork()
         overlay?.clear()
@@ -2470,6 +2529,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     }
 
     private func showOnboardingDemoComposer() {
+        saveOnboardingResumePoint(.demoComposer)
         permissionDrag?.hide()
         cancelOnboardingDemoWork()
         overlay?.clear()
@@ -2552,6 +2612,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func showOnboardingControlsStep(createdPageURL: URL?) {
         guard isOnboardingActive else { return }
+        saveOnboardingResumePoint(.controls)
         showOnboardingStep(
             ClippyOnboardingDemo.controlsText,
             animation: "GetAttention",

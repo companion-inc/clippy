@@ -1,6 +1,30 @@
 import CoreGraphics
 import Foundation
 
+public enum ClippyOnboardingResumePoint: String, CaseIterable, Sendable {
+    case welcome
+    case brainChoice
+    case brainHelp
+    case chatGPT
+    case claude
+    case listening
+    case voice
+    case permission
+    case permissionWalkthrough
+    case demo
+    case demoComposer
+    case controls
+
+    public static let defaultsKey = "ClippyOnboardingResumePoint"
+
+    public static func savedPoint(from rawValue: String?) -> Self {
+        guard let rawValue, let point = Self(rawValue: rawValue) else {
+            return .welcome
+        }
+        return point
+    }
+}
+
 public enum ClippyOnboardingDemo {
     public struct Target: Equatable, Sendable {
         public let center: CGPoint

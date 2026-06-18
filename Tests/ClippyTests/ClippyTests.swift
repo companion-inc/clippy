@@ -1422,6 +1422,15 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(target.center.y < 720)
 }
 
+@Test func onboardingResumePointParsesSavedStepAndFallsBackToWelcome() {
+    #expect(ClippyOnboardingResumePoint.defaultsKey == "ClippyOnboardingResumePoint")
+    #expect(ClippyOnboardingResumePoint.savedPoint(from: nil) == .welcome)
+    #expect(ClippyOnboardingResumePoint.savedPoint(from: "not-a-step") == .welcome)
+    #expect(ClippyOnboardingResumePoint.savedPoint(from: "permissionWalkthrough") == .permissionWalkthrough)
+    #expect(ClippyOnboardingResumePoint.savedPoint(from: "demoComposer") == .demoComposer)
+    #expect(ClippyOnboardingResumePoint.allCases.contains(.controls))
+}
+
 @Test func annotationPaletteUsesSingleYellowStrokeUnlessBackgroundIsLight() {
     #expect(AnnotationPalette.backingTone(luminance: 0.12, fallbackAppearance: .init(named: .darkAqua)!) == nil)
     #expect(AnnotationPalette.backingTone(luminance: 0.55, fallbackAppearance: .init(named: .darkAqua)!) == nil)
