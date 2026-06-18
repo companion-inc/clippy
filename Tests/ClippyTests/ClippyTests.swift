@@ -1459,6 +1459,21 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(AnnotationPalette.backingTone(luminance: nil, fallbackAppearance: .init(named: .aqua)!) == .dark)
 }
 
+@Test @MainActor func annotationOverlayTracksDismissibleContent() {
+    let overlay = AnnotationOverlayWindow()
+
+    #expect(overlay.hasContent == false)
+    overlay.show([.dot(center: CGPoint(x: 40, y: 40), progress: 1)])
+    #expect(overlay.hasContent == true)
+    overlay.clear()
+    #expect(overlay.hasContent == false)
+
+    overlay.showSequence([.ring(center: CGPoint(x: 60, y: 60), radius: 22, kind: .target)])
+    #expect(overlay.hasContent == true)
+    overlay.clear()
+    #expect(overlay.hasContent == false)
+}
+
 @Test func clippyBodyScaleClampsAndStepsInQuarterIncrements() {
     #expect(ClippyBodyScale(0.1).value == ClippyBodyScale.minimum)
     #expect(ClippyBodyScale(9).value == ClippyBodyScale.maximum)

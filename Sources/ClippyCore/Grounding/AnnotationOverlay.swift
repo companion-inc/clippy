@@ -34,6 +34,7 @@ public final class AnnotationOverlayWindow {
     private let drawView: AnnotationDrawView
     private var animationTimer: Timer?
     private var trackingTimer: Timer?
+    public private(set) var hasContent = false
 
     public init() {
         let frame = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1440, height: 900)
@@ -67,6 +68,7 @@ public final class AnnotationOverlayWindow {
         drawView.backgroundSampler = scene.isEmpty ? nil : AnnotationBackgroundSampler(screen: screen ?? NSScreen.main)
         drawView.scene = scene
         drawView.marks = []
+        hasContent = !scene.isEmpty
         drawView.needsDisplay = true
         if scene.isEmpty {
             window.orderOut(nil)
@@ -99,11 +101,13 @@ public final class AnnotationOverlayWindow {
         guard !scene.isEmpty else {
             drawView.scene = nil
             drawView.marks = []
+            hasContent = false
             drawView.needsDisplay = true
             window.orderOut(nil)
             return
         }
 
+        hasContent = true
         updateWindowVisibility(for: scene)
         let durations = scene.visualBeatDurations
         let totalDuration = durations.reduce(0, +)

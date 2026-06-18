@@ -13,6 +13,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private static let bodyScaleKey = "ClippyBodyScale"
     private static let setupCompletedKey = "ClippySetupCompleted"
     private static let quickAnnotationHoldDelay: TimeInterval = 0.24
+    private nonisolated static let shortcutModifierMask: NSEvent.ModifierFlags = [
+        .control, .option, .command, .shift, .function
+    ]
 
     private var clippy: Clippy?
     private var pendingIdle: DispatchWorkItem?
@@ -28,6 +31,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var retroMenu = RetroMenuController()
     private var ptt: PushToTalkMonitor?
     private var textInputShortcut: KeyboardShortcutMonitor?
+    private var clearMarksGlobalMonitor: Any?
+    private var clearMarksLocalMonitor: Any?
     private var speech: SpeechCapture?
     private var deepgramSTT: DeepgramVoiceCapture?
     private var tts: XAITTS?
@@ -204,6 +209,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         codexComputerControlConversation = nil
         cancelSetupProcess()
         textInputShortcut?.stop()
+        stopClearMarksShortcut()
         annotationHold?.stop()
         userAnnotationController?.cancel()
         ptt?.stop()
@@ -250,7 +256,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             self?.showRetroMenu(topLeft: point)
         }
         clippy.windowController.onCharacterClick = { [weak self] in
-            self?.toggleChat()
+            self?.handleCharacterClick()
         }
         clippy.windowController.onKeyDown = { [weak self] event in
             self?.handleClippyFocusedTyping(event) ?? false
@@ -277,6 +283,49 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         annotation.onDoubleTap = { [weak self] in self?.toggleStickyUserAnnotationMode() }
         annotationHold = annotation
         annotation.start()
+        startClearMarksShortcut()
+    }
+
+    private func handleCharacterClick() {
+        if clearScreenMarks(reason: "clippy-click", includeUserAnnotation: false) {
+            return
+        }
+        toggleChat()
+    }
+
+    private func startClearMarksShortcut() {
+        clearMarksGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            guard Self.isBareEscape(event) else { return }
+            Task { @MainActor [weak self] in
+                self?.clearScreenMarks(reason: "escape", includeUserAnnotation: true)
+            }
+        }
+        clearMarksLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { [weak self] event in
+            guard Self.isBareEscape(event),
+                  let self,
+                  self.clearScreenMarks(reason: "escape", includeUserAnnotation: true)
+            else {
+                return event
+            }
+            return nil
+        }
+    }
+
+    private func stopClearMarksShortcut() {
+        if let clearMarksGlobalMonitor {
+            NSEvent.removeMonitor(clearMarksGlobalMonitor)
+        }
+        if let clearMarksLocalMonitor {
+            NSEvent.removeMonitor(clearMarksLocalMonitor)
+        }
+        clearMarksGlobalMonitor = nil
+        clearMarksLocalMonitor = nil
+    }
+
+    private nonisolated static func isBareEscape(_ event: NSEvent) -> Bool {
+        event.isARepeat == false
+            && event.keyCode == 53
+            && event.modifierFlags.intersection(shortcutModifierMask).isEmpty
     }
 
     private func scheduleNextIdle() {
@@ -808,6 +857,31 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         syncBubbleAnchorToClippy()
         chatBubble?.showStatus("Cleared. Draw again, then click Done.")
         log("user-annotation: sticky-clear")
+    }
+
+    @discardableResult
+    private func clearScreenMarks(reason: String, includeUserAnnotation: Bool) -> Bool {
+        let hasUserAnnotation = isUserAnnotating || userAnnotation != nil || isAnnotationHoldActive
+        let hasAssistantOverlay = overlay?.hasContent == true && (!hasUserAnnotation || includeUserAnnotation)
+        let hasGuidedTarget = guidedTarget != nil
+        guard hasAssistantOverlay || hasGuidedTarget || (includeUserAnnotation && hasUserAnnotation) else {
+            return false
+        }
+
+        disarmGuidedTarget(reason: reason)
+        if includeUserAnnotation {
+            isAnnotationHoldActive = false
+            annotationBeginWork?.cancel()
+            annotationBeginWork = nil
+            isUserAnnotating = false
+            userAnnotationMode = nil
+            userAnnotation = nil
+            userAnnotationController?.cancel()
+        }
+        overlay?.clear()
+        syncBubbleAnchorToClippy()
+        log("screen-marks: clear reason=\(reason) includeUserAnnotation=\(includeUserAnnotation)")
+        return true
     }
 
     private func cancelUserAnnotationMode() {
