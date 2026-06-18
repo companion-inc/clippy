@@ -2605,16 +2605,49 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             let url = try ClippyOnboardingDemo.preparePage()
             log("onboarding-demo: prepared \(url.path)")
             NSWorkspace.shared.open(url)
-            scheduleOnboardingDemoWork(after: 0.9) { [weak self] in
+            scheduleOnboardingDemoWork(after: 1.4) { [weak self] in
                 self?.showOnboardingDemoTaskIntro()
             }
-            scheduleOnboardingDemoWork(after: 1.7) { [weak self] in
-                self?.completeOnboardingDemoPage(url)
+            scheduleOnboardingDemoWork(after: 3.4) { [weak self] in
+                self?.updateOnboardingDemoPage(
+                    url,
+                    state: .portfolioFixed,
+                    focus: .portfolioField,
+                    message: ClippyOnboardingDemo.portfolioFilledText
+                )
             }
-            scheduleOnboardingDemoWork(after: 3.0) { [weak self] in
-                self?.pointAtOnboardingPage()
+            scheduleOnboardingDemoWork(after: 6.2) { [weak self] in
+                self?.pointAtOnboardingPage(url, focus: .nextButton, message: ClippyOnboardingDemo.nextClickText)
             }
-            scheduleOnboardingDemoWork(after: 5.8) { [weak self] in
+            scheduleOnboardingDemoWork(after: 7.6) { [weak self] in
+                self?.updateOnboardingDemoPage(url, state: .screening)
+            }
+            scheduleOnboardingDemoWork(after: 10.0) { [weak self] in
+                self?.updateOnboardingDemoPage(
+                    url,
+                    state: .screeningComplete,
+                    focus: .screeningAnswer,
+                    message: ClippyOnboardingDemo.screeningAnsweredText
+                )
+            }
+            scheduleOnboardingDemoWork(after: 12.8) { [weak self] in
+                self?.pointAtOnboardingPage(url, focus: .nextButton, message: ClippyOnboardingDemo.nextClickText)
+            }
+            scheduleOnboardingDemoWork(after: 14.2) { [weak self] in
+                self?.updateOnboardingDemoPage(url, state: .review)
+            }
+            scheduleOnboardingDemoWork(after: 16.4) { [weak self] in
+                self?.pointAtOnboardingPage(url, focus: .submitButton, message: ClippyOnboardingDemo.submitText)
+            }
+            scheduleOnboardingDemoWork(after: 18.0) { [weak self] in
+                self?.updateOnboardingDemoPage(
+                    url,
+                    state: .submitted,
+                    focus: .confirmation,
+                    message: ClippyOnboardingDemo.submittedText
+                )
+            }
+            scheduleOnboardingDemoWork(after: 22.0) { [weak self] in
                 self?.showOnboardingControlsStep(createdPageURL: url)
             }
         } catch {
@@ -2633,37 +2666,61 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         chatBubble?.showReplyForReading(ClippyOnboardingDemo.taskIntroText)
     }
 
-    private func completeOnboardingDemoPage(_ url: URL) {
+    private func updateOnboardingDemoPage(
+        _ url: URL,
+        state: ClippyOnboardingDemo.PageState,
+        focus: ClippyOnboardingDemo.FocusTarget? = nil,
+        message: String? = nil
+    ) {
         guard isOnboardingActive else { return }
-        chatBubble?.showThinking(ClippyOnboardingDemo.organizingText)
+        if let message {
+            chatBubble?.showThinking(message)
+        } else {
+            chatBubble?.showThinking(ClippyOnboardingDemo.organizingText)
+        }
         playActivityState(.working)
 
         do {
-            try ClippyOnboardingDemo.completePage(at: url)
-            log("onboarding-demo: completed \(url.path)")
+            try ClippyOnboardingDemo.writePage(at: url, state: state)
+            log("onboarding-demo: state=\(state.rawValue) page=\(url.path)")
             NSWorkspace.shared.open(url)
-            scheduleOnboardingDemoWork(after: 0.8) { [weak self] in
-                self?.playOnboardingAnimation("Explain")
-                self?.syncBubbleAnchorToClippy()
-                self?.chatBubble?.showReplyForReading(ClippyOnboardingDemo.pointingIntroText)
+            guard let focus, let message else { return }
+            scheduleOnboardingDemoWork(after: 0.9) { [weak self] in
+                self?.pointAtOnboardingPage(url, focus: focus, message: message)
             }
         } catch {
-            log("onboarding-demo completion error: \(error.localizedDescription)")
+            log("onboarding-demo update error: \(error.localizedDescription)")
             playActivityState(.error)
             chatBubble?.showReplyForReading("I couldn't update the page, but the rest is ready.")
         }
     }
 
-    private func pointAtOnboardingPage() {
+    private func pointAtOnboardingPage(
+        _ url: URL,
+        focus: ClippyOnboardingDemo.FocusTarget,
+        message: String,
+        retryCount: Int = 0
+    ) {
         guard isOnboardingActive else { return }
 
         let context = DesktopContextSnapshot.capture()
+        guard ClippyOnboardingDemo.isDemoContext(context, pageURL: url) else {
+            if retryCount < 4 {
+                log("onboarding-demo: waiting for demo page before pointing app=\(context.app?.name ?? "unknown") window=\"\(context.window?.title ?? "untitled")\"")
+                scheduleOnboardingDemoWork(after: 0.8) { [weak self] in
+                    self?.pointAtOnboardingPage(url, focus: focus, message: message, retryCount: retryCount + 1)
+                }
+            } else {
+                log("onboarding-demo: skipped pointer because demo page was not frontmost")
+            }
+            return
+        }
         lastDesktopContext = context
         let screen = context.targetScreen() ?? screenForClippy() ?? NSScreen.main
         let windowFrame = context.window.flatMap {
             DesktopContextSnapshot.appKitFrame(for: $0, screen: context.screen)
         } ?? screen?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1200, height: 800)
-        let target = ClippyOnboardingDemo.target(in: windowFrame)
+        let target = ClippyOnboardingDemo.target(focus, in: windowFrame)
         let marks: [AnnotationMark] = [
             .ring(center: target.center, radius: target.radius, kind: .target),
             .dot(center: target.center, progress: 1),
@@ -2679,8 +2736,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             moveClippyToPoint(at: target.center, in: screen)
         }
         syncBubbleAnchorToClippy()
-        chatBubble?.showReplyForReading("That mark belongs to this window, so it follows the page instead of floating over other work.")
-        log("onboarding-demo: pointed at page app=\(context.app?.name ?? "unknown") window=\"\(context.window?.title ?? "untitled")\"")
+        chatBubble?.showReplyForReading(message)
+        log("onboarding-demo: pointed focus=\(focus) app=\(context.app?.name ?? "unknown") window=\"\(context.window?.title ?? "untitled")\"")
     }
 
     private func showOnboardingControlsStep(createdPageURL: URL?) {

@@ -1403,25 +1403,33 @@ private func writeExecutableScript(named name: String, contents: String) throws 
 
     let url = try ClippyOnboardingDemo.preparePage(supportDirectory: base)
     let html = try String(contentsOf: url)
-    let target = ClippyOnboardingDemo.target(in: CGRect(x: 120, y: 80, width: 900, height: 640))
+    let frame = CGRect(x: 120, y: 80, width: 900, height: 640)
+    let target = ClippyOnboardingDemo.target(.portfolioField, in: frame)
+    let nextTarget = ClippyOnboardingDemo.target(.nextButton, in: frame)
 
     #expect(url.lastPathComponent == "index.html")
-    #expect(html.contains("Clean up a messy note."))
-    #expect(html.contains("onboarding bubble"))
-    #expect(html.contains("Waiting for Clippy"))
-    #expect(html.contains("send deck tmrw"))
-    #expect(html.contains("Waiting for the plan"))
+    #expect(html.contains("Application Review"))
+    #expect(html.contains("Step 1: Profile"))
+    #expect(html.contains("Portfolio link"))
+    #expect(html.contains("Missing required URL"))
+    #expect(html.contains("Step 1 blocked"))
     #expect(html.localizedCaseInsensitiveContains("try" + " demo") == false)
+    #expect(html.localizedCaseInsensitiveContains("clean up") == false)
+    #expect(html.localizedCaseInsensitiveContains("messy note") == false)
+    #expect(html.localizedCaseInsensitiveContains("draggable") == false)
     #expect(html.contains("/Users/") == false)
+    #expect(ClippyOnboardingDemo.PageState.allCases == [.profile, .portfolioFixed, .screening, .screeningComplete, .review, .submitted])
     #expect(ClippyOnboardingDemo.guidedIntroText.contains("Watch this"))
-    #expect(ClippyOnboardingDemo.guidedIntroText.contains("clean up a messy note"))
-    #expect(ClippyOnboardingDemo.guidedIntroText.contains("attached to the page"))
+    #expect(ClippyOnboardingDemo.guidedIntroText.contains("complete the next steps"))
+    #expect(ClippyOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("window") == false)
     #expect(ClippyOnboardingDemo.guidedIntroText.contains("press " + "Return") == false)
     #expect(ClippyOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("input") == false)
     #expect(ClippyOnboardingDemo.guidedWorkingText == "Opening the demo page")
-    #expect(ClippyOnboardingDemo.taskIntroText.contains("messy note"))
-    #expect(ClippyOnboardingDemo.organizingText == "Cleaning up the note")
-    #expect(ClippyOnboardingDemo.pointingIntroText.contains("finished plan"))
+    #expect(ClippyOnboardingDemo.taskIntroText.contains("fix the missing link"))
+    #expect(ClippyOnboardingDemo.taskIntroText.contains("answer the question"))
+    #expect(ClippyOnboardingDemo.taskIntroText.contains("submit the review"))
+    #expect(ClippyOnboardingDemo.nextClickText == "Clicking Next.")
+    #expect(ClippyOnboardingDemo.submittedText.contains("submitted"))
     #expect(ClippyOnboardingDemo.controlsText.contains("click me"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Control+Space"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Control+Option"))
@@ -1432,14 +1440,44 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(target.center.x < 1020)
     #expect(target.center.y > 80)
     #expect(target.center.y < 720)
+    #expect(nextTarget.center.y < target.center.y)
+
+    try ClippyOnboardingDemo.writePage(at: url, state: .portfolioFixed)
+    let portfolioFixed = try String(contentsOf: url)
+    #expect(portfolioFixed.contains("example.com/portfolio"))
+    #expect(portfolioFixed.contains("Thing 1 done"))
+
+    try ClippyOnboardingDemo.writePage(at: url, state: .screeningComplete)
+    let screeningComplete = try String(contentsOf: url)
+    #expect(screeningComplete.contains("I care about fast, useful tools"))
+    #expect(screeningComplete.contains("Thing 2 done"))
+
+    try ClippyOnboardingDemo.writePage(at: url, state: .review)
+    let review = try String(contentsOf: url)
+    #expect(review.contains("Submit application"))
+    #expect(review.contains("Thing 3 is ready"))
 
     try ClippyOnboardingDemo.completePage(at: url)
     let completed = try String(contentsOf: url)
-    #expect(completed.contains("Clippy finished"))
-    #expect(completed.contains("A simple plan"))
-    #expect(completed.contains("Send the deck before lunch."))
-    #expect(completed.contains("Waiting for the plan") == false)
+    #expect(completed.contains("Application sent"))
+    #expect(completed.contains("Submitted the application"))
+    #expect(completed.contains("I completed three actions"))
     #expect(completed.contains("/Users/") == false)
+
+    let demoContext = DesktopContextSnapshot(
+        app: nil,
+        window: .init(title: "Clippy Demo - Application Review", ownerName: "Safari", ownerProcessIdentifier: 1, windowIdentifier: 2, bounds: .zero),
+        screen: nil,
+        browser: nil
+    )
+    let otherContext = DesktopContextSnapshot(
+        app: nil,
+        window: .init(title: "Downloads", ownerName: "Finder", ownerProcessIdentifier: 1, windowIdentifier: 2, bounds: .zero),
+        screen: nil,
+        browser: nil
+    )
+    #expect(ClippyOnboardingDemo.isDemoContext(demoContext, pageURL: url))
+    #expect(ClippyOnboardingDemo.isDemoContext(otherContext, pageURL: url) == false)
 }
 
 @Test func onboardingResumePointParsesSavedStepAndFallsBackToWelcome() {
