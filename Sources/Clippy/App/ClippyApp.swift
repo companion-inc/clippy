@@ -57,6 +57,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private var spokenBubbleShownAt: Date?
     private var spokenBubbleHide: DispatchWorkItem?
     private var codexComputerControlConversation: (any AgentBrain)?
+    private var invocationRecommendationConversation: (any StructuredOutputAgentBrain)?
     private var sttEnabled = ClippyApp.defaultVoiceSetting(
         defaultsKey: "ClippySTTEnabled",
         disableEnvironmentKey: "CLIPPY_DISABLE_STT"
@@ -318,7 +319,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func recommendInvocationOptions(for context: DesktopContextSnapshot) {
         guard let chatBubble else { return }
-        guard let brain = conversation else {
+        guard let brain = invocationRecommendationBrain() else {
             log("double-click recommendations unavailable: brain missing")
             showInvocationFallback()
             return
@@ -364,24 +365,19 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         scheduleTurnProgressUpdates(wantsScreen: true, attachedScreenshot: shot != nil)
 
         currentBrainTask = Task { [weak self] in
-            let finalTurn: AgentTurn?
-            if let structuredBrain = brain as? any StructuredOutputAgentBrain {
-                finalTurn = await structuredBrain.sendStructured(
-                    prompt,
-                    localImagePaths: localImagePaths,
-                    outputSchema: ClippyInvocationSuggestions.recommendationSchema
-                )
-            } else {
-                finalTurn = await brain.send(prompt, localImagePaths: localImagePaths)
-            }
+            let finalTurn = await brain.sendStructured(
+                prompt,
+                localImagePaths: localImagePaths,
+                outputSchema: ClippyInvocationSuggestions.recommendationSchema
+            )
             if Task.isCancelled { return }
             await MainActor.run { [weak self] in
                 guard let self, self.turnGeneration == turnID else { return }
                 self.cancelTurnProgressUpdates()
                 self.currentBrainTask = nil
                 self.isTurnRunning = false
-                guard let finalTurn, finalTurn.isError == false else {
-                    let message = finalTurn?.text.prefix(160) ?? "no response"
+                guard finalTurn.isError == false else {
+                    let message = finalTurn.text.prefix(160)
                     self.log("double-click recommendations failed: \(message)")
                     self.showInvocationFallback()
                     return
@@ -514,6 +510,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func setUpBrain() {
         codexComputerControlConversation = nil
+        invocationRecommendationConversation = nil
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         switch selectedModel.backend {
         case .claude:
@@ -559,6 +556,40 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         Task {
             await brain.prepare()
         }
+        return brain
+    }
+
+    private func invocationRecommendationBrain() -> (any StructuredOutputAgentBrain)? {
+        if let invocationRecommendationConversation {
+            return invocationRecommendationConversation
+        }
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        if let cli = CodexConversation.locateBinary(), BrainDiscovery.codexSignedIn() {
+            let brain = CodexConversation(
+                binaryPath: cli,
+                model: ClippyModel.gpt55.id,
+                workingDirectory: home,
+                systemPrompt: nil,
+                computerUseRuntime: nil,
+                annotationRuntime: nil
+            )
+            invocationRecommendationConversation = brain
+            log("brain: codex \(ClippyModel.gpt55.id) invocation-recommendations")
+            Task { await brain.prepare() }
+            return brain
+        }
+        guard let cli = LocalCLIConversation.locateBinary(), BrainDiscovery.claudeSignedIn() else {
+            return nil
+        }
+        let brain = LocalCLIConversation(
+            binaryPath: cli,
+            allowedTools: [],
+            workingDirectory: home,
+            systemPrompt: nil,
+            model: selectedModel.backend == .claude ? selectedModel.id : ClippyModel.opus48.id
+        )
+        invocationRecommendationConversation = brain
+        log("brain: claude \(selectedModel.backend == .claude ? selectedModel.id : ClippyModel.opus48.id) invocation-recommendations")
         return brain
     }
 
@@ -867,6 +898,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
               let chatBubble
         else {
             return false
+        }
+        if chatBubble.isPresentingChoices {
+            return chatBubble.receiveChoiceKey(event) ?? true
         }
         let inputAlreadyOpen = chatBubble.isInputMode
         guard ClippyBubbleController.acceptsExternalInputKey(

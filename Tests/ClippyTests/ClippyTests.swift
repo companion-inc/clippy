@@ -1276,6 +1276,71 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(bubble.debugSelectedRange == NSRange(location: 0, length: "hello from paste".count))
 }
 
+@Test @MainActor func clippyBubbleDoesNotOpenInputFromTypingWhileChoicesAreVisible() {
+    let bubble = ClippyBubbleController()
+    defer { bubble.hide() }
+    var picked = false
+    bubble.showChoices("Pick one.", choices: [
+        .init(title: "Do it") { picked = true },
+    ])
+
+    let letterEvent = NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: 0,
+        windowNumber: bubble.window.windowNumber,
+        context: nil,
+        characters: "a",
+        charactersIgnoringModifiers: "a",
+        isARepeat: false,
+        keyCode: 0
+    )
+    #expect(bubble.isPresentingChoices)
+    #expect(bubble.receiveExternalInputKey(letterEvent!) == false)
+    #expect(bubble.isInputMode == false)
+    #expect(picked == false)
+
+    let numberEvent = NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: 0,
+        windowNumber: bubble.window.windowNumber,
+        context: nil,
+        characters: "1",
+        charactersIgnoringModifiers: "1",
+        isARepeat: false,
+        keyCode: 18
+    )
+    #expect(bubble.receiveChoiceKey(numberEvent!) == true)
+    #expect(picked)
+}
+
+@Test @MainActor func clippyBubbleDoesNotOpenInputWhileChoicePromptIsTyping() {
+    let bubble = ClippyBubbleController()
+    defer { bubble.hide() }
+    bubble.showChoicesTyping("Pick one.", choices: [
+        .init(title: "Do it") {},
+    ])
+
+    let letterEvent = NSEvent.keyEvent(
+        with: .keyDown,
+        location: .zero,
+        modifierFlags: [],
+        timestamp: 0,
+        windowNumber: bubble.window.windowNumber,
+        context: nil,
+        characters: "a",
+        charactersIgnoringModifiers: "a",
+        isARepeat: false,
+        keyCode: 0
+    )
+    #expect(bubble.isPresentingChoices)
+    #expect(bubble.receiveExternalInputKey(letterEvent!) == false)
+    #expect(bubble.isInputMode == false)
+}
+
 @Test @MainActor func clippyBubbleCanOpenWithPrefilledPrompt() {
     let bubble = ClippyBubbleController()
     defer { bubble.hide() }

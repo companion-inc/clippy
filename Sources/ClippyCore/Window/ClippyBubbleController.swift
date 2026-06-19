@@ -169,6 +169,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private weak var anchorWindow: NSWindow?
     private var autoHideTimer: Timer?
     private var typingTimer: Timer?
+    private var choiceTypingActive = false
     private var inputDismissedByAnchorClickAt: TimeInterval?
     private static let anchorClickDismissalReplayWindow: TimeInterval = 0.35
 
@@ -248,6 +249,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     public var isVisible: Bool { window.isVisible }
     public var isInputMode: Bool { mode == .input && window.isVisible }
+    public var isPresentingChoices: Bool { window.isVisible && (mode == .choices || choiceTypingActive) }
     var debugInputText: String { inputTextView.string }
     var debugSelectedRange: NSRange { inputTextView.selectedRange() }
 
@@ -320,6 +322,9 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     @discardableResult
     public func receiveExternalInputKey(_ event: NSEvent) -> Bool {
+        guard !isPresentingChoices else {
+            return receiveChoiceKey(event) ?? true
+        }
         if handleInputEditingCommand(event) {
             return true
         }
@@ -353,6 +358,14 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             relayout()
         }
         return true
+    }
+
+    @discardableResult
+    public func receiveChoiceKey(_ event: NSEvent) -> Bool? {
+        guard mode == .choices else {
+            return choiceTypingActive ? false : nil
+        }
+        return handleKeyDown(event)
     }
 
     public nonisolated static func acceptsInputEditingCommand(
@@ -471,6 +484,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         stopThinking()
         cancelAutoHide()
         clearChoices()
+        choiceTypingActive = false
         messageText = prompt
         mode = .choices
         choiceButtons = choices.map { choice in
@@ -491,6 +505,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         stopThinking()
         cancelAutoHide()
         clearChoices()
+        choiceTypingActive = true
         messageText = ""
         mode = .message
         relayout()
@@ -506,6 +521,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             if index == prompt.endIndex {
                 timer.invalidate()
                 self.typingTimer = nil
+                self.choiceTypingActive = false
                 self.showChoices(prompt, choices: choices)
                 return
             }
@@ -586,6 +602,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private func stopTyping() {
         typingTimer?.invalidate()
         typingTimer = nil
+        choiceTypingActive = false
     }
 
     // MARK: - Layout (one active region; bubble grows to fit)
