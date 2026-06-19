@@ -67,6 +67,9 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     }
 
     private final class BalloonChoiceButton: NSView {
+        private static let shortcutHintWidth: CGFloat = 9
+        private static let shortcutHintGap: CGFloat = 4
+
         var title: String { didSet { needsDisplay = true } }
         var shortcutLabel: String? { didSet { needsDisplay = true } }
         var onClick: (() -> Void)?
@@ -103,37 +106,35 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
                 .foregroundColor: RetroPalette.text,
                 .paragraphStyle: paragraph,
             ]
-            let keycapWidth: CGFloat = shortcutLabel == nil ? 0 : 16
-            let keycapGap: CGFloat = shortcutLabel == nil ? 0 : 6
+            let shortcutWidth: CGFloat = shortcutLabel == nil ? 0 : Self.shortcutHintWidth
+            let shortcutGap: CGFloat = shortcutLabel == nil ? 0 : Self.shortcutHintGap
             let label = title as NSString
             let textSize = label.size(withAttributes: attrs)
             let textRect = NSRect(
                 x: 16 + offset,
                 y: max(0, (bounds.height - textSize.height) / 2) + offset,
-                width: max(0, bounds.width - 16 - keycapWidth - keycapGap),
+                width: max(0, bounds.width - 16 - shortcutWidth - shortcutGap),
                 height: textSize.height
             )
             label.draw(in: textRect, withAttributes: attrs)
 
             if let shortcutLabel {
-                let keyRect = NSRect(x: bounds.width - keycapWidth - 3 + offset, y: 2 + offset, width: keycapWidth - 1, height: 13)
-                RetroPalette.face.setFill()
-                NSBezierPath(rect: keyRect).fill()
-                RetroPalette.frame.setStroke()
-                let keyOutline = NSBezierPath(rect: keyRect)
-                keyOutline.lineWidth = 1
-                keyOutline.stroke()
-
-                let keyParagraph = NSMutableParagraphStyle()
-                keyParagraph.alignment = .center
-                let keyAttrs: [NSAttributedString.Key: Any] = [
-                    .font: RetroFont.ui(10),
-                    .foregroundColor: RetroPalette.text,
-                    .paragraphStyle: keyParagraph,
+                let shortcutParagraph = NSMutableParagraphStyle()
+                shortcutParagraph.alignment = .right
+                let shortcutAttrs: [NSAttributedString.Key: Any] = [
+                    .font: RetroFont.ui(8),
+                    .foregroundColor: RetroPalette.grayText.withAlphaComponent(0.72),
+                    .paragraphStyle: shortcutParagraph,
                 ]
+                let shortcutRect = NSRect(
+                    x: bounds.width - Self.shortcutHintWidth - 3 + offset,
+                    y: 4 + offset,
+                    width: Self.shortcutHintWidth,
+                    height: 10
+                )
                 (shortcutLabel as NSString).draw(
-                    in: keyRect.insetBy(dx: 1, dy: 1),
-                    withAttributes: keyAttrs
+                    in: shortcutRect,
+                    withAttributes: shortcutAttrs
                 )
             }
 
