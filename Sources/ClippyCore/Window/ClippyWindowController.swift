@@ -57,6 +57,12 @@ public final class ClippyWindowController {
         set { contentView.onClick = newValue }
     }
 
+    /// Fired on an intentional character double-click gesture.
+    public var onCharacterDoubleClick: (() -> Void)? {
+        get { contentView.onDoubleClick }
+        set { contentView.onDoubleClick = newValue }
+    }
+
     /// Fired when the focused character window receives keyboard input.
     public var onKeyDown: ((NSEvent) -> Bool)? {
         get { contentView.onKeyDown }

@@ -11,6 +11,9 @@ public final class ClippyHitView: NSView {
     /// Invoked on an intentional character click — opens the Clippy input.
     public var onClick: (() -> Void)?
 
+    /// Invoked on an intentional character double-click — opens contextual help.
+    public var onDoubleClick: (() -> Void)?
+
     /// Invoked when the focused character window receives typed input.
     public var onKeyDown: ((NSEvent) -> Bool)?
 
@@ -18,6 +21,7 @@ public final class ClippyHitView: NSView {
     private var mouseDownScreenLocation: NSPoint?
     private var mouseDownWindowOrigin: NSPoint?
     private var didDrag = false
+    private var pendingSingleClick: DispatchWorkItem?
 
     public init(frame: NSRect, visibleHitTest: @escaping (NSPoint) -> Bool) {
         self.visibleHitTest = visibleHitTest
@@ -29,6 +33,10 @@ public final class ClippyHitView: NSView {
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         nil
+    }
+
+    deinit {
+        pendingSingleClick?.cancel()
     }
 
     public override var isFlipped: Bool {
@@ -93,6 +101,18 @@ public final class ClippyHitView: NSView {
         guard hadMouseDown, !didDrag else {
             return
         }
-        onClick?()
+        if event.clickCount >= 2 {
+            pendingSingleClick?.cancel()
+            pendingSingleClick = nil
+            onDoubleClick?()
+            return
+        }
+        let work = DispatchWorkItem { [weak self] in
+            self?.pendingSingleClick = nil
+            self?.onClick?()
+        }
+        pendingSingleClick?.cancel()
+        pendingSingleClick = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: work)
     }
 }

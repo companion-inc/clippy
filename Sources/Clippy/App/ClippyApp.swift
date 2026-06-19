@@ -258,6 +258,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         clippy.windowController.onCharacterClick = { [weak self] in
             self?.handleCharacterClick()
         }
+        clippy.windowController.onCharacterDoubleClick = { [weak self] in
+            self?.handleCharacterDoubleClick()
+        }
         clippy.windowController.onKeyDown = { [weak self] event in
             self?.handleClippyFocusedTyping(event) ?? false
         }
@@ -291,6 +294,69 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             return
         }
         toggleChat()
+    }
+
+    private func handleCharacterDoubleClick() {
+        guard !isOnboardingActive else { return }
+        cancelUserAnnotationMode()
+        if isClippyHidden {
+            showClippy()
+        }
+        syncBubbleAnchorToClippy()
+        cancelSpokenBubbleHide()
+        hideBubbleWhenSpeechFinishes = false
+        spokenBubbleShownAt = nil
+        if isTurnRunning {
+            showBusyInvocationOptions()
+            return
+        }
+        let context = DesktopContextSnapshot.capture()
+        lastDesktopContext = context
+        log("double-click invoke: \(context.logSummary)")
+        showInvocationOptions(for: context)
+    }
+
+    private func showInvocationOptions(for context: DesktopContextSnapshot) {
+        guard let chatBubble else { return }
+        let suggestions = ClippyInvocationSuggestions.suggestions(for: context)
+        let choices = suggestions.map { suggestion in
+            ClippyBubbleController.Choice(title: suggestion.title) { [weak self] in
+                self?.runInvocationSuggestion(suggestion)
+            }
+        } + [
+            ClippyBubbleController.Choice(title: "Ask something else") { [weak self] in
+                self?.showTextInputBubble()
+            },
+        ]
+        playActivityState(.attention)
+        chatBubble.showChoicesTyping(ClippyInvocationSuggestions.heading(for: context), choices: choices)
+    }
+
+    private func showBusyInvocationOptions() {
+        guard let request = activeUserRequest else {
+            chatBubble?.showReplyForReading("I'm working on it.")
+            return
+        }
+        playActivityState(.attention)
+        chatBubble?.showChoicesTyping("I'm still working. What now?", choices: [
+            .init(title: "Stop and ask") { [weak self] in
+                self?.interruptSpeechAndResponse()
+                self?.showTextInputBubble()
+            },
+            .init(title: "Keep going") { [weak self] in
+                self?.syncBubbleAnchorToClippy()
+                self?.chatBubble?.showThinking("Still working")
+            },
+            .init(title: "Retry this") { [weak self] in
+                self?.interruptSpeechAndResponse()
+                self?.sendMessage(request.text, inputMode: request.inputMode)
+            },
+        ])
+    }
+
+    private func runInvocationSuggestion(_ suggestion: ClippyInvocationSuggestion) {
+        log("double-click choice: \(suggestion.title)")
+        sendMessage(suggestion.prompt, visibleUserLine: suggestion.title)
     }
 
     private func startClearMarksShortcut() {
@@ -2345,10 +2411,10 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func showWelcomeStep() {
         saveOnboardingResumePoint(.welcome)
         showOnboardingStep(
-            "Hey, I'm Clippy. I'm your new desktop buddy.",
+            "Hi, I'm Clippy, your new desktop buddy. Let's get me set up — it's quick.",
             animation: "Greeting",
             choices: [
-                .init(title: "Next") { [weak self] in self?.showBrainChoiceStep() },
+                .init(title: "Let's go") { [weak self] in self?.showBrainChoiceStep() },
             ]
         )
     }
@@ -2356,12 +2422,12 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
     private func showBrainChoiceStep() {
         saveOnboardingResumePoint(.brainChoice)
         showOnboardingStep(
-            "Connect ChatGPT or Claude to get started.",
+            "First, I need a brain to think with. ChatGPT or Claude — either one's great.",
             animation: "GetAttention",
             choices: [
                 .init(title: "ChatGPT") { [weak self] in self?.showCodexOnboarding() },
                 .init(title: "Claude") { [weak self] in self?.showClaudeOnboarding() },
-                .init(title: "Not sure") { [weak self] in self?.showBrainHelpStep() },
+                .init(title: "Help me pick") { [weak self] in self?.showBrainHelpStep() },
             ]
         )
     }
@@ -2371,16 +2437,15 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let codex = BrainDiscovery.codexStatus()
         let claude = BrainDiscovery.claudeStatus()
         let prompt = """
-        Here's what I found:
+        Let me see what you've got here.
         ChatGPT: \(codex.statusText)
         Claude: \(claude.statusText)
-
-        Pick the account you'd like me to use.
+        Pick whichever, and I'll run with it.
         """
         showOnboardingStep(prompt, animation: "CheckingSomething", choices: [
             .init(title: "ChatGPT") { [weak self] in self?.showCodexOnboarding() },
             .init(title: "Claude") { [weak self] in self?.showClaudeOnboarding() },
-            .init(title: "Skip") { [weak self] in self?.showListeningStep() },
+            .init(title: "Skip for now") { [weak self] in self?.showListeningStep() },
         ])
     }
 
@@ -2389,7 +2454,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let status = BrainDiscovery.codexStatus()
         if status.signedIn {
             showOnboardingStep(
-                "ChatGPT is signed in. I can use this account.",
+                "Nice — ChatGPT's already signed in. I can use that.",
                 animation: "GetTechy",
                 choices: [
                     .init(title: "Use ChatGPT") { [weak self] in
@@ -2400,19 +2465,19 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             )
         } else if status.isInstalled {
             showOnboardingStep(
-                "ChatGPT just needs you to sign in first.",
+                "ChatGPT's here — just sign in and we're good.",
                 animation: "GetTechy",
                 choices: [
-                    .init(title: "Sign In") { [weak self] in self?.runCodexLogin() },
+                    .init(title: "Sign in") { [weak self] in self?.runCodexLogin() },
                     .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
                 ]
             )
         } else {
             showOnboardingStep(
-                "ChatGPT support is missing. Setup runs in the background.",
+                "I don't see ChatGPT yet. Want me to grab it? Takes a sec.",
                 animation: "GetTechy",
                 choices: [
-                    .init(title: "Set Up ChatGPT") { [weak self] in self?.runCodexInstall() },
+                    .init(title: "Set it up") { [weak self] in self?.runCodexInstall() },
                     .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
                 ]
             )
@@ -2424,7 +2489,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let status = BrainDiscovery.claudeStatus()
         if status.signedIn {
             showOnboardingStep(
-                "Claude is signed in. I can use this account.",
+                "Nice — Claude's already signed in. I can use that.",
                 animation: "GetWizardy",
                 choices: [
                     .init(title: "Use Claude") { [weak self] in
@@ -2435,19 +2500,19 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             )
         } else if status.isInstalled {
             showOnboardingStep(
-                "Claude just needs you to sign in first.",
+                "Claude's here — just sign in and we're good.",
                 animation: "GetWizardy",
                 choices: [
-                    .init(title: "Sign In") { [weak self] in self?.runClaudePlanLogin() },
+                    .init(title: "Sign in") { [weak self] in self?.runClaudePlanLogin() },
                     .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
                 ]
             )
         } else {
             showOnboardingStep(
-                "Claude support is missing. Setup runs in the background.",
+                "I don't see Claude yet. Want me to grab it? Takes a sec.",
                 animation: "GetWizardy",
                 choices: [
-                    .init(title: "Set Up Claude") { [weak self] in self?.runClaudeInstall() },
+                    .init(title: "Set it up") { [weak self] in self?.runClaudeInstall() },
                     .init(title: "Back") { [weak self] in self?.showBrainChoiceStep() },
                 ]
             )
@@ -2460,20 +2525,20 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         saveOnboardingResumePoint(.listening)
         if ClippySecrets.deepgramAPIKey != nil {
             showOnboardingStep(
-                "Do you want to talk to me with your voice?",
+                "Wanna talk to me out loud instead of typing?",
                 animation: "Hearing_1",
                 choices: [
-                    .init(title: "Use Mic") { [weak self] in self?.enableOnboardingListening() },
-                    .init(title: "Not Now") { [weak self] in self?.skipOnboardingListening() },
+                    .init(title: "Sure") { [weak self] in self?.enableOnboardingListening() },
+                    .init(title: "Maybe later") { [weak self] in self?.skipOnboardingListening() },
                 ]
             )
         } else {
             showOnboardingStep(
-                "To hear you, I need a Deepgram key.",
+                "To hear you, I need a quick voice key. Wanna add one?",
                 animation: "Hearing_1",
                 choices: [
-                    .init(title: "Add Listening Key") { [weak self] in self?.showProviderKeys() },
-                    .init(title: "Not Now") { [weak self] in self?.showVoiceStep() },
+                    .init(title: "Add a key") { [weak self] in self?.showProviderKeys() },
+                    .init(title: "Maybe later") { [weak self] in self?.showVoiceStep() },
                 ]
             )
         }
@@ -2483,20 +2548,20 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         saveOnboardingResumePoint(.voice)
         if ClippySecrets.xaiAPIKey != nil {
             showOnboardingStep(
-                "Do you want me to talk back out loud?",
+                "Want me to talk back out loud, or keep it quiet?",
                 animation: "Wave",
                 choices: [
-                    .init(title: "Speak Replies") { [weak self] in self?.enableOnboardingSpeech() },
-                    .init(title: "Stay Quiet") { [weak self] in self?.skipOnboardingSpeech() },
+                    .init(title: "Out loud") { [weak self] in self?.enableOnboardingSpeech() },
+                    .init(title: "Stay quiet") { [weak self] in self?.skipOnboardingSpeech() },
                 ]
             )
         } else {
             showOnboardingStep(
-                "To talk back, I need an xAI key for my voice.",
+                "To talk back out loud, I need a quick voice key. Add one?",
                 animation: "Wave",
                 choices: [
-                    .init(title: "Add Voice Key") { [weak self] in self?.showProviderKeys() },
-                    .init(title: "Stay Quiet") { [weak self] in self?.skipOnboardingSpeech() },
+                    .init(title: "Add a key") { [weak self] in self?.showProviderKeys() },
+                    .init(title: "Stay quiet") { [weak self] in self?.skipOnboardingSpeech() },
                 ]
             )
         }
@@ -2572,11 +2637,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             return
         }
         showOnboardingStep(
-            "Do you want me to help with things on your screen? This lets me see pages and click only when you ask.",
+            "Want me to help with stuff on your screen? I only look when you ask — never in the background.",
             animation: "GetAttention",
             choices: [
-                .init(title: "Screen Help") { [weak self] in self?.requestScreenHelpPermissions() },
-                .init(title: "Not Now") { [weak self] in self?.showFileAccessStep() },
+                .init(title: "Yes, help out") { [weak self] in self?.requestScreenHelpPermissions() },
+                .init(title: "Maybe later") { [weak self] in self?.showFileAccessStep() },
             ]
         )
     }
@@ -2611,11 +2676,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             return
         }
         showOnboardingStep(
-            "Do you want me to read local app files when you ask? This is for things like Messages or browser history.",
+            "Want me to dig through your apps when you ask — like finding an old text or a link you lost? Only when you ask.",
             animation: "Processing",
             choices: [
-                .init(title: "Access Files") { [weak self] in self?.requestFileAccessPermission() },
-                .init(title: "Not Now") { [weak self] in self?.startOnboardingDemo() },
+                .init(title: "Yeah, go ahead") { [weak self] in self?.requestFileAccessPermission() },
+                .init(title: "Maybe later") { [weak self] in self?.startOnboardingDemo() },
             ]
         )
     }
@@ -2667,7 +2732,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             self.log("onboarding-demo: current-screen prompt")
             self.playOnboardingAnimation("Explain")
             self.sendMessage(
-                ClippyOnboardingDemo.taskPrompt(),
+                ClippyOnboardingDemo.demoRequestText,
                 initialThinkingStatus: ClippyOnboardingDemo.guidedWorkingText,
                 visibleUserLine: ClippyOnboardingDemo.visibleTaskLine
             )
@@ -2714,7 +2779,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             setUpBrain()
         }
         playOnboardingAnimation("Congratulate")
-        chatBubble?.showReplyForReading("All set. Press Control+Space to type, or hold Control+Option to talk.")
+        chatBubble?.showReplyForReading("All set — I'm all yours! Press Control+Space to type, or hold Control+Option to talk.")
     }
 
     private func scheduleOnboardingDemoWork(after delay: TimeInterval, _ action: @escaping () -> Void) {
@@ -2749,8 +2814,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             title: "ChatGPT Sign In",
             executablePath: CodexConversation.locateBinary() ?? "codex",
             arguments: ["login"],
-            startMessage: "Opening ChatGPT sign in. Finish in your browser, then press Refresh.",
-            successMessage: "ChatGPT sign in finished. Press Refresh.",
+            startMessage: "Popping open ChatGPT sign-in. Finish in your browser, then hit Refresh.",
+            successMessage: "ChatGPT's signed in! Hit Refresh and we're good.",
             retry: { [weak self] in self?.runCodexLogin() },
             resume: { [weak self] in self?.showCodexOnboarding() }
         )
@@ -2764,8 +2829,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         runSetupShell(
             title: "Set Up ChatGPT",
             command: Self.codexInstallCommand(),
-            startMessage: "Installing ChatGPT support in the background.",
-            successMessage: "ChatGPT support is installed. Press Refresh to sign in.",
+            startMessage: "Setting up ChatGPT for you — one sec.",
+            successMessage: "ChatGPT's ready! Hit Refresh to sign in.",
             retry: { [weak self] in self?.runCodexInstall() },
             resume: { [weak self] in self?.showCodexOnboarding() }
         )
@@ -2776,8 +2841,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             title: "Claude Sign In",
             executablePath: LocalCLIConversation.locateBinary() ?? "claude",
             arguments: ["auth", "login", "--claudeai"],
-            startMessage: "Opening Claude sign in. Finish in your browser, then press Refresh.",
-            successMessage: "Claude sign in finished. Press Refresh.",
+            startMessage: "Popping open Claude sign-in. Finish in your browser, then hit Refresh.",
+            successMessage: "Claude's signed in! Hit Refresh and we're good.",
             retry: { [weak self] in self?.runClaudePlanLogin() },
             resume: { [weak self] in self?.showClaudeOnboarding() }
         )
@@ -2791,8 +2856,8 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         runSetupShell(
             title: "Set Up Claude",
             command: Self.claudeInstallCommand(),
-            startMessage: "Installing Claude support in the background.",
-            successMessage: "Claude support is installed. Press Refresh to sign in.",
+            startMessage: "Setting up Claude for you — one sec.",
+            successMessage: "Claude's ready! Hit Refresh to sign in.",
             retry: { [weak self] in self?.runClaudeInstall() },
             resume: { [weak self] in self?.showClaudeOnboarding() }
         )
@@ -2855,7 +2920,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             try Self.writeSetupLogHeader(title: title, commandLine: commandLine, to: logURL)
         } catch {
             showOnboardingStep(
-                "I couldn't start setup because I couldn't create the log folder.",
+                "Hmm, couldn't start setup — I wasn't able to make the log folder.",
                 animation: "GetAttention",
                 choices: [
                     .init(title: "Retry") { retry() },
@@ -2873,7 +2938,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             try outputHandle.seekToEnd()
         } catch {
             showOnboardingStep(
-                "I couldn't start setup because I couldn't write the setup log.",
+                "Hmm, couldn't start setup — I wasn't able to write the log.",
                 animation: "GetAttention",
                 choices: [
                     .init(title: "Retry") { retry() },
@@ -2988,7 +3053,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func showSetupFailure(logURL: URL, retry: @escaping () -> Void) {
         showOnboardingStep(
-            "Setup hit an error. I saved the log.",
+            "Welp, setup hit a snag. I saved the log if you wanna peek.",
             animation: "GetAttention",
             choices: [
                 .init(title: "Retry") { retry() },

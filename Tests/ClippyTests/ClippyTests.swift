@@ -1399,38 +1399,81 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     ) == .cancel)
 }
 
-@Test func onboardingDemoUsesCurrentScreenInsteadOfOpeningAStagedPage() {
-    let prompt = ClippyOnboardingDemo.taskPrompt()
+@Test func doubleClickInvocationSuggestionsUseCurrentAppContext() {
+    let browserContext = DesktopContextSnapshot(
+        app: .init(name: "Chrome", bundleIdentifier: "com.google.Chrome", processIdentifier: 42),
+        window: .init(
+            title: "Application form",
+            ownerName: "Chrome",
+            ownerProcessIdentifier: 42,
+            windowIdentifier: 7,
+            bounds: CGRect(x: 0, y: 0, width: 1000, height: 700)
+        ),
+        screen: nil,
+        browser: .init(title: "Application form", url: "https://example.com/apply")
+    )
 
-    #expect(prompt.contains("current screenshot"))
-    #expect(prompt.contains("current screen"))
-    #expect(prompt.contains("Do not open an app, browser, file, tab, URL, or demo page"))
-    #expect(prompt.contains("[POINT:x,y:label]"))
-    #expect(prompt.contains("[HIGHLIGHT:x,y,r:label]"))
-    #expect(prompt.contains("Avoid private personal content"))
-    #expect(prompt.contains("Do not quote messages"))
-    #expect(prompt.localizedCaseInsensitiveContains("fill out") == false)
-    #expect(prompt.localizedCaseInsensitiveContains("save demo") == false)
-    #expect(prompt.localizedCaseInsensitiveContains("full name") == false)
-    #expect(prompt.localizedCaseInsensitiveContains("application review") == false)
-    #expect(prompt.localizedCaseInsensitiveContains("missing required url") == false)
-    #expect(prompt.localizedCaseInsensitiveContains("clean up") == false)
-    #expect(prompt.localizedCaseInsensitiveContains("messy note") == false)
-    #expect(prompt.localizedCaseInsensitiveContains("draggable") == false)
-    #expect(prompt.contains("/Users/") == false)
-    #expect(ClippyOnboardingDemo.guidedIntroText.contains("screen you're already using"))
-    #expect(ClippyOnboardingDemo.guidedIntroText.contains("point it out"))
+    #expect(ClippyInvocationSuggestions.heading(for: browserContext) == "What should I do with this page?")
+    #expect(ClippyInvocationSuggestions.suggestions(for: browserContext).map(\.title) == [
+        "Explain this page",
+        "Show next click",
+        "Help fill this",
+    ])
+
+    let terminalContext = DesktopContextSnapshot(
+        app: .init(name: "Terminal", bundleIdentifier: "com.apple.Terminal", processIdentifier: 99),
+        window: .init(
+            title: "zsh",
+            ownerName: "Terminal",
+            ownerProcessIdentifier: 99,
+            windowIdentifier: 8,
+            bounds: CGRect(x: 0, y: 0, width: 900, height: 500)
+        ),
+        screen: nil,
+        browser: nil
+    )
+
+    #expect(ClippyInvocationSuggestions.heading(for: terminalContext) == "What should I do with Terminal?")
+    #expect(ClippyInvocationSuggestions.suggestions(for: terminalContext).map(\.title) == [
+        "Explain error",
+        "Next command",
+        "Summarize output",
+    ])
+}
+
+@Test func onboardingDemoSendsPlainGroundingRequestThroughNormalPipeline() {
+    let request = ClippyOnboardingDemo.demoRequestText
+
+    // The demo is a normal turn: a short, natural request a user could type —
+    // no bespoke demo prompt and none of the "avoid private content" hedging the
+    // real product never applies. Clippy runs locally on the user's own screen.
+    #expect(request == "Point out something interesting on my screen.")
+    #expect(request.contains("[POINT") == false)
+    #expect(request.contains("[HIGHLIGHT") == false)
+    #expect(request.localizedCaseInsensitiveContains("do not quote") == false)
+    #expect(request.localizedCaseInsensitiveContains("avoid private") == false)
+    #expect(request.localizedCaseInsensitiveContains("sensitive") == false)
+    #expect(request.localizedCaseInsensitiveContains("onboarding demo task") == false)
+
+    // It flows through the regular routing: the pipeline recognizes the pointing
+    // intent and grounds on the live screen, and stays passive (no app driving).
+    #expect(ClippyAgentInstructions.shouldUseScreenAnnotationTool(text: request, inputMode: .text))
+    #expect(ClippyAgentInstructions.shouldUseComputerControl(text: request, inputMode: .text) == false)
+
+    #expect(ClippyOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("screen"))
+    #expect(ClippyOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("point"))
     #expect(ClippyOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("window") == false)
-    #expect(ClippyOnboardingDemo.guidedIntroText.contains("press " + "Return") == false)
     #expect(ClippyOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("input") == false)
     #expect(ClippyOnboardingDemo.guidedWorkingText == "Looking at your screen")
     #expect(ClippyOnboardingDemo.visibleTaskLine == "")
-    #expect(ClippyOnboardingDemo.controlsText.contains("click me"))
+    // Controls trimmed to the essentials: core shortcuts stay, annotation trivia is gone.
+    #expect(ClippyOnboardingDemo.controlsText.localizedCaseInsensitiveContains("click me"))
+    #expect(ClippyOnboardingDemo.controlsText.localizedCaseInsensitiveContains("double-click me"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Control+Space"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Control+Option"))
-    #expect(ClippyOnboardingDemo.controlsText.contains("Hold Control"))
-    #expect(ClippyOnboardingDemo.controlsText.contains("tap Control twice"))
     #expect(ClippyOnboardingDemo.controlsText.contains("Right-click"))
+    #expect(ClippyOnboardingDemo.controlsText.localizedCaseInsensitiveContains("annotation") == false)
+    #expect(ClippyOnboardingDemo.controlsText.localizedCaseInsensitiveContains("mark the screen") == false)
 }
 
 @Test func onboardingResumePointParsesSavedStepAndFallsBackToWelcome() {
@@ -1546,7 +1589,7 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(reportedFrame?.size == CGSize(width: 24, height: 24))
 }
 
-@Test @MainActor func clippyWindowEverySingleClickActivatesCharacter() throws {
+@Test @MainActor func clippyWindowSingleClickActivatesAfterDoubleClickWindow() async throws {
     let controller = ClippyWindowController(
         rendererView: NSView(frame: CGRect(origin: .zero, size: CGSize(width: 24, height: 24))),
         size: CGSize(width: 24, height: 24)
@@ -1586,10 +1629,63 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     }
 
     try sendClick(timestamp: 1, eventNumber: 1, clickCount: 1)
+    #expect(clicks == 0)
+    try await Task.sleep(nanoseconds: UInt64((NSEvent.doubleClickInterval + 0.1) * 1_000_000_000))
     #expect(clicks == 1)
+}
 
+@Test @MainActor func clippyWindowDoubleClickOpensInvocationWithoutSingleClick() async throws {
+    let controller = ClippyWindowController(
+        rendererView: NSView(frame: CGRect(origin: .zero, size: CGSize(width: 24, height: 24))),
+        size: CGSize(width: 24, height: 24)
+    ) { _ in true }
+    let contentView = try #require(controller.window.contentView)
+    var clicks = 0
+    var doubleClicks = 0
+    controller.onCharacterClick = {
+        clicks += 1
+    }
+    controller.onCharacterDoubleClick = {
+        doubleClicks += 1
+    }
+
+    func sendClick(timestamp: TimeInterval, eventNumber: Int, clickCount: Int) throws {
+        let down = try #require(NSEvent.mouseEvent(
+            with: .leftMouseDown,
+            location: CGPoint(x: 12, y: 12),
+            modifierFlags: [],
+            timestamp: timestamp,
+            windowNumber: controller.window.windowNumber,
+            context: nil,
+            eventNumber: eventNumber,
+            clickCount: clickCount,
+            pressure: 1
+        ))
+        let up = try #require(NSEvent.mouseEvent(
+            with: .leftMouseUp,
+            location: CGPoint(x: 12, y: 12),
+            modifierFlags: [],
+            timestamp: timestamp + 0.1,
+            windowNumber: controller.window.windowNumber,
+            context: nil,
+            eventNumber: eventNumber + 1,
+            clickCount: clickCount,
+            pressure: 0
+        ))
+
+        contentView.mouseDown(with: down)
+        contentView.mouseUp(with: up)
+    }
+
+    try sendClick(timestamp: 1, eventNumber: 1, clickCount: 1)
+    #expect(clicks == 0)
+    #expect(doubleClicks == 0)
     try sendClick(timestamp: 1.2, eventNumber: 3, clickCount: 2)
-    #expect(clicks == 2)
+    #expect(clicks == 0)
+    #expect(doubleClicks == 1)
+    try await Task.sleep(nanoseconds: UInt64((NSEvent.doubleClickInterval + 0.1) * 1_000_000_000))
+    #expect(clicks == 0)
+    #expect(doubleClicks == 1)
 }
 
 @Test @MainActor func spriteRendererResizeUpdatesViewAndSpriteAnchor() {

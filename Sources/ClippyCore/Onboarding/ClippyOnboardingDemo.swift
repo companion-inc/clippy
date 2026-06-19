@@ -30,26 +30,19 @@ public enum ClippyOnboardingResumePoint: String, CaseIterable, Sendable {
 }
 
 public enum ClippyOnboardingDemo {
-    public static let guidedIntroText = "Let me show you on the screen you're already using. I'll pick one visible thing and point it out."
+    public static let guidedIntroText = "Okay, watch this — I'll find something on your screen and point right at it."
     public static let guidedWorkingText = "Looking at your screen"
     public static let visibleTaskLine = ""
     public static let controlsText = """
-    Last thing: click me to open or close chat. Press Control+Space to type from anywhere. Hold Control+Option to talk. Hold Control to mark the screen, or tap Control twice for annotation mode. Right-click me for settings.
+    That's it! Click me to chat, double-click me for quick options, press Control+Space to type from anywhere, or hold Control+Option to talk. Right-click me for everything else.
     """
 
-    public static func taskPrompt() -> String {
-        return """
-        [Clippy onboarding demo task]
-        Use only the current screenshot and desktop context. Do not open an app, browser, file, tab, URL, or demo page.
-
-        Pick one concrete visible thing already on the user's current screen and point it out with Clippy:
-        - Prefer a clear app control, title, heading, icon, image, chart, button, or visible work area near the middle of the screenshot.
-        - Avoid private personal content. Do not quote messages, emails, contacts, addresses, filenames, keys, tokens, or long text from the screen.
-        - If the visible screen is too sensitive or blank, point to a harmless app area or say you are ready without a visual tag.
-
-        Reply with one short Clippy sentence and exactly one renderable visual tag when a safe visible target exists.
-        Use [POINT:x,y:label] for one precise spot or [HIGHLIGHT:x,y,r:label] for one area.
-        Coordinates are integer pixels in the screenshot, top-left origin. Do not mention internal tools.
-        """
-    }
+    /// The demo is just a normal Clippy turn. We send the same plain request a
+    /// user could type and let the regular pipeline do the rest: it always
+    /// attaches a fresh screenshot, recognizes the pointing intent, and appends
+    /// the standard visual-grounding contract. No bespoke demo prompt and no
+    /// extra "avoid private content" hedging — Clippy is already running locally
+    /// on the user's own screen at their request, so the demo behaves exactly
+    /// like real use.
+    public static let demoRequestText = "Point out something interesting on my screen."
 }
