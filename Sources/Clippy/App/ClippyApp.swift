@@ -538,6 +538,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func scheduleSpokenBubbleHideAfterSpeech() {
         cancelSpokenBubbleHide()
+        guard !isOnboardingActive else {
+            hideBubbleWhenSpeechFinishes = false
+            spokenBubbleShownAt = nil
+            return
+        }
         let visibleFor = spokenBubbleShownAt.map { Date().timeIntervalSince($0) } ?? 0
         let delay = ClippyBubbleController.spokenAutoHideDelay(visibleFor: visibleFor)
         let work = DispatchWorkItem { [weak self] in
@@ -545,6 +550,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             self.spokenBubbleHide = nil
             guard self.hideBubbleWhenSpeechFinishes,
                   self.isClippyHidden == false,
+                  !self.isOnboardingActive,
                   !self.isTurnRunning,
                   !(self.tts?.isSpeaking ?? false)
             else {
@@ -2281,6 +2287,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             showClippy()
         }
         cancelOnboardingDemoWork()
+        cancelSpokenBubbleHide()
+        hideBubbleWhenSpeechFinishes = false
+        spokenBubbleShownAt = nil
         onboardingPermissionsRequested.removeAll()
         isOnboardingActive = true
         syncBubbleAnchorToClippy()
@@ -2794,6 +2803,9 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         animation: String = "Explain",
         choices: [ClippyBubbleController.Choice]
     ) {
+        cancelSpokenBubbleHide()
+        hideBubbleWhenSpeechFinishes = false
+        spokenBubbleShownAt = nil
         syncBubbleAnchorToClippy()
         playOnboardingAnimation(animation)
         chatBubble?.showChoicesTyping(prompt, choices: choices)
