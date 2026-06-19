@@ -21,6 +21,15 @@ public enum AgentStreamChunk: Sendable {
     case final(AgentTurn)
 }
 
+/// JSON Schema passed through a brain's native structured-output surface.
+public struct AgentOutputSchema: @unchecked Sendable {
+    public let jsonObject: [String: Any]
+
+    public init(jsonObject: [String: Any]) {
+        self.jsonObject = jsonObject
+    }
+}
+
 /// A local conversation brain Clippy can chat through. Clippy is the only product shell;
 /// this protocol must not grow selectable characters or per-character backends.
 public protocol AgentBrain: Actor {
@@ -31,6 +40,20 @@ public protocol AgentBrain: Actor {
     /// `send` result; local CLI adapters override it with real token streaming.
     nonisolated func stream(_ message: String) -> AsyncStream<AgentStreamChunk>
     nonisolated func stream(_ message: String, localImagePaths: [String]) -> AsyncStream<AgentStreamChunk>
+}
+
+public protocol StructuredOutputAgentBrain: AgentBrain {
+    func sendStructured(
+        _ message: String,
+        localImagePaths: [String],
+        outputSchema: AgentOutputSchema
+    ) async -> AgentTurn
+}
+
+public extension StructuredOutputAgentBrain {
+    func sendStructured(_ message: String, outputSchema: AgentOutputSchema) async -> AgentTurn {
+        await sendStructured(message, localImagePaths: [], outputSchema: outputSchema)
+    }
 }
 
 public extension AgentBrain {

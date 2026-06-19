@@ -21,7 +21,7 @@ final class ProcessBox: @unchecked Sendable {
 /// Clippy's brain, running locally through the user's installed CLI. The first
 /// turn opens a session; every later turn resumes it, so the local CLI holds the
 /// full back-and-forth history, runs the agent loop, and executes tools on this Mac.
-public actor LocalCLIConversation: AgentBrain {
+public actor LocalCLIConversation: StructuredOutputAgentBrain {
     public typealias Turn = AgentTurn
 
     private let binaryPath: String
@@ -139,16 +139,105 @@ public actor LocalCLIConversation: AgentBrain {
         process.waitUntilExit()
         hasStarted = true
 
-        guard
-            let json = try? JSONSerialization.jsonObject(with: outData) as? [String: Any],
-            let result = json["result"] as? String
-        else {
+        guard let json = try? JSONSerialization.jsonObject(with: outData) as? [String: Any],
+              let result = Self.resultText(from: json) else {
             let raw = String(data: outData, encoding: .utf8) ?? "no output"
             return Turn(text: "My local brain returned something I couldn't read.\n\(raw.prefix(200))", isError: true, costUSD: nil)
         }
         let isError = (json["is_error"] as? Bool) ?? false
         let cost = json["total_cost_usd"] as? Double
         return Turn(text: result, isError: isError, costUSD: cost)
+    }
+
+    public func sendStructured(
+        _ message: String,
+        localImagePaths _: [String],
+        outputSchema: AgentOutputSchema
+    ) async -> Turn {
+        guard let schema = Self.jsonString(from: outputSchema.jsonObject) else {
+            return Turn(text: "I couldn't prepare the structured response schema.", isError: true, costUSD: nil)
+        }
+
+        var arguments = [
+            "-p", message,
+            "--safe-mode",
+            "--output-format", "json",
+            "--json-schema", schema,
+            "--permission-mode", permissionMode,
+        ]
+        arguments.append(contentsOf: toolAndMCPArguments())
+        if let systemPrompt, !systemPrompt.isEmpty {
+            arguments.append(contentsOf: ["--append-system-prompt", systemPrompt])
+        }
+        if let model, !model.isEmpty {
+            arguments.append(contentsOf: ["--model", model])
+        }
+        if let effort, !effort.isEmpty {
+            arguments.append(contentsOf: ["--effort", effort])
+        }
+        if hasStarted {
+            arguments.append(contentsOf: ["--resume", sessionID])
+        } else {
+            arguments.append(contentsOf: ["--session-id", sessionID])
+        }
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: binaryPath)
+        process.arguments = arguments
+        if let workingDirectory {
+            process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+        }
+        var environment = ClippySecrets.environmentByAddingLocalAPIKeys()
+        environment["CLAUDE_CODE_ENTRYPOINT"] = "clippy"
+        process.environment = environment
+
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
+
+        do {
+            try process.run()
+        } catch {
+            return Turn(text: "I couldn't reach my local brain: \(error.localizedDescription)", isError: true, costUSD: nil)
+        }
+
+        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
+        _ = errPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        hasStarted = true
+
+        guard let json = try? JSONSerialization.jsonObject(with: outData) as? [String: Any],
+              let result = Self.resultText(from: json) else {
+            let raw = String(data: outData, encoding: .utf8) ?? "no output"
+            return Turn(text: "My local brain returned something I couldn't read.\n\(raw.prefix(200))", isError: true, costUSD: nil)
+        }
+        let isError = (json["is_error"] as? Bool) ?? false
+        let cost = json["total_cost_usd"] as? Double
+        return Turn(text: result, isError: isError, costUSD: cost)
+    }
+
+    private static func resultText(from json: [String: Any]) -> String? {
+        if let result = json["result"] as? String {
+            return result
+        }
+        guard let result = json["result"],
+              JSONSerialization.isValidJSONObject(result),
+              let data = try? JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]),
+              let text = String(data: data, encoding: .utf8)
+        else {
+            return nil
+        }
+        return text
+    }
+
+    private static func jsonString(from object: [String: Any]) -> String? {
+        guard JSONSerialization.isValidJSONObject(object),
+              let data = try? JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
+        else {
+            return nil
+        }
+        return String(data: data, encoding: .utf8)
     }
 
     // MARK: - Streaming (stream-json + partial text deltas)

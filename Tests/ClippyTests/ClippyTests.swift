@@ -89,6 +89,49 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(CodexConversation.resolvedExecutablePath(shim.path) == native.path)
 }
 
+@Test func localCLIConversationPassesStructuredOutputSchemaToClaude() async throws {
+    let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-claude-schema-\(UUID().uuidString).txt")
+    let scriptURL = try writeExecutableScript(
+        named: "fake-claude-schema.zsh",
+        contents: """
+        #!/bin/zsh
+        set -eu
+        log_file='\(logURL.path)'
+        for arg in "$@"; do
+          print -r -- "arg:$arg" >> "$log_file"
+        done
+        print -r -- '{"result":{"message":"Structured","options":[]},"is_error":false,"total_cost_usd":0.0}'
+        """
+    )
+    defer {
+        try? FileManager.default.removeItem(at: scriptURL.deletingLastPathComponent())
+        try? FileManager.default.removeItem(at: logURL)
+    }
+
+    let conversation = LocalCLIConversation(
+        binaryPath: scriptURL.path,
+        allowedTools: [],
+        permissionMode: "acceptEdits",
+        workingDirectory: nil,
+        systemPrompt: nil,
+        model: nil,
+        effort: nil
+    )
+
+    let turn = await conversation.sendStructured(
+        "recommend actions",
+        outputSchema: ClippyInvocationSuggestions.recommendationSchema
+    )
+
+    #expect(turn.text.contains(#""message":"Structured""#))
+
+    let logged = try String(contentsOf: logURL, encoding: .utf8)
+    #expect(logged.contains("arg:--json-schema"))
+    #expect(logged.contains(#""required":["message","options"]"#))
+    #expect(logged.contains(#""minItems":3"#))
+    #expect(logged.contains("arg:recommend actions"))
+}
+
 @Test func voiceContextNoteReflectsSpokenInputAndSpokenOutput() {
     // Plain typed, bubble-only turn — no voice note at all.
     #expect(ClippyAgentInstructions.voiceContextNote(inputMode: .text, speaking: false) == nil)
@@ -594,6 +637,63 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         logged.contains(#""path":"/tmp/clippy-screen.jpg""#)
             || logged.contains(#""path":"\/tmp\/clippy-screen.jpg""#)
     )
+}
+
+@Test func codexConversationPassesStructuredOutputSchemaToTurnStart() async throws {
+    let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-codex-schema-\(UUID().uuidString).txt")
+    let scriptURL = try writeExecutableScript(
+        named: "fake-codex-schema.zsh",
+        contents: """
+        #!/bin/zsh
+        set -eu
+        log_file='\(logURL.path)'
+        request_id() {
+          print -r -- "$1" | sed -n 's/.*"id":\\([0-9][0-9]*\\).*/\\1/p'
+        }
+        while IFS= read -r line; do
+          print -r -- "$line" >> "$log_file"
+          id="$(request_id "$line")"
+          if [[ "$line" == *'"method":"initialize"'* ]]; then
+            print -r -- '{"id":'${id}',"result":{}}'
+          elif [[ "$line" == *'thread/start'* || "$line" == *'thread\\/start'* ]]; then
+            print -r -- '{"id":'${id}',"result":{"thread":{"id":"THREAD-SCHEMA"}}}'
+          elif [[ "$line" == *'turn/start'* || "$line" == *'turn\\/start'* ]]; then
+            print -r -- '{"id":'${id}',"result":{"turn":{"id":"TURN-SCHEMA","items":[],"itemsView":"full","status":"inProgress","error":null,"startedAt":0,"completedAt":null,"durationMs":null}}}'
+            print -r -- '{"method":"item/agentMessage/delta","params":{"threadId":"THREAD-SCHEMA","turnId":"TURN-SCHEMA","itemId":"ITEM-SCHEMA","delta":"{\\"message\\":\\"Need a hand?\\",\\"options\\":[{\\"title\\":\\"Read it\\",\\"prompt\\":\\"Read this screen.\\"}]}"}}'
+            print -r -- '{"method":"item/completed","params":{"threadId":"THREAD-SCHEMA","turnId":"TURN-SCHEMA","completedAtMs":0,"item":{"type":"agentMessage","id":"ITEM-SCHEMA","text":"{\\"message\\":\\"Need a hand?\\",\\"options\\":[{\\"title\\":\\"Read it\\",\\"prompt\\":\\"Read this screen.\\"}]}","phase":null,"memoryCitation":null}}}'
+            print -r -- '{"method":"turn/completed","params":{"threadId":"THREAD-SCHEMA","turn":{"id":"TURN-SCHEMA","items":[],"itemsView":"full","status":"completed","error":null,"startedAt":0,"completedAt":0,"durationMs":1}}}'
+          fi
+        done
+        """
+    )
+    defer {
+        try? FileManager.default.removeItem(at: scriptURL.deletingLastPathComponent())
+        try? FileManager.default.removeItem(at: logURL)
+    }
+
+    let conversation = CodexConversation(
+        binaryPath: scriptURL.path,
+        model: "gpt-5.5",
+        effort: "minimal",
+        workingDirectory: nil,
+        systemPrompt: nil,
+        diagnosticsLogURL: nil
+    )
+
+    let turn = await conversation.sendStructured(
+        "recommend actions",
+        localImagePaths: ["/tmp/clippy-screen.jpg"],
+        outputSchema: ClippyInvocationSuggestions.recommendationSchema
+    )
+
+    #expect(turn.text.contains(#""message":"Need a hand?""#))
+
+    let logged = try String(contentsOf: logURL, encoding: .utf8)
+    #expect(logged.contains(#""outputSchema":{"#))
+    #expect(logged.contains(#""type":"object""#))
+    #expect(logged.contains(#""required":["message","options"]"#))
+    #expect(logged.contains(#""minItems":3"#))
+    #expect(logged.contains(#""type":"localImage""#))
 }
 
 @Test func computerUseMCPConfigPrefersExplicitCuaDriver() throws {
@@ -1404,16 +1504,39 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     #expect(prompt.contains("one short bubble line and exactly 3 useful things"))
     #expect(prompt.contains("exact intention may not be clear"))
     #expect(prompt.contains("infer why the user probably invoked Clippy right now"))
+    #expect(prompt.contains("structured recommendation response fields"))
     #expect(prompt.contains("Pick options by intent, not by app category"))
     #expect(prompt.contains("on this exact screen"))
     #expect(prompt.contains("Do not include a manual \"something else\" option"))
-    #expect(prompt.contains("Return only a JSON object"))
-    #expect(prompt.contains(#""message""#))
-    #expect(prompt.contains(#""options""#))
+    #expect(prompt.contains("Return only") == false)
+    #expect(prompt.contains("JSON") == false)
+    #expect(prompt.contains(#""message""#) == false)
+    #expect(prompt.contains(#""options""#) == false)
     #expect(prompt.contains("generic app-name headings"))
     #expect(prompt.contains("What should I do with") == false)
     #expect(prompt.contains("Explain this page") == false)
     #expect(prompt.contains("Explain error") == false)
+}
+
+@Test func doubleClickInvocationUsesStructuredSchemaForRecommendations() throws {
+    let schema = ClippyInvocationSuggestions.recommendationSchema.jsonObject
+
+    #expect(schema["type"] as? String == "object")
+    #expect(schema["additionalProperties"] as? Bool == false)
+    #expect(schema["required"] as? [String] == ["message", "options"])
+
+    let properties = try #require(schema["properties"] as? [String: Any])
+    let message = try #require(properties["message"] as? [String: Any])
+    let options = try #require(properties["options"] as? [String: Any])
+    #expect(message["maxLength"] as? Int == 140)
+    #expect(options["minItems"] as? Int == 3)
+    #expect(options["maxItems"] as? Int == 3)
+
+    let item = try #require(options["items"] as? [String: Any])
+    #expect(item["required"] as? [String] == ["title", "prompt"])
+    let itemProperties = try #require(item["properties"] as? [String: Any])
+    let title = try #require(itemProperties["title"] as? [String: Any])
+    #expect(title["maxLength"] as? Int == 24)
 }
 
 @Test func doubleClickInvocationParsesBrainRecommendations() {

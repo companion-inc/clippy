@@ -4,7 +4,7 @@ import Foundation
 /// clients use. `codex exec --json` is noninteractive automation output; the
 /// app-server protocol is where Codex emits real `item/agentMessage/delta`
 /// chunks while one thread stays alive across Clippy turns.
-public actor CodexConversation: AgentBrain {
+public actor CodexConversation: StructuredOutputAgentBrain {
     private let binaryPath: String
     private let model: String
     private let effort: String
@@ -162,8 +162,24 @@ public actor CodexConversation: AgentBrain {
     }
 
     public func send(_ message: String, localImagePaths: [String]) async -> AgentTurn {
+        await send(message, localImagePaths: localImagePaths, outputSchema: nil)
+    }
+
+    public func sendStructured(
+        _ message: String,
+        localImagePaths: [String],
+        outputSchema: AgentOutputSchema
+    ) async -> AgentTurn {
+        await send(message, localImagePaths: localImagePaths, outputSchema: outputSchema)
+    }
+
+    private func send(
+        _ message: String,
+        localImagePaths: [String],
+        outputSchema: AgentOutputSchema?
+    ) async -> AgentTurn {
         var partial = ""
-        for await chunk in stream(message, localImagePaths: localImagePaths) {
+        for await chunk in stream(message, localImagePaths: localImagePaths, outputSchema: outputSchema) {
             switch chunk {
             case .status:
                 break
@@ -184,12 +200,21 @@ public actor CodexConversation: AgentBrain {
     }
 
     public nonisolated func stream(_ message: String, localImagePaths: [String]) -> AsyncStream<AgentStreamChunk> {
+        stream(message, localImagePaths: localImagePaths, outputSchema: nil)
+    }
+
+    private nonisolated func stream(
+        _ message: String,
+        localImagePaths: [String],
+        outputSchema: AgentOutputSchema?
+    ) -> AsyncStream<AgentStreamChunk> {
         AsyncStream { continuation in
             let box = ProcessBox()
             let work = Task {
                 await self.runStreaming(
                     message,
                     localImagePaths: localImagePaths,
+                    outputSchema: outputSchema,
                     continuation: continuation,
                     process: box
                 )
@@ -204,6 +229,7 @@ public actor CodexConversation: AgentBrain {
     private func runStreaming(
         _ message: String,
         localImagePaths: [String],
+        outputSchema: AgentOutputSchema?,
         continuation: AsyncStream<AgentStreamChunk>.Continuation,
         process box: ProcessBox
     ) async {
@@ -242,7 +268,7 @@ public actor CodexConversation: AgentBrain {
                     "effort": effort,
                     "summary": "none",
                     "personality": "none",
-                    "outputSchema": NSNull(),
+                    "outputSchema": outputSchema?.jsonObject ?? NSNull(),
                 ],
                 on: connection
             )

@@ -364,21 +364,17 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         scheduleTurnProgressUpdates(wantsScreen: true, attachedScreenshot: shot != nil)
 
         currentBrainTask = Task { [weak self] in
-            var finalTurn: AgentTurn?
-            for await chunk in brain.stream(prompt, localImagePaths: localImagePaths) {
-                if Task.isCancelled { break }
-                switch chunk {
-                case .status(let status):
-                    await MainActor.run { [weak self] in
-                        guard let self, self.turnGeneration == turnID else { return }
-                        self.showTurnProgress(status)
-                    }
-                case .partial, .partialMessage:
-                    break
-                case .final(let turn):
-                    finalTurn = turn
-                }
+            let finalTurn: AgentTurn?
+            if let structuredBrain = brain as? any StructuredOutputAgentBrain {
+                finalTurn = await structuredBrain.sendStructured(
+                    prompt,
+                    localImagePaths: localImagePaths,
+                    outputSchema: ClippyInvocationSuggestions.recommendationSchema
+                )
+            } else {
+                finalTurn = await brain.send(prompt, localImagePaths: localImagePaths)
             }
+            if Task.isCancelled { return }
             await MainActor.run { [weak self] in
                 guard let self, self.turnGeneration == turnID else { return }
                 self.cancelTurnProgressUpdates()

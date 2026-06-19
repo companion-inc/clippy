@@ -22,6 +22,42 @@ public struct ClippyInvocationRecommendation: Equatable, Sendable {
 
 public enum ClippyInvocationSuggestions {
     public static let manualInputTitle = "Something else"
+    public static let recommendationSchema = AgentOutputSchema(jsonObject: [
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["message", "options"],
+        "properties": [
+            "message": [
+                "type": "string",
+                "description": "Short Clippy speech-bubble line above the options. Acknowledge the likely situation or intent; do not name the app generically.",
+                "minLength": 1,
+                "maxLength": 140,
+            ],
+            "options": [
+                "type": "array",
+                "minItems": 3,
+                "maxItems": 3,
+                "items": [
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": ["title", "prompt"],
+                    "properties": [
+                        "title": [
+                            "type": "string",
+                            "description": "Short menu label.",
+                            "minLength": 1,
+                            "maxLength": 24,
+                        ],
+                        "prompt": [
+                            "type": "string",
+                            "description": "Exact instruction Clippy should run if the user picks this option.",
+                            "minLength": 1,
+                        ],
+                    ],
+                ],
+            ],
+        ],
+    ])
 
     public static func recommendationPrompt() -> String {
         """
@@ -29,20 +65,18 @@ public enum ClippyInvocationSuggestions {
         The user double-clicked Clippy. This is an intentional invocation, but the user's exact intention may not be clear.
         Look at the current screen screenshot and desktop metadata, infer why the user probably invoked Clippy right now, then write the menu Clippy should show: one short bubble line and exactly 3 useful things Clippy could do here to help the user.
 
-        Return only a JSON object. No markdown, no prose, no visual tags.
-        The object must have:
-        - "message": the exact short Clippy speech-bubble line above the options. It should acknowledge the likely situation or intent, not name the app generically.
-        - "options": exactly 3 option objects
+        Fill the structured recommendation response fields:
+        - message: the exact short Clippy speech-bubble line above the options. It should acknowledge the likely situation or intent, not name the app generically.
+        - options: exactly 3 option objects
 
-        Each option object must have:
-        - "title": a short menu label, 24 characters or fewer
-        - "prompt": the exact instruction Clippy should run if the user picks it
+        Each option object has:
+        - title: a short menu label, 24 characters or fewer
+        - prompt: the exact instruction Clippy should run if the user picks it
 
         Pick options by intent, not by app category. Prefer the actions a user would plausibly want after summoning Clippy on this exact screen: continue stuck work, explain the confusing part, fill or draft visible content, point to the next control, summarize only when that is clearly useful, or help decide between visible choices.
         Avoid generic screen descriptions, generic app-name headings, and broad choices that could apply anywhere. Do not include a manual "something else" option; the app adds that separately. Do not include provider names or implementation details.
         For actions that send, delete, purchase, submit, or change accounts, make the prompt draft or inspect first and ask before committing.
-        Example shape:
-        {"message":"Looks like a form. Want me to help?","options":[{"title":"Fill this form","prompt":"Use the current screen to help me fill this form. Ask before submitting anything."}]}
+        Example direction: message can say "Looks like a form. Want a hand?" and an option can be "Fill this form" with a prompt that asks before submitting anything.
         """
     }
 
