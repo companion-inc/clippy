@@ -157,7 +157,7 @@ public struct ClippySpec {
             .working: ClippyAnimationBinding(animationName: "Processing", repeatsUntilStateChange: true),
             .juggling: ClippyAnimationBinding(animationName: "GetArtsy", repeatsUntilStateChange: true),
             .notification: ClippyAnimationBinding(animationName: "Alert"),
-            .attention: ClippyAnimationBinding(animationName: "Congratulate"),
+            .attention: ClippyAnimationBinding(animationName: "GetAttention"),
             .error: ClippyAnimationBinding(animationName: "Alert"),
             .sweeping: ClippyAnimationBinding(animationName: "EmptyTrash"),
             .carrying: ClippyAnimationBinding(animationName: "Save"),

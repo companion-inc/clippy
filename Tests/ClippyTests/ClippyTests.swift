@@ -1399,46 +1399,62 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     ) == .cancel)
 }
 
-@Test func doubleClickInvocationSuggestionsUseCurrentAppContext() {
-    let browserContext = DesktopContextSnapshot(
-        app: .init(name: "Chrome", bundleIdentifier: "com.google.Chrome", processIdentifier: 42),
-        window: .init(
-            title: "Application form",
-            ownerName: "Chrome",
-            ownerProcessIdentifier: 42,
-            windowIdentifier: 7,
-            bounds: CGRect(x: 0, y: 0, width: 1000, height: 700)
-        ),
-        screen: nil,
-        browser: .init(title: "Application form", url: "https://example.com/apply")
-    )
+@Test func doubleClickInvocationPromptAsksBrainForScreenSpecificOptions() {
+    let prompt = ClippyInvocationSuggestions.recommendationPrompt()
+    #expect(prompt.contains("one short bubble line and exactly 3 useful things"))
+    #expect(prompt.contains("exact intention may not be clear"))
+    #expect(prompt.contains("infer why the user probably invoked Clippy right now"))
+    #expect(prompt.contains("Pick options by intent, not by app category"))
+    #expect(prompt.contains("on this exact screen"))
+    #expect(prompt.contains("Do not include a manual \"something else\" option"))
+    #expect(prompt.contains("Return only a JSON object"))
+    #expect(prompt.contains(#""message""#))
+    #expect(prompt.contains(#""options""#))
+    #expect(prompt.contains("generic app-name headings"))
+    #expect(prompt.contains("What should I do with") == false)
+    #expect(prompt.contains("Explain this page") == false)
+    #expect(prompt.contains("Explain error") == false)
+}
 
-    #expect(ClippyInvocationSuggestions.heading(for: browserContext) == "What should I do with this page?")
-    #expect(ClippyInvocationSuggestions.suggestions(for: browserContext).map(\.title) == [
-        "Explain this page",
-        "Show next click",
-        "Help fill this",
+@Test func doubleClickInvocationParsesBrainRecommendations() {
+    let text = """
+    {
+      "message": "Looks like a form. Want a hand?",
+      "options": [
+        {
+          "title": "Fill this form",
+          "prompt": "Use the current screen to help me fill this form. Ask before submitting anything."
+        },
+        {
+          "title": "Check required fields",
+          "prompt": "Inspect the visible form and point out any required fields that are still empty."
+        },
+        {
+          "title": "Draft a short answer",
+          "prompt": "Use the current screen to draft a concise answer for the selected field."
+        }
+      ]
+    }
+    """
+
+    let recommendation = ClippyInvocationSuggestions.parseRecommendation(from: text)
+
+    #expect(recommendation?.message == "Looks like a form. Want a hand?")
+    #expect(recommendation?.suggestions.map(\.title) == [
+        "Fill this form",
+        "Check required fields",
+        "Draft a short answer",
     ])
+    #expect(recommendation?.suggestions[0].prompt == "Use the current screen to help me fill this form. Ask before submitting anything.")
+}
 
-    let terminalContext = DesktopContextSnapshot(
-        app: .init(name: "Terminal", bundleIdentifier: "com.apple.Terminal", processIdentifier: 99),
-        window: .init(
-            title: "zsh",
-            ownerName: "Terminal",
-            ownerProcessIdentifier: 99,
-            windowIdentifier: 8,
-            bounds: CGRect(x: 0, y: 0, width: 900, height: 500)
-        ),
-        screen: nil,
-        browser: nil
-    )
+@Test func doubleClickInvocationKeepsManualInputEscapeHatch() {
+    #expect(ClippyInvocationSuggestions.manualInputTitle == "Something else")
+    #expect(ClippyInvocationSuggestions.recommendationPrompt().contains(#""Something else""#) == false)
+}
 
-    #expect(ClippyInvocationSuggestions.heading(for: terminalContext) == "What should I do with Terminal?")
-    #expect(ClippyInvocationSuggestions.suggestions(for: terminalContext).map(\.title) == [
-        "Explain error",
-        "Next command",
-        "Summarize output",
-    ])
+@Test func attentionAnimationDoesNotUseCongratulateCheckMark() {
+    #expect(ClippySpec.current.animation(for: .attention)?.animationName == "GetAttention")
 }
 
 @Test func onboardingDemoSendsPlainGroundingRequestThroughNormalPipeline() {

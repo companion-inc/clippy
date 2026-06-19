@@ -313,23 +313,112 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         let context = DesktopContextSnapshot.capture()
         lastDesktopContext = context
         log("double-click invoke: \(context.logSummary)")
-        showInvocationOptions(for: context)
+        recommendInvocationOptions(for: context)
     }
 
-    private func showInvocationOptions(for context: DesktopContextSnapshot) {
+    private func recommendInvocationOptions(for context: DesktopContextSnapshot) {
         guard let chatBubble else { return }
-        let suggestions = ClippyInvocationSuggestions.suggestions(for: context)
-        let choices = suggestions.map { suggestion in
+        guard let brain = conversation else {
+            log("double-click recommendations unavailable: brain missing")
+            showInvocationFallback()
+            return
+        }
+        let screenshotScreen = context.targetScreen() ?? screenForClippy()
+        let shots = captureTurnScreenshots(primaryScreen: screenshotScreen)
+        let shot = primaryShot(in: shots, primaryScreen: screenshotScreen)
+        lastShots = shots
+        lastShot = shot
+        if shots.isEmpty == false {
+            logScreenCaptures(shots, primary: shot)
+        } else {
+            log("screen-capture: unavailable")
+        }
+        let screenshotContexts = Self.screenshotPromptContexts(for: shots, primary: shot)
+        let prompt = ClippyAgentInstructions.brainMessage(
+            text: ClippyInvocationSuggestions.recommendationPrompt(),
+            screenshotPath: shot?.path,
+            screenshotPixelWidth: Int(shot?.pixelSize.width ?? 0),
+            screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
+            screenshots: screenshotContexts,
+            inputMode: .text,
+            speaking: false,
+            desktopContext: context
+        )
+        let localImagePaths = Self.localImagePaths(for: shots)
+
+        isTurnRunning = true
+        activeUserRequest = nil
+        activeTurnUsedUserAnnotation = false
+        turnHasStreamingText = false
+        streamingReplySegmentID = nil
+        cancelSpokenBubbleHide()
+        hideBubbleWhenSpeechFinishes = false
+        spokenBubbleShownAt = nil
+        cancelTurnProgressUpdates()
+        pendingIdle?.cancel()
+        turnGeneration += 1
+        let turnID = turnGeneration
+        syncBubbleAnchorToClippy()
+        chatBubble.showThinking(shot == nil ? "Thinking" : "Reading the screen")
+        playActivityState(.thinking)
+        scheduleTurnProgressUpdates(wantsScreen: true, attachedScreenshot: shot != nil)
+
+        currentBrainTask = Task { [weak self] in
+            var finalTurn: AgentTurn?
+            for await chunk in brain.stream(prompt, localImagePaths: localImagePaths) {
+                if Task.isCancelled { break }
+                switch chunk {
+                case .status(let status):
+                    await MainActor.run { [weak self] in
+                        guard let self, self.turnGeneration == turnID else { return }
+                        self.showTurnProgress(status)
+                    }
+                case .partial, .partialMessage:
+                    break
+                case .final(let turn):
+                    finalTurn = turn
+                }
+            }
+            await MainActor.run { [weak self] in
+                guard let self, self.turnGeneration == turnID else { return }
+                self.cancelTurnProgressUpdates()
+                self.currentBrainTask = nil
+                self.isTurnRunning = false
+                guard let finalTurn, finalTurn.isError == false else {
+                    let message = finalTurn?.text.prefix(160) ?? "no response"
+                    self.log("double-click recommendations failed: \(message)")
+                    self.showInvocationFallback()
+                    return
+                }
+                guard let recommendation = ClippyInvocationSuggestions.parseRecommendation(from: finalTurn.text) else {
+                    self.log("double-click recommendations empty: \(finalTurn.text.prefix(160))")
+                    self.showInvocationFallback()
+                    return
+                }
+                self.log("double-click recommendations: \(recommendation.suggestions.map(\.title).joined(separator: ", "))")
+                self.showInvocationOptions(recommendation)
+            }
+        }
+    }
+
+    private func showInvocationOptions(_ recommendation: ClippyInvocationRecommendation) {
+        guard let chatBubble else { return }
+        let choices = recommendation.suggestions.map { suggestion in
             ClippyBubbleController.Choice(title: suggestion.title) { [weak self] in
                 self?.runInvocationSuggestion(suggestion)
             }
         } + [
-            ClippyBubbleController.Choice(title: "Ask something else") { [weak self] in
+            ClippyBubbleController.Choice(title: ClippyInvocationSuggestions.manualInputTitle) { [weak self] in
                 self?.showTextInputBubble()
             },
         ]
-        playActivityState(.attention)
-        chatBubble.showChoicesTyping(ClippyInvocationSuggestions.heading(for: context), choices: choices)
+        _ = playOnce("GetAttention")
+        chatBubble.showChoicesTyping(recommendation.message, choices: choices)
+    }
+
+    private func showInvocationFallback() {
+        _ = playOnce("GetAttention")
+        showTextInputBubble()
     }
 
     private func showBusyInvocationOptions() {
@@ -337,7 +426,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             chatBubble?.showReplyForReading("I'm working on it.")
             return
         }
-        playActivityState(.attention)
+        _ = playOnce("GetAttention")
         chatBubble?.showChoicesTyping("I'm still working. What now?", choices: [
             .init(title: "Stop and ask") { [weak self] in
                 self?.interruptSpeechAndResponse()
