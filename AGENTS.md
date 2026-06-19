@@ -8,6 +8,7 @@
 ## Screen Control
 
 - GUI automation is acceptable for live app verification until the user sets a screen-control boundary. After the user says not to control the screen or GUI, continue with source, terminal commands, tests, local files, and logs only; do not send clicks, keys, menu navigation, or screenshots until separately reauthorized.
+- For fixes to behavior the user is experiencing in the running Clippy app, finish by rebuilding or packaging as needed, relaunching the live Clippy process, and reporting the verified process path/PID; tests alone do not put the fix in the user's app.
 
 ## Wake Word
 
