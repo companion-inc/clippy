@@ -1,3 +1,5 @@
+@AGENTS.md
+
 # Clippy Project Conventions
 
 ## Response Format: Speech And Action Tags
