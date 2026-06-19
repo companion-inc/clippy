@@ -1284,6 +1284,8 @@ private func writeExecutableScript(named name: String, contents: String) throws 
         .init(title: "Do it") { picked = true },
     ])
 
+    #expect(bubble.debugChoiceShortcutLabels == ["1"])
+
     let letterEvent = NSEvent.keyEvent(
         with: .keyDown,
         location: .zero,
@@ -1315,6 +1317,20 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     )
     #expect(bubble.receiveChoiceKey(numberEvent!) == true)
     #expect(picked)
+}
+
+@Test @MainActor func clippyBubbleShowsChoiceShortcutNumbersThroughNine() {
+    let bubble = ClippyBubbleController()
+    defer { bubble.hide() }
+    let choices = (1...10).map { index in
+        ClippyBubbleController.Choice(title: "Option \(index)") {}
+    }
+
+    bubble.showChoices("Pick one.", choices: choices)
+
+    #expect(bubble.debugChoiceShortcutLabels == [
+        "1", "2", "3", "4", "5", "6", "7", "8", "9", nil,
+    ])
 }
 
 @Test @MainActor func clippyBubbleDoesNotOpenInputWhileChoicePromptIsTyping() {

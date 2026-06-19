@@ -68,14 +68,16 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
 
     private final class BalloonChoiceButton: NSView {
         var title: String { didSet { needsDisplay = true } }
+        var shortcutLabel: String? { didSet { needsDisplay = true } }
         var onClick: (() -> Void)?
         var isKeyboardFocused = false { didSet { needsDisplay = true } }
         private var pressed = false
 
         override var isFlipped: Bool { true }
 
-        init(title: String) {
+        init(title: String, shortcutLabel: String?) {
             self.title = title
+            self.shortcutLabel = shortcutLabel
             super.init(frame: NSRect(x: 0, y: 0, width: 180, height: 18))
         }
 
@@ -95,21 +97,45 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             NSBezierPath(ovalIn: bulletRect.insetBy(dx: 2, dy: 2)).fill()
 
             let paragraph = NSMutableParagraphStyle()
-            paragraph.lineBreakMode = .byWordWrapping
+            paragraph.lineBreakMode = .byTruncatingTail
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: RetroFont.ui(11),
                 .foregroundColor: RetroPalette.text,
                 .paragraphStyle: paragraph,
             ]
+            let keycapWidth: CGFloat = shortcutLabel == nil ? 0 : 16
+            let keycapGap: CGFloat = shortcutLabel == nil ? 0 : 6
             let label = title as NSString
             let textSize = label.size(withAttributes: attrs)
             let textRect = NSRect(
                 x: 16 + offset,
                 y: max(0, (bounds.height - textSize.height) / 2) + offset,
-                width: bounds.width - 16,
+                width: max(0, bounds.width - 16 - keycapWidth - keycapGap),
                 height: textSize.height
             )
             label.draw(in: textRect, withAttributes: attrs)
+
+            if let shortcutLabel {
+                let keyRect = NSRect(x: bounds.width - keycapWidth - 3 + offset, y: 2 + offset, width: keycapWidth - 1, height: 13)
+                RetroPalette.face.setFill()
+                NSBezierPath(rect: keyRect).fill()
+                RetroPalette.frame.setStroke()
+                let keyOutline = NSBezierPath(rect: keyRect)
+                keyOutline.lineWidth = 1
+                keyOutline.stroke()
+
+                let keyParagraph = NSMutableParagraphStyle()
+                keyParagraph.alignment = .center
+                let keyAttrs: [NSAttributedString.Key: Any] = [
+                    .font: RetroFont.ui(10),
+                    .foregroundColor: RetroPalette.text,
+                    .paragraphStyle: keyParagraph,
+                ]
+                (shortcutLabel as NSString).draw(
+                    in: keyRect.insetBy(dx: 1, dy: 1),
+                    withAttributes: keyAttrs
+                )
+            }
 
             if isKeyboardFocused {
                 RetroPalette.frame.setStroke()
@@ -252,6 +278,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     public var isPresentingChoices: Bool { window.isVisible && (mode == .choices || choiceTypingActive) }
     var debugInputText: String { inputTextView.string }
     var debugSelectedRange: NSRange { inputTextView.selectedRange() }
+    var debugChoiceShortcutLabels: [String?] { choiceButtons.map(\.shortcutLabel) }
 
     public func setAnchor(_ frame: CGRect, repositionVisible: Bool = true) {
         anchorFrame = frame
@@ -487,8 +514,8 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         choiceTypingActive = false
         messageText = prompt
         mode = .choices
-        choiceButtons = choices.map { choice in
-            let button = BalloonChoiceButton(title: choice.title)
+        choiceButtons = choices.enumerated().map { index, choice in
+            let button = BalloonChoiceButton(title: choice.title, shortcutLabel: Self.shortcutLabel(forChoiceAt: index))
             button.onClick = choice.action
             root.addSubview(button)
             return button
@@ -717,7 +744,9 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             text = messageText.isEmpty ? "…" : messageText
             fontSize = spec.balloon.messageFontSize
         case .choices:
-            text = ([messageText] + choiceButtons.map(\.title)).joined(separator: "\n")
+            text = ([messageText] + choiceButtons.map { button in
+                button.shortcutLabel == nil ? button.title : "\(button.title)    \(button.shortcutLabel!)"
+            }).joined(separator: "\n")
             fontSize = spec.balloon.messageFontSize
         }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
@@ -853,6 +882,12 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         choiceButtons[index].onClick?()
     }
 
+    private static func shortcutLabel(forChoiceAt index: Int) -> String? {
+        guard index >= 0, index < 9 else {
+            return nil
+        }
+        return String(index + 1)
+    }
 }
 
 enum ClippyChoiceKeyboardAction: Equatable {
