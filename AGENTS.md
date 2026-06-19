@@ -12,3 +12,4 @@
 ## Wake Word
 
 - Do not describe a Hey Clippy wake model as production unless it has broad provider or recorded-voice coverage, adversarial negatives, STT label filtering, a separate holdout/eval, a SoundAnalysis load check, and offline positive/negative classification proof. Otherwise call it a starter/prototype model and keep improving it.
+- For live wake-word work, process-alive checks, visible windows, and passing tests prove only launch/build health. Report Hey Clippy as working only after logs or a live repro show a real wake acceptance followed by command capture; otherwise say the live wake path is still unverified.
