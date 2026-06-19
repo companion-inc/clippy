@@ -2653,30 +2653,16 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         chatBubble?.showThinking(ClippyOnboardingDemo.guidedWorkingText)
         playActivityState(.working)
 
-        do {
-            let url = try ClippyOnboardingDemo.preparePage()
-            log("onboarding-demo: prepared \(url.path)")
-            NSWorkspace.shared.open(url)
-            let displayName = ClippyOnboardingDemo.currentDisplayName()
-            let prompt = ClippyOnboardingDemo.taskPrompt(displayName: displayName, pageURL: url)
-            scheduleOnboardingDemoWork(after: 2.0) { [weak self] in
-                guard let self, self.isOnboardingActive else { return }
-                self.log("onboarding-demo: sending prompt for \(displayName)")
-                self.playOnboardingAnimation("Explain")
-                self.sendMessage(
-                    prompt,
-                    initialThinkingStatus: "Trying the form",
-                    visibleUserLine: ClippyOnboardingDemo.visibleTaskLine
-                )
-                self.showOnboardingControlsWhenDemoSettles(createdPageURL: url)
-            }
-        } catch {
-            log("onboarding-demo error: \(error.localizedDescription)")
-            playActivityState(.error)
-            chatBubble?.showReplyForReading("I couldn't open the demo page, but the rest is ready.")
-            scheduleOnboardingDemoWork(after: 2.0) { [weak self] in
-                self?.showOnboardingControlsStep(createdPageURL: nil)
-            }
+        scheduleOnboardingDemoWork(after: 0.8) { [weak self] in
+            guard let self, self.isOnboardingActive else { return }
+            self.log("onboarding-demo: current-screen prompt")
+            self.playOnboardingAnimation("Explain")
+            self.sendMessage(
+                ClippyOnboardingDemo.taskPrompt(),
+                initialThinkingStatus: ClippyOnboardingDemo.guidedWorkingText,
+                visibleUserLine: ClippyOnboardingDemo.visibleTaskLine
+            )
+            self.showOnboardingControlsWhenDemoSettles(createdPageURL: nil)
         }
     }
 
@@ -2719,9 +2705,6 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
             setUpBrain()
         }
         playOnboardingAnimation("Congratulate")
-        if let createdPageURL {
-            log("onboarding-demo: page \(createdPageURL.path)")
-        }
         chatBubble?.showReplyForReading("All set. Press Control+Space to type, or hold Control+Option to talk.")
     }
 
