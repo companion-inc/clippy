@@ -1437,10 +1437,11 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
 
     private func enqueueSpoken(_ chunk: String, _ tts: XAITTS) {
         let clean = GroundingParser.strip(chunk)
+        let speakable = ClippyRichReply.parse(clean).text
         if let friendly = ClippyUserFacingError.replacement(for: clean, isError: false) {
             tts.enqueue(friendly)
-        } else if !clean.isEmpty {
-            tts.enqueue(clean)
+        } else if !speakable.isEmpty {
+            tts.enqueue(speakable)
         }
     }
 
@@ -1493,7 +1494,7 @@ final class ClippyApp: NSObject, NSApplicationDelegate {
         if !display.isEmpty {
             turnHasStreamingText = true
             cancelTurnProgressUpdates()
-            chatBubble?.showReply(display)
+            chatBubble?.showReply(display, allowsRichMedia: false)
         }
     }
 

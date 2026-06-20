@@ -639,6 +639,50 @@ private func writeExecutableScript(named name: String, contents: String) throws 
     )
 }
 
+@Test func richReplyParsesMarkdownImageCardsAndSourceLinks() {
+    let reply = ClippyRichReply.parse("""
+    Here are two visual references.
+    ![Mars rover wheel](https://images.example.test/rover-wheel.jpg)
+    Source: [NASA image page](https://www.nasa.gov/rover-wheel)
+
+    Read the background from [JPL](https://www.jpl.nasa.gov/missions).
+    """)
+
+    #expect(reply.text == "Here are two visual references.\n\nRead the background from JPL.")
+    #expect(reply.imageCards == [
+        .init(
+            caption: "Mars rover wheel",
+            imageURLString: "https://images.example.test/rover-wheel.jpg",
+            sourceTitle: "NASA image page",
+            sourceURLString: "https://www.nasa.gov/rover-wheel"
+        ),
+    ])
+    #expect(reply.citations == [
+        .init(title: "NASA image page", urlString: "https://www.nasa.gov/rover-wheel"),
+        .init(title: "JPL", urlString: "https://www.jpl.nasa.gov/missions"),
+    ])
+}
+
+@Test @MainActor func clippyBubbleCreatesImageCardsForRichReply() {
+    let bubble = ClippyBubbleController()
+    defer { bubble.hide() }
+
+    bubble.showReply("""
+    Look at this reference.
+    ![Local sample](file:///tmp/clippy-rich-card.png)
+    Source: [Local source](file:///tmp/clippy-rich-card-source)
+    """)
+
+    #expect(bubble.debugRichImageCardCount == 1)
+    #expect(bubble.debugCitationText == "")
+}
+
+@Test func clippyAgentInstructionsExposeRichImageCardContract() {
+    #expect(ClippyAgentInstructions.systemPrompt.contains("Rich image answers"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("![short caption](direct-image-url-or-local-file-path)"))
+    #expect(ClippyAgentInstructions.systemPrompt.contains("Source: [Site name](page-url)"))
+}
+
 @Test func codexConversationPassesStructuredOutputSchemaToTurnStart() async throws {
     let logURL = FileManager.default.temporaryDirectory.appendingPathComponent("clippy-codex-schema-\(UUID().uuidString).txt")
     let scriptURL = try writeExecutableScript(

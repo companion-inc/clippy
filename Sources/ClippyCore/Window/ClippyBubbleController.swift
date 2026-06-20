@@ -171,6 +171,146 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         }
     }
 
+    private final class RichImageCardView: NSView {
+        private let imageView = NSImageView()
+        private let captionLabel = NSTextField(labelWithString: "")
+        private let sourceLabel = NSTextField(labelWithString: "")
+        private var imageTask: URLSessionDataTask?
+        private var openURL: URL?
+        private var representedImageURLString = ""
+        private static let inset: CGFloat = 5
+        private static let imageHeight: CGFloat = 94
+        private static let labelHeight: CGFloat = 15
+
+        override var isFlipped: Bool { true }
+
+        override init(frame frameRect: NSRect) {
+            super.init(frame: frameRect)
+            wantsLayer = true
+
+            imageView.imageScaling = .scaleProportionallyUpOrDown
+            imageView.wantsLayer = true
+            imageView.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.72).cgColor
+            addSubview(imageView)
+
+            captionLabel.font = RetroFont.ui(10, bold: true)
+            captionLabel.textColor = RetroPalette.text
+            captionLabel.lineBreakMode = .byTruncatingTail
+            addSubview(captionLabel)
+
+            sourceLabel.font = RetroFont.ui(9)
+            sourceLabel.textColor = RetroPalette.grayText
+            sourceLabel.lineBreakMode = .byTruncatingTail
+            addSubview(sourceLabel)
+        }
+
+        @available(*, unavailable)
+        required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
+
+        func configure(_ card: ClippyRichReply.ImageCard) {
+            imageTask?.cancel()
+            imageTask = nil
+            representedImageURLString = card.imageURLString
+            imageView.image = nil
+            captionLabel.stringValue = card.caption.isEmpty ? "Image" : card.caption
+
+            let sourceURL = card.sourceURLString.flatMap(Self.url(from:))
+            let imageURL = Self.url(from: card.imageURLString)
+            openURL = sourceURL ?? imageURL
+            let sourceTitle = card.sourceTitle
+                ?? sourceURL.flatMap(Self.hostTitle(from:))
+                ?? imageURL.flatMap(Self.hostTitle(from:))
+                ?? "Image source"
+            sourceLabel.stringValue = "Source: \(sourceTitle)"
+            sourceLabel.toolTip = (sourceURL ?? imageURL)?.absoluteString
+            toolTip = sourceLabel.toolTip
+            loadImage(from: card.imageURLString)
+        }
+
+        func preferredHeight(width _: CGFloat) -> CGFloat {
+            Self.inset * 2 + Self.imageHeight + Self.labelHeight * 2 + 3
+        }
+
+        override func layout() {
+            super.layout()
+            let inset = Self.inset
+            let imageWidth = max(1, bounds.width - inset * 2)
+            imageView.frame = CGRect(x: inset, y: inset, width: imageWidth, height: Self.imageHeight)
+            captionLabel.frame = CGRect(
+                x: inset,
+                y: imageView.frame.maxY + 3,
+                width: imageWidth,
+                height: Self.labelHeight
+            )
+            sourceLabel.frame = CGRect(
+                x: inset,
+                y: captionLabel.frame.maxY,
+                width: imageWidth,
+                height: Self.labelHeight
+            )
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            super.draw(dirtyRect)
+            RetroPalette.fieldBackground.setFill()
+            bounds.fill()
+            RetroBezel.draw(.field, in: bounds)
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            guard let openURL else { return }
+            NSWorkspace.shared.open(openURL)
+        }
+
+        func cancelLoad() {
+            imageTask?.cancel()
+            imageTask = nil
+        }
+
+        private func loadImage(from value: String) {
+            guard let url = Self.url(from: value) else {
+                sourceLabel.stringValue = "Image unavailable"
+                return
+            }
+            if url.isFileURL {
+                imageView.image = NSImage(contentsOf: url)
+                if imageView.image == nil {
+                    sourceLabel.stringValue = "Image unavailable"
+                }
+                return
+            }
+            let expected = representedImageURLString
+            imageTask = URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
+                guard let data,
+                      let image = NSImage(data: data) else {
+                    return
+                }
+                DispatchQueue.main.async {
+                    guard let self,
+                          self.representedImageURLString == expected else {
+                        return
+                    }
+                    self.imageView.image = image
+                }
+            }
+            imageTask?.resume()
+        }
+
+        private static func url(from value: String) -> URL? {
+            if value.hasPrefix("/") {
+                return URL(fileURLWithPath: value)
+            }
+            return URL(string: value)
+        }
+
+        private static func hostTitle(from url: URL) -> String? {
+            guard let host = url.host, host.isEmpty == false else {
+                return url.isFileURL ? "Local image" : nil
+            }
+            return host.replacingOccurrences(of: "www.", with: "")
+        }
+    }
+
     private enum Mode { case message, input, choices }
     private enum InputEditingCommand { case selectAll, copy, cut, paste }
 
@@ -183,14 +323,17 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private let root = NSView()
     private let balloonLayer: CAShapeLayer
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
+    private let citationsLabel = NSTextField(wrappingLabelWithString: "")
     private let inputScrollView = NSScrollView()
     private let inputTextView = InputTextView(frame: .zero)
     private let inputPlaceholderView = NSTextView(frame: .zero)
     private var choiceButtons: [BalloonChoiceButton] = []
+    private var imageCardViews: [RichImageCardView] = []
     private var selectedChoiceIndex: Int?
 
     private var mode: Mode = .message
     private var messageText = ""
+    private var richReply = ClippyRichReply(text: "")
     private var onSend: ((String) -> Void)?
     private var anchorFrame: CGRect = .zero
     private weak var anchorWindow: NSWindow?
@@ -227,6 +370,12 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         messageLabel.textColor = spec.balloon.textColor
         messageLabel.maximumNumberOfLines = 0
         root.addSubview(messageLabel)
+
+        citationsLabel.font = uiFont(10)
+        citationsLabel.textColor = spec.balloon.mutedTextColor
+        citationsLabel.maximumNumberOfLines = 2
+        citationsLabel.isHidden = true
+        root.addSubview(citationsLabel)
 
         configureInputTextView(inputTextView, textColor: spec.balloon.textColor)
         inputTextView.delegate = self
@@ -280,6 +429,8 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     var debugInputText: String { inputTextView.string }
     var debugSelectedRange: NSRange { inputTextView.selectedRange() }
     var debugChoiceShortcutLabels: [String?] { choiceButtons.map(\.shortcutLabel) }
+    var debugRichImageCardCount: Int { imageCardViews.count }
+    var debugCitationText: String { citationsLabel.stringValue }
 
     public func setAnchor(_ frame: CGRect, repositionVisible: Bool = true) {
         anchorFrame = frame
@@ -319,6 +470,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         stopTyping()
         stopThinking()
         clearChoices()
+        clearRichReply()
         messageText = text
         mode = .message
         relayout()
@@ -487,16 +639,25 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     }
 
     /// Reply arrived — show just the reply.
-    public func showReply(_ text: String, autoHide: TimeInterval? = nil) {
+    public func showReply(_ text: String, autoHide: TimeInterval? = nil, allowsRichMedia: Bool = true) {
         stopTyping()
         stopThinking()
         clearChoices()
-        messageText = text
+        let shouldStayVisible: Bool
+        if allowsRichMedia {
+            let reply = ClippyRichReply.parse(text)
+            shouldStayVisible = reply.hasRichMedia
+            applyRichReply(reply)
+        } else {
+            shouldStayVisible = false
+            clearRichReply()
+            messageText = text
+        }
         mode = .message
         relayout()
         attachToAnchorWindow()
         window.orderFrontRegardless()
-        scheduleAutoHide(autoHide)
+        scheduleAutoHide(shouldStayVisible ? nil : autoHide)
     }
 
     public func showReplyForReading(_ text: String) {
@@ -504,7 +665,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     }
 
     public func showStatus(_ text: String) {
-        showReply(text)
+        showReply(text, allowsRichMedia: false)
     }
 
     public func showChoices(_ prompt: String, choices: [Choice]) {
@@ -512,6 +673,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         stopThinking()
         cancelAutoHide()
         clearChoices()
+        clearRichReply()
         choiceTypingActive = false
         messageText = prompt
         mode = .choices
@@ -533,6 +695,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         stopThinking()
         cancelAutoHide()
         clearChoices()
+        clearRichReply()
         choiceTypingActive = true
         messageText = ""
         mode = .message
@@ -616,6 +779,7 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     }
 
     private func renderThinkingFrame() {
+        clearRichReply()
         messageText = thinkingStatus + thinkingSuffixes[thinkingStep % thinkingSuffixes.count]
         mode = .message
         relayout()
@@ -633,13 +797,61 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         choiceTypingActive = false
     }
 
+    private func applyRichReply(_ reply: ClippyRichReply) {
+        clearRichReply()
+        richReply = reply
+        messageText = reply.text
+        citationsLabel.stringValue = citationSummary(for: reply)
+        citationsLabel.toolTip = citationTooltip(for: reply)
+        for card in reply.imageCards.prefix(4) {
+            let cardView = RichImageCardView()
+            cardView.configure(card)
+            imageCardViews.append(cardView)
+            root.addSubview(cardView)
+        }
+    }
+
+    private func clearRichReply() {
+        richReply = ClippyRichReply(text: "")
+        citationsLabel.stringValue = ""
+        citationsLabel.toolTip = nil
+        citationsLabel.isHidden = true
+        for view in imageCardViews {
+            view.cancelLoad()
+            view.removeFromSuperview()
+        }
+        imageCardViews = []
+    }
+
+    private func citationSummary(for reply: ClippyRichReply) -> String {
+        let imageSourceURLs = Set(reply.imageCards.compactMap(\.sourceURLString))
+        let visible = reply.citations
+            .filter { imageSourceURLs.contains($0.urlString) == false }
+            .prefix(3)
+        guard visible.isEmpty == false else { return "" }
+        return "Sources: " + visible.map(\.title).joined(separator: ", ")
+    }
+
+    private func citationTooltip(for reply: ClippyRichReply) -> String? {
+        let imageSourceURLs = Set(reply.imageCards.compactMap(\.sourceURLString))
+        let urls = reply.citations
+            .filter { imageSourceURLs.contains($0.urlString) == false }
+            .map(\.urlString)
+        return urls.isEmpty ? nil : urls.joined(separator: "\n")
+    }
+
     // MARK: - Layout (one active region; bubble grows to fit)
 
     private func relayout() {
         let contentWidth = measuredContentWidth()
         let shapeWidth = contentWidth + spec.balloon.pad * 2
 
-        messageLabel.isHidden = mode == .input
+        let messageHasText = messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        let hasImageCards = mode == .message && imageCardViews.isEmpty == false
+        let hasCitationText = mode == .message && citationsLabel.stringValue.isEmpty == false
+        messageLabel.isHidden = mode == .input || (hasImageCards && messageHasText == false)
+        citationsLabel.isHidden = hasCitationText == false
+        imageCardViews.forEach { $0.isHidden = mode != .message }
         inputScrollView.isHidden = mode != .input
         inputPlaceholderView.isHidden = mode != .input || !inputTextView.string.isEmpty
         choiceButtons.forEach { $0.isHidden = mode != .choices }
@@ -649,7 +861,11 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
         case .input:
             contentHeight = measuredInputHeight(width: contentWidth)
         case .message:
-            contentHeight = measuredLabelHeight(messageText.isEmpty ? "…" : messageText, width: contentWidth)
+            if hasImageCards || hasCitationText {
+                contentHeight = richMessageHeight(width: contentWidth, hasText: messageHasText)
+            } else {
+                contentHeight = measuredLabelHeight(messageText.isEmpty ? "…" : messageText, width: contentWidth)
+            }
         case .choices:
             let promptHeight = measuredLabelHeight(messageText.isEmpty ? "…" : messageText, width: contentWidth)
             let buttonsHeight = choiceButtons.isEmpty ? 0 : CGFloat(choiceButtons.count) * 20 - 2
@@ -685,8 +901,12 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             inputTextView.frame = CGRect(origin: .zero, size: contentRect.size)
             inputTextView.textContainer?.containerSize = NSSize(width: contentWidth, height: .greatestFiniteMagnitude)
         case .message:
-            messageLabel.frame = contentRect
-            messageLabel.stringValue = messageText
+            if hasImageCards || hasCitationText {
+                layoutRichMessage(in: contentRect, hasText: messageHasText)
+            } else {
+                messageLabel.frame = contentRect
+                messageLabel.stringValue = messageText
+            }
         case .choices:
             let promptHeight = measuredLabelHeight(messageText.isEmpty ? "…" : messageText, width: contentWidth)
             messageLabel.frame = CGRect(
@@ -737,26 +957,30 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
     private func measuredContentWidth() -> CGFloat {
         let text: String
         let fontSize: CGFloat
+        let maxWidth: CGFloat
         switch mode {
         case .input:
             text = inputTextView.string.isEmpty ? inputPlaceholderView.string : inputTextView.string
             fontSize = spec.balloon.inputFontSize
+            maxWidth = spec.balloon.maxWidth
         case .message:
             text = messageText.isEmpty ? "…" : messageText
             fontSize = spec.balloon.messageFontSize
+            maxWidth = imageCardViews.isEmpty ? spec.balloon.maxWidth : max(spec.balloon.maxWidth, 350)
         case .choices:
             text = ([messageText] + choiceButtons.map { button in
                 button.shortcutLabel == nil ? button.title : "\(button.title)    \(button.shortcutLabel!)"
             }).joined(separator: "\n")
             fontSize = spec.balloon.messageFontSize
+            maxWidth = spec.balloon.maxWidth
         }
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
         let longest = lines.map { String($0) }.max { $0.count < $1.count } ?? text
         let attributed = NSAttributedString(string: longest, attributes: [.font: uiFont(fontSize)])
         let width = ceil(attributed.size().width) + 4
         return min(
-            spec.balloon.maxWidth - spec.balloon.pad * 2,
-            max(spec.balloon.minWidth - spec.balloon.pad * 2, width)
+            maxWidth - spec.balloon.pad * 2,
+            max(spec.balloon.minWidth - spec.balloon.pad * 2, width, imageCardViews.isEmpty ? 0 : 270)
         )
     }
 
@@ -767,6 +991,71 @@ public final class ClippyBubbleController: NSObject, NSTextViewDelegate, NSWindo
             options: [.usesLineFragmentOrigin, .usesFontLeading]
         )
         return ceil(rect.height) + 2
+    }
+
+    private func richMessageHeight(width: CGFloat, hasText: Bool) -> CGFloat {
+        let textHeight = hasText ? measuredLabelHeight(messageText, width: width) : 0
+        let imageHeight = imageCardViews.reduce(CGFloat(0)) { total, view in
+            total + view.preferredHeight(width: width)
+        }
+        let imageGaps = imageCardViews.isEmpty ? 0 : CGFloat(max(0, imageCardViews.count - 1)) * 6
+        let citationHeight = citationsLabel.stringValue.isEmpty ? 0 : measuredCitationHeight(width: width)
+        let textGap = hasText && (imageCardViews.isEmpty == false || citationHeight > 0) ? CGFloat(7) : 0
+        let citationGap = citationHeight > 0 && imageCardViews.isEmpty == false ? CGFloat(5) : 0
+        return max(1, textHeight + textGap + imageHeight + imageGaps + citationGap + citationHeight)
+    }
+
+    private func measuredCitationHeight(width: CGFloat) -> CGFloat {
+        let attributed = NSAttributedString(string: citationsLabel.stringValue, attributes: [.font: uiFont(10)])
+        let rect = attributed.boundingRect(
+            with: NSSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        return ceil(rect.height) + 1
+    }
+
+    private func layoutRichMessage(in contentRect: CGRect, hasText: Bool) {
+        var y = contentRect.maxY
+        if hasText {
+            let textHeight = measuredLabelHeight(messageText, width: contentRect.width)
+            y -= textHeight
+            messageLabel.frame = CGRect(
+                x: contentRect.minX,
+                y: y,
+                width: contentRect.width,
+                height: textHeight
+            )
+            messageLabel.stringValue = messageText
+            y -= 7
+        } else {
+            messageLabel.stringValue = ""
+        }
+
+        for view in imageCardViews {
+            let height = view.preferredHeight(width: contentRect.width)
+            y -= height
+            view.frame = CGRect(
+                x: contentRect.minX,
+                y: y,
+                width: contentRect.width,
+                height: height
+            )
+            y -= 6
+        }
+
+        if citationsLabel.stringValue.isEmpty == false {
+            if imageCardViews.isEmpty == false {
+                y += 1
+            }
+            let height = measuredCitationHeight(width: contentRect.width)
+            y -= height
+            citationsLabel.frame = CGRect(
+                x: contentRect.minX,
+                y: y,
+                width: contentRect.width,
+                height: height
+            )
+        }
     }
 
     private func clearChoices() {
