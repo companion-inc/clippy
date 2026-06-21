@@ -3,34 +3,39 @@
 import PackageDescription
 
 let package = Package(
-    name: "Clippy",
+    name: "Sidekick",
     platforms: [.macOS(.v13)],
     products: [
-        .executable(name: "Clippy", targets: ["Clippy"]),
-        .executable(name: "ClippyMCP", targets: ["ClippyMCP"]),
-        .library(name: "ClippyCore", targets: ["ClippyCore"]),
+        .executable(name: "Sidekick", targets: ["Sidekick"]),
+        .executable(name: "SidekickMCP", targets: ["SidekickMCP"]),
+        .executable(name: "SidekickRecordReplayMCP", targets: ["SidekickRecordReplayMCP"]),
+        .library(name: "SidekickCore", targets: ["SidekickCore"]),
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.3"),
     ],
     targets: [
         .target(
-            name: "ClippyCore"
+            name: "SidekickCore"
         ),
         .executableTarget(
-            name: "Clippy",
+            name: "Sidekick",
             dependencies: [
-                "ClippyCore",
+                "SidekickCore",
                 .product(name: "Sparkle", package: "Sparkle"),
             ]
         ),
         .executableTarget(
-            name: "ClippyMCP",
-            dependencies: ["ClippyCore"]
+            name: "SidekickMCP",
+            dependencies: ["SidekickCore"]
+        ),
+        .executableTarget(
+            name: "SidekickRecordReplayMCP",
+            dependencies: ["SidekickCore"]
         ),
         .testTarget(
-            name: "ClippyTests",
-            dependencies: ["ClippyCore"]
+            name: "SidekickTests",
+            dependencies: ["SidekickCore"]
         ),
     ]
 )

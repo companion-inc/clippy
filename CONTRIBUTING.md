@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve Clippy.
+Thanks for helping improve Sidekick.
 
 ## Start Here
 
@@ -24,8 +24,8 @@ swift build
 For a packaged app:
 
 ```sh
-Scripts/package-clippy-app.sh release
-open -n .build/release/Clippy.app
+Scripts/package-sidekick-app.sh release
+open -n .build/release/Sidekick.app
 ```
 
 ## Pull Requests
@@ -39,6 +39,6 @@ open -n .build/release/Clippy.app
 
 ## Public Runtime Boundary
 
-Clippy is a local-first desktop app, not a hosted assistant service. Keep secrets
+Sidekick is a local-first desktop app, not a hosted assistant service. Keep secrets
 on the user's machine, keep approvals explicit, and make any desktop action
 traceable to a user-visible request.

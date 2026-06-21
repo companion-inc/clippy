@@ -1,7 +1,9 @@
 {
-  "sourceRoot": "Research/sources/repos/pithings-clippy/src/agents/clippy",
-  "outputRoot": "Resources/Characters/Clippy",
-  "generatedAt": "2026-06-12T18:33:15.038Z",
+  "id": "clippy",
+  "displayName": "Clippy",
+  "sourceRoot": "/Users/advaitpaliwal/Companion/Code/clippy/Research/sources/repos/pithings-clippy/src/agents/clippy",
+  "outputRoot": "/Users/advaitpaliwal/Companion/Code/clippy/Resources/Characters/Clippy",
+  "generatedAt": "2026-06-21T03:27:08.743Z",
   "frameSize": [
     124,
     93

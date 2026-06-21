@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: clippy-ci-${{ github.ref }}
+  group: sidekick-ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -42,7 +42,7 @@ jobs:
       - name: Download Cua driver
         run: |
           cua_driver_path="$(Scripts/download-cua-driver.sh .build/cua-driver-release | tail -n 1)"
-          echo "CLIPPY_CUA_DRIVER=$PWD/$cua_driver_path" >> "$GITHUB_ENV"
+          echo "SIDEKICK_CUA_DRIVER=$PWD/$cua_driver_path" >> "$GITHUB_ENV"
 
       - name: Configure signing
         env:
@@ -52,7 +52,7 @@ jobs:
         run: |
           if [ -n "$CERTIFICATE_BASE64" ] && [ -n "$CERTIFICATE_PASSWORD" ] && [ -n "$KEYCHAIN_PASSWORD" ]; then
             certificate_path="$RUNNER_TEMP/developer-id-application.p12"
-            keychain_path="$RUNNER_TEMP/clippy-signing.keychain-db"
+            keychain_path="$RUNNER_TEMP/sidekick-signing.keychain-db"
 
             printf '%s' "$CERTIFICATE_BASE64" | base64 --decode > "$certificate_path"
             security create-keychain -p "$KEYCHAIN_PASSWORD" "$keychain_path"
@@ -68,20 +68,20 @@ jobs:
           fi
 
       - name: Package app
-        run: Scripts/package-clippy-app.sh release
+        run: Scripts/package-sidekick-app.sh release
 
       - name: Verify package
         run: |
-          test -x .build/release/Clippy.app/Contents/MacOS/Clippy
-          test -x .build/release/Clippy.app/Contents/MacOS/ClippyMCP
-          test -x .build/release/Clippy.app/Contents/Helpers/ClippyComputerUseRuntime
-          codesign --verify --strict .build/release/Clippy.app
-          .build/release/Clippy.app/Contents/Helpers/ClippyComputerUseRuntime --version
-          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' .build/release/Clippy.app/Contents/Info.plist
+          test -x .build/release/Sidekick.app/Contents/MacOS/Sidekick
+          test -x .build/release/Sidekick.app/Contents/MacOS/SidekickMCP
+          test -x .build/release/Sidekick.app/Contents/Helpers/SidekickComputerUseRuntime
+          codesign --verify --strict .build/release/Sidekick.app
+          .build/release/Sidekick.app/Contents/Helpers/SidekickComputerUseRuntime --version
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' .build/release/Sidekick.app/Contents/Info.plist
 
       - name: Archive app
         run: |
-          ditto -c -k --keepParent .build/release/Clippy.app Clippy-macOS.zip
+          ditto -c -k --keepParent .build/release/Sidekick.app Sidekick-macOS.zip
 
       - name: Notarize and staple when secrets are present
         env:
@@ -95,43 +95,43 @@ jobs:
           if [ "$CODESIGN_IDENTITY" != "-" ] && [ -n "$APPLE_NOTARY_KEY_BASE64" ] && [ -n "$APPLE_NOTARY_KEY_ID" ] && [ -n "$APPLE_NOTARY_ISSUER_ID" ]; then
             notary_key_path="$RUNNER_TEMP/AuthKey_$APPLE_NOTARY_KEY_ID.p8"
             printf '%s' "$APPLE_NOTARY_KEY_BASE64" | base64 --decode > "$notary_key_path"
-            xcrun notarytool submit Clippy-macOS.zip \
+            xcrun notarytool submit Sidekick-macOS.zip \
               --key "$notary_key_path" \
               --key-id "$APPLE_NOTARY_KEY_ID" \
               --issuer "$APPLE_NOTARY_ISSUER_ID" \
               --wait
-            xcrun stapler staple .build/release/Clippy.app
-            rm -f Clippy-macOS.zip
-            ditto -c -k --keepParent .build/release/Clippy.app Clippy-macOS.zip
-            printf 'notarized: yes\n' > Clippy-macOS.notarization.txt
+            xcrun stapler staple .build/release/Sidekick.app
+            rm -f Sidekick-macOS.zip
+            ditto -c -k --keepParent .build/release/Sidekick.app Sidekick-macOS.zip
+            printf 'notarized: yes\n' > Sidekick-macOS.notarization.txt
           elif [ "$CODESIGN_IDENTITY" != "-" ] && [ -n "$APPLE_ID" ] && [ -n "$APPLE_TEAM_ID" ] && [ -n "$APPLE_APP_SPECIFIC_PASSWORD" ]; then
-            xcrun notarytool submit Clippy-macOS.zip \
+            xcrun notarytool submit Sidekick-macOS.zip \
               --apple-id "$APPLE_ID" \
               --team-id "$APPLE_TEAM_ID" \
               --password "$APPLE_APP_SPECIFIC_PASSWORD" \
               --wait
-            xcrun stapler staple .build/release/Clippy.app
-            rm -f Clippy-macOS.zip
-            ditto -c -k --keepParent .build/release/Clippy.app Clippy-macOS.zip
-            printf 'notarized: yes\n' > Clippy-macOS.notarization.txt
+            xcrun stapler staple .build/release/Sidekick.app
+            rm -f Sidekick-macOS.zip
+            ditto -c -k --keepParent .build/release/Sidekick.app Sidekick-macOS.zip
+            printf 'notarized: yes\n' > Sidekick-macOS.notarization.txt
           else
-            printf 'notarized: no; configure Developer ID and Apple notary secrets for Gatekeeper-clean downloads\n' > Clippy-macOS.notarization.txt
+            printf 'notarized: no; configure Developer ID and Apple notary secrets for Gatekeeper-clean downloads\n' > Sidekick-macOS.notarization.txt
           fi
 
       - name: Create disk image
         run: |
           hdiutil create \
-            -volname Clippy \
-            -srcfolder .build/release/Clippy.app \
+            -volname Sidekick \
+            -srcfolder .build/release/Sidekick.app \
             -ov \
             -format UDZO \
-            Clippy.dmg
+            Sidekick.dmg
 
       - name: Write checksum
         run: |
-          shasum -a 256 Clippy-macOS.zip > Clippy-macOS.zip.sha256
-          shasum -a 256 Clippy.dmg > Clippy.dmg.sha256
-          shasum -a 256 Clippy.dmg Clippy-macOS.zip > SHA256SUMS.txt
+          shasum -a 256 Sidekick-macOS.zip > Sidekick-macOS.zip.sha256
+          shasum -a 256 Sidekick.dmg > Sidekick.dmg.sha256
+          shasum -a 256 Sidekick.dmg Sidekick-macOS.zip > SHA256SUMS.txt
 
       - name: Generate Sparkle appcast
         if: startsWith(github.ref, 'refs/tags/v')
@@ -139,19 +139,19 @@ jobs:
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
           test -n "$SPARKLE_ED_PRIVATE_KEY"
-          Scripts/generate-sparkle-appcast.sh Clippy-macOS.zip appcast.xml
+          Scripts/generate-sparkle-appcast.sh Sidekick-macOS.zip appcast.xml
 
       - name: Upload app artifact
         uses: actions/upload-artifact@v7
         with:
-          name: Clippy-macOS-${{ github.sha }}
+          name: Sidekick-macOS-${{ github.sha }}
           path: |
-            Clippy.dmg
-            Clippy.dmg.sha256
-            Clippy-macOS.zip
-            Clippy-macOS.zip.sha256
+            Sidekick.dmg
+            Sidekick.dmg.sha256
+            Sidekick-macOS.zip
+            Sidekick-macOS.zip.sha256
             SHA256SUMS.txt
-            Clippy-macOS.notarization.txt
+            Sidekick-macOS.notarization.txt
             appcast.xml
           retention-days: 30
 
@@ -166,7 +166,7 @@ jobs:
       - name: Download packaged app artifact
         uses: actions/download-artifact@v8
         with:
-          name: Clippy-macOS-${{ github.sha }}
+          name: Sidekick-macOS-${{ github.sha }}
           path: dist
 
       - name: Publish GitHub release
@@ -176,14 +176,14 @@ jobs:
         run: |
           cd dist
           gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
-            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "Clippy macOS build."
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "Sidekick macOS build."
           gh release upload "$GITHUB_REF_NAME" \
-            Clippy.dmg \
-            Clippy.dmg.sha256 \
-            Clippy-macOS.zip \
-            Clippy-macOS.zip.sha256 \
+            Sidekick.dmg \
+            Sidekick.dmg.sha256 \
+            Sidekick-macOS.zip \
+            Sidekick-macOS.zip.sha256 \
             SHA256SUMS.txt \
-            Clippy-macOS.notarization.txt \
+            Sidekick-macOS.notarization.txt \
             appcast.xml \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
