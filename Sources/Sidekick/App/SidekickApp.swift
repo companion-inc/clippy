@@ -60,8 +60,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
     private var userAnnotationController: UserAnnotationController?
     private var userAnnotation: UserScreenAnnotation?
     private var permissionDrag: PermissionDragController?
-    private var onboardingDemoWorkItems: [DispatchWorkItem] = []
-    private var onboardingPermissionsRequested = Set<OnboardingPermission>()
+    private var permissionCharacterDragClear: DispatchWorkItem?
     private var statusItem: NSStatusItem?
     private var retroMenu = RetroMenuController()
     private var ptt: PushToTalkMonitor?
@@ -108,6 +107,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
     private var backgroundScreenSuggestionTimer: Timer?
     private var isBackgroundScreenWakeRunning = false
     private var backgroundScreenWakeFailureCount = 0
+    private let suggestionFeedbackStore = SidekickSuggestionFeedbackStore()
     private var sttEnabled = SidekickApp.defaultVoiceSetting(
         defaultsKey: "SidekickSTTEnabled",
         disableEnvironmentKey: "SIDEKICK_DISABLE_STT",
@@ -273,7 +273,6 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         disarmGuidedTarget(reason: "terminate")
-        cancelOnboardingDemoWork()
         currentBrainTask?.cancel()
         currentBrainTask = nil
         conversation = nil
@@ -404,7 +403,9 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
 
     private func recommendInvocationOptions(
         for context: DesktopContextSnapshot,
-        proactiveAutoHide: Bool = false
+        proactiveAutoHide: Bool = false,
+        accessibilityTree providedAccessibilityTree: DesktopAccessibilityTreeSnapshot? = nil,
+        feedbackKey: SidekickSuggestionFeedbackKey? = nil
     ) {
         guard let chatBubble else { return }
         let recommendationLogPrefix = proactiveAutoHide
@@ -415,28 +416,35 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
             showInvocationFallback()
             return
         }
-        let screenshotScreen = context.targetScreen() ?? screenForSidekick()
-        let shots = captureTurnScreenshots(primaryScreen: screenshotScreen)
-        let shot = primaryShot(in: shots, primaryScreen: screenshotScreen)
-        lastShots = shots
-        lastShot = shot
-        if shots.isEmpty == false {
-            logScreenCaptures(shots, primary: shot)
-        } else {
-            log("screen-capture: unavailable")
+        let accessibilityTree = providedAccessibilityTree
+            ?? DesktopAccessibilityTreeSnapshot.capture(desktopContext: context)
+        guard accessibilityTree.nodes.isEmpty == false else {
+            let issue = accessibilityTree.issue.map { " issue=\($0)" } ?? ""
+            log("\(recommendationLogPrefix) ax-tree unavailable\(issue)")
+            if proactiveAutoHide {
+                return
+            }
+            if AccessibilityPermission.isTrusted == false {
+                _ = AccessibilityPermission.requestIfNeeded(prompt: true)
+                showPermissionDialog(permission: .accessibility)
+            } else {
+                showInvocationFallback()
+            }
+            return
         }
-        let screenshotContexts = Self.screenshotPromptContexts(for: shots, primary: shot)
+        log("\(recommendationLogPrefix) ax-tree: nodes=\(accessibilityTree.nodes.count)")
+        lastShots = []
+        lastShot = nil
         let prompt = SidekickAgentInstructions.brainMessage(
             text: SidekickInvocationSuggestions.recommendationPrompt(),
-            screenshotPath: shot?.path,
-            screenshotPixelWidth: Int(shot?.pixelSize.width ?? 0),
-            screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
-            screenshots: screenshotContexts,
+            screenshotPath: nil,
+            screenshotPixelWidth: 0,
+            screenshotPixelHeight: 0,
             inputMode: .text,
             speaking: false,
-            desktopContext: context
+            desktopContext: context,
+            accessibilityTree: accessibilityTree
         )
-        let localImagePaths = Self.localImagePaths(for: shots)
 
         isTurnRunning = true
         activeUserRequest = nil
@@ -451,14 +459,14 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         turnGeneration += 1
         let turnID = turnGeneration
         syncBubbleAnchorToSidekick()
-        chatBubble.showThinking(shot == nil ? "Thinking" : "Reading the screen")
+        chatBubble.showThinking("Reading the app")
         playActivityState(.thinking)
-        scheduleTurnProgressUpdates(wantsScreen: true, attachedScreenshot: shot != nil)
+        scheduleTurnProgressUpdates(wantsScreen: false, attachedScreenshot: false)
 
         currentBrainTask = Task { [weak self] in
             let finalTurn = await brain.sendStructured(
                 prompt,
-                localImagePaths: localImagePaths,
+                localImagePaths: [],
                 outputSchema: SidekickInvocationSuggestions.recommendationSchema
             )
             if Task.isCancelled { return }
@@ -476,7 +484,12 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
                     )
                     if self.invocationRecommendationBrain() != nil {
                         self.log("\(recommendationLogPrefix) retrying alternate hidden brain")
-                        self.recommendInvocationOptions(for: context, proactiveAutoHide: proactiveAutoHide)
+                        self.recommendInvocationOptions(
+                            for: context,
+                            proactiveAutoHide: proactiveAutoHide,
+                            accessibilityTree: accessibilityTree,
+                            feedbackKey: feedbackKey
+                        )
                     } else {
                         self.showInvocationFallback()
                     }
@@ -488,31 +501,59 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
                     return
                 }
                 self.log("\(recommendationLogPrefix): \(recommendation.suggestions.map(\.title).joined(separator: ", "))")
-                self.showInvocationOptions(recommendation, proactiveAutoHide: proactiveAutoHide)
+                self.showInvocationOptions(
+                    recommendation,
+                    proactiveAutoHide: proactiveAutoHide,
+                    feedbackKey: feedbackKey
+                )
             }
         }
     }
 
     private func showInvocationOptions(
         _ recommendation: SidekickInvocationRecommendation,
-        proactiveAutoHide: Bool = false
+        proactiveAutoHide: Bool = false,
+        feedbackKey: SidekickSuggestionFeedbackKey? = nil
     ) {
         guard let chatBubble else { return }
+        if let feedbackKey {
+            let summary = suggestionFeedbackStore.recordImpression(for: feedbackKey)
+            log("background-screen feedback impression key=\(feedbackKey.storageKey) shown=\(summary.impressions) ignored=\(summary.ignores) clicked=\(summary.engagements)")
+        }
         let choices = recommendation.suggestions.map { suggestion in
             SidekickBubbleController.Choice(title: suggestion.title) { [weak self] in
+                if let feedbackKey {
+                    self?.recordProactiveSuggestionEngagement(feedbackKey)
+                }
                 self?.runInvocationSuggestion(suggestion)
             }
         } + [
             SidekickBubbleController.Choice(title: SidekickInvocationSuggestions.manualInputTitle) { [weak self] in
+                if let feedbackKey {
+                    self?.recordProactiveSuggestionEngagement(feedbackKey)
+                }
                 self?.showTextInputBubble()
             },
         ]
+        let autoHide = proactiveAutoHide ? SidekickBubbleController.proactiveChoiceAutoHideDelay : nil
         _ = playOnce("GetAttention")
         chatBubble.showChoicesTyping(
             recommendation.message,
             choices: choices,
-            autoHide: proactiveAutoHide ? SidekickBubbleController.proactiveChoiceAutoHideDelay : nil
+            autoHide: autoHide,
+            onAutoHide: feedbackKey.map { key in
+                { [weak self] in
+                    let summary = self?.suggestionFeedbackStore.recordIgnore(for: key)
+                    let remaining = summary?.suppressUntil.map { Int(ceil($0.timeIntervalSince(Date()))) } ?? 0
+                    self?.log("background-screen feedback ignored key=\(key.storageKey) consecutive=\(summary?.consecutiveIgnores ?? 0) cooldown=\(remaining)s")
+                }
+            }
         )
+    }
+
+    private func recordProactiveSuggestionEngagement(_ feedbackKey: SidekickSuggestionFeedbackKey) {
+        let summary = suggestionFeedbackStore.recordEngagement(for: feedbackKey)
+        log("background-screen feedback clicked key=\(feedbackKey.storageKey) clicked=\(summary.engagements)")
     }
 
     private func showInvocationFallback() {
@@ -721,7 +762,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         if let invocationRecommendationConversation {
             return invocationRecommendationConversation
         }
-        for backend in hiddenBrainBackendPreference() {
+        for backend in hiddenBrainBackendPreference(role: .invocationRecommendations) {
             guard invocationRecommendationUnavailableBackends.contains(backend) == false else {
                 continue
             }
@@ -744,7 +785,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         if let screenWakeConversation {
             return screenWakeConversation
         }
-        for backend in hiddenBrainBackendPreference() {
+        for backend in hiddenBrainBackendPreference(role: .backgroundScreenWake) {
             guard screenWakeUnavailableBackends.contains(backend) == false else {
                 continue
             }
@@ -763,11 +804,11 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         return nil
     }
 
-    private func hiddenBrainBackendPreference() -> [SidekickModel.Backend] {
-        switch selectedModel.backend {
-        case .claude: return [.claude, .codex]
-        case .codex: return [.codex, .claude]
-        }
+    private func hiddenBrainBackendPreference(role: SidekickHiddenBrainRole) -> [SidekickModel.Backend] {
+        SidekickHiddenBrainRouting.backendPreference(
+            selectedModel: selectedModel,
+            role: role
+        )
     }
 
     private func makeHiddenStructuredBrain(
@@ -812,6 +853,9 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
     private func configureBackgroundScreenSuggestions() {
         stopBackgroundScreenSuggestions()
         guard backgroundScreenSuggestionsEnabled else { return }
+        if AccessibilityPermission.isTrusted == false {
+            _ = AccessibilityPermission.requestIfNeeded(prompt: true)
+        }
         let timer = Timer.scheduledTimer(
             withTimeInterval: SidekickBackgroundScreenSuggestions.defaultIntervalSeconds,
             repeats: true
@@ -835,40 +879,78 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         else {
             return
         }
-        guard ScreenPerception.hasPermission else {
-            log("background-screen-suggestions: skipped screen-recording-missing")
+        guard AccessibilityPermission.isTrusted else {
+            log("background-screen-suggestions: skipped accessibility-missing")
             return
+        }
+
+        let desktopContext = DesktopContextSnapshot.capture()
+        let accessibilityTree = DesktopAccessibilityTreeSnapshot.capture(desktopContext: desktopContext)
+        guard accessibilityTree.nodes.isEmpty == false else {
+            let issue = accessibilityTree.issue.map { " issue=\($0)" } ?? ""
+            log("background-screen-suggestions: skipped ax-tree-empty\(issue)")
+            return
+        }
+        let feedbackKey = SidekickSuggestionFeedback.contextKey(
+            desktopContext: desktopContext,
+            accessibilityTree: accessibilityTree
+        )
+        let now = Date()
+        let feedbackSummary = suggestionFeedbackStore.summary(for: feedbackKey, now: now)
+        let proactiveDecision = SidekickProactiveIntentRanker.rank(
+            desktopContext: desktopContext,
+            accessibilityTree: accessibilityTree,
+            feedback: feedbackSummary,
+            now: now
+        )
+        log("background-screen-suggestions ranker: \(proactiveDecision.logSummary)")
+        if feedbackSummary.shouldSuppress(now: now), proactiveDecision.overridesFeedbackCooldown == false {
+            let remaining = feedbackSummary.suppressUntil.map { Int(ceil($0.timeIntervalSince(now))) } ?? 0
+            log("background-screen-suggestions: skipped feedback-cooldown key=\(feedbackKey.storageKey) remaining=\(remaining)s")
+            return
+        }
+        switch proactiveDecision.action {
+        case .doNothing, .watchForChange:
+            log("background-screen-suggestions: skipped local-ranker \(proactiveDecision.logSummary)")
+            return
+        case .showOptions:
+            log("background-screen-suggestions: local wake \(proactiveDecision.logSummary)")
+            lastDesktopContext = desktopContext
+            recommendInvocationOptions(
+                for: desktopContext,
+                proactiveAutoHide: true,
+                accessibilityTree: accessibilityTree,
+                feedbackKey: feedbackKey
+            )
+            return
+        case .evaluateWithWakeModel:
+            break
         }
         guard let brain = screenWakeBrain() else {
             log("background-screen-suggestions: skipped brain-missing")
             return
         }
-
-        let desktopContext = DesktopContextSnapshot.capture()
-        let screenshotScreen = desktopContext.targetScreen() ?? screenForSidekick()
-        let shots = captureTurnScreenshots(primaryScreen: screenshotScreen)
-        let shot = primaryShot(in: shots, primaryScreen: screenshotScreen)
-        guard shots.isEmpty == false else {
-            log("background-screen-suggestions: skipped screen-capture-unavailable")
-            return
-        }
+        log("background-screen-suggestions ax-tree: nodes=\(accessibilityTree.nodes.count)")
         let prompt = SidekickAgentInstructions.brainMessage(
-            text: SidekickBackgroundScreenSuggestions.wakePrompt(),
-            screenshotPath: shot?.path,
-            screenshotPixelWidth: Int(shot?.pixelSize.width ?? 0),
-            screenshotPixelHeight: Int(shot?.pixelSize.height ?? 0),
-            screenshots: Self.screenshotPromptContexts(for: shots, primary: shot),
+            text: SidekickBackgroundScreenSuggestions.wakePrompt(
+                feedback: feedbackSummary,
+                localDecision: proactiveDecision,
+                now: now
+            ),
+            screenshotPath: nil,
+            screenshotPixelWidth: 0,
+            screenshotPixelHeight: 0,
             inputMode: .text,
             speaking: false,
-            desktopContext: desktopContext
+            desktopContext: desktopContext,
+            accessibilityTree: accessibilityTree
         )
-        let localImagePaths = Self.localImagePaths(for: shots)
         isBackgroundScreenWakeRunning = true
 
         Task { [weak self] in
             let finalTurn = await brain.sendStructured(
                 prompt,
-                localImagePaths: localImagePaths,
+                localImagePaths: [],
                 outputSchema: SidekickBackgroundScreenSuggestions.wakeSchema
             )
             await MainActor.run { [weak self] in
@@ -901,7 +983,12 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
                 }
                 self.log("background-screen-suggestions: wake\(decision.reason.map { " reason=\($0)" } ?? "")")
                 self.lastDesktopContext = desktopContext
-                self.recommendInvocationOptions(for: desktopContext, proactiveAutoHide: true)
+                self.recommendInvocationOptions(
+                    for: desktopContext,
+                    proactiveAutoHide: true,
+                    accessibilityTree: accessibilityTree,
+                    feedbackKey: feedbackKey
+                )
             }
         }
     }
@@ -946,7 +1033,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
             log("background-screen-suggestions: hidden brain disabled after \(attemptedBackend?.rawValue ?? "unknown") \(issue)")
         }
 
-        if screenWakeUnavailableBackends.count >= hiddenBrainBackendPreference().count
+        if screenWakeUnavailableBackends.count >= hiddenBrainBackendPreference(role: .backgroundScreenWake).count
             || SidekickBackgroundScreenSuggestions.shouldDisable(afterConsecutiveWakeFailures: backgroundScreenWakeFailureCount) {
             backgroundScreenSuggestionsEnabled = false
             UserDefaults.standard.set(false, forKey: Self.backgroundScreenSuggestionsEnabledKey)
@@ -2066,6 +2153,18 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
             }
             return
         }
+        let desktopContext = DesktopContextSnapshot.capture()
+        lastDesktopContext = desktopContext
+        log("desktop-context: \(desktopContext.logSummary)")
+        let wantsScreen = SidekickAgentInstructions.shouldAttachScreenshot(
+            text: text,
+            inputMode: inputMode,
+            desktopContext: desktopContext
+        )
+        if requestTurnPermissionIfNeeded(needsComputerControl: needsComputerControl, wantsScreen: wantsScreen) {
+            return
+        }
+
         isTurnRunning = true
         activeTurnUsedUserAnnotation = false
         turnHasStreamingText = false
@@ -2086,16 +2185,6 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         if needsComputerControl {
             log("routing: codex computer-control requested")
         }
-        let desktopContext = DesktopContextSnapshot.capture()
-        lastDesktopContext = desktopContext
-        log("desktop-context: \(desktopContext.logSummary)")
-        // Give Sidekick eyes on every turn so short phrases like "do this" and
-        // typed bubble turns still carry the real app/window context underneath.
-        let wantsScreen = SidekickAgentInstructions.shouldAttachScreenshot(
-            text: text,
-            inputMode: inputMode,
-            desktopContext: desktopContext
-        )
         let screenshotScreen = desktopContext.targetScreen() ?? screenForSidekick()
         let shots = wantsScreen ? captureTurnScreenshots(primaryScreen: screenshotScreen) : []
         let shot = primaryShot(in: shots, primaryScreen: screenshotScreen)
@@ -2171,6 +2260,24 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
                 }
             }
         }
+    }
+
+    private func requestTurnPermissionIfNeeded(needsComputerControl: Bool, wantsScreen: Bool) -> Bool {
+        if needsComputerControl && AccessibilityPermission.isTrusted == false {
+            log("turn permission request: accessibility")
+            _ = AccessibilityPermission.requestIfNeeded(prompt: true)
+            showPermissionDialog(permission: .accessibility)
+            return true
+        }
+
+        if wantsScreen && ScreenPerception.hasPermission == false {
+            log("turn permission request: screen-recording")
+            _ = ScreenPerception.requestPermission()
+            showPermissionDialog(permission: .screenRecording)
+            return true
+        }
+
+        return false
     }
 
     private func scheduleTurnProgressUpdates(wantsScreen: Bool, attachedScreenshot: Bool) {
@@ -3009,6 +3116,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         hideBubbleWhenSpeechFinishes = false
         spokenBubbleShownAt = nil
         cancelSpokenBubbleHide()
+        clearPermissionCharacterDrag()
         _ = speech?.stop()
         tts?.stop()
         sidekickCharacter?.windowController.hide()
@@ -3126,7 +3234,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         items.append(.toggle("Wake Word (Hey Clippy)", isOn: wakeWordEnabled) { [weak self] in
             self?.toggleWakeWord()
         })
-        items.append(.toggle("Auto Screen Suggestions", isOn: backgroundScreenSuggestionsEnabled) { [weak self] in
+        items.append(.toggle("Auto Desktop Suggestions", isOn: backgroundScreenSuggestionsEnabled) { [weak self] in
             self?.toggleBackgroundScreenSuggestions()
         })
         items.append(.toggle("Speak Replies", isOn: ttsEnabled) { [weak self] in
@@ -3451,7 +3559,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         )
         guard backgroundScreenSuggestionsEnabled else {
             stopBackgroundScreenSuggestions()
-            chatBubble?.showReplyForReading("Auto screen suggestions are off.")
+            chatBubble?.showReplyForReading("Auto desktop suggestions are off.")
             return
         }
 
@@ -3460,16 +3568,16 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         screenWakeConversation = nil
         screenWakeBackend = nil
 
-        guard ScreenPerception.hasPermission else {
+        guard AccessibilityPermission.isTrusted else {
             configureBackgroundScreenSuggestions()
-            _ = ScreenPerception.requestPermission()
-            showPermissionDialog(permission: .screenRecording)
-            chatBubble?.showReplyForReading("Auto screen suggestions are on after Screen Recording is allowed.")
+            _ = AccessibilityPermission.requestIfNeeded(prompt: true)
+            showPermissionDialog(permission: .accessibility)
+            chatBubble?.showReplyForReading("Auto desktop suggestions are on after Accessibility is allowed.")
             return
         }
 
         configureBackgroundScreenSuggestions()
-        chatBubble?.showReplyForReading("Auto screen suggestions are on.")
+        chatBubble?.showReplyForReading("Auto desktop suggestions are on.")
     }
 
     @objc private func toggleTTS() {
@@ -3572,11 +3680,9 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         if isSidekickHidden {
             showSidekick()
         }
-        cancelOnboardingDemoWork()
         cancelSpokenBubbleHide()
         hideBubbleWhenSpeechFinishes = false
         spokenBubbleShownAt = nil
-        onboardingPermissionsRequested.removeAll()
         isOnboardingActive = true
         syncBubbleAnchorToSidekick()
         if force {
@@ -3617,13 +3723,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
             showListeningStep()
         case .voice:
             showVoiceStep()
-        case .screenHelp:
-            showScreenHelpStep()
-        case .fileAccess:
-            showFileAccessStep()
-        case .demo:
-            startOnboardingDemo()
-        case .controls:
+        case .screenHelp, .fileAccess, .demo, .controls:
             showOnboardingControlsStep(createdPageURL: nil)
         }
     }
@@ -3842,7 +3942,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         UserDefaults.standard.set(true, forKey: "SidekickTTSEnabled")
         configureVoiceProviders()
         restartWakeWordMonitorIfNeeded()
-        showScreenHelpStep()
+        showOnboardingControlsStep(createdPageURL: nil)
     }
 
     private func skipOnboardingSpeech() {
@@ -3852,130 +3952,13 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         spokenBubbleShownAt = nil
         cancelSpokenBubbleHide()
         tts?.stop()
-        showScreenHelpStep()
-    }
-
-    private func showScreenHelpStep() {
-        saveOnboardingResumePoint(.screenHelp)
-        if AccessibilityPermission.isTrusted && ScreenPerception.hasPermission {
-            showFileAccessStep()
-            return
-        }
-        showOnboardingStep(
-            "Want me to help with stuff on your screen? I only look when you ask — never in the background.",
-            animation: "GetAttention",
-            choices: [
-                .init(title: "Yes, help out") { [weak self] in self?.requestScreenHelpPermissions() },
-                .init(title: "Maybe later") { [weak self] in self?.showFileAccessStep() },
-            ]
-        )
-    }
-
-    private func requestScreenHelpPermissions() {
-        saveOnboardingResumePoint(.screenHelp)
-        let permissionOrder: [OnboardingPermission] = [.screenRecording, .accessibility]
-        guard let permission = permissionOrder.first(where: {
-            !$0.isGranted && !onboardingPermissionsRequested.contains($0)
-        }) else {
-            showFileAccessStep()
-            return
-        }
-        onboardingPermissionsRequested.insert(permission)
-        switch permission {
-        case .accessibility:
-            _ = AccessibilityPermission.requestIfNeeded(prompt: true)
-        case .screenRecording:
-            _ = ScreenPerception.requestPermission()
-        case .fullDiskAccess, .microphone:
-            return
-        }
-        showPermissionDialog(permission: permission, doneButtonTitle: "Done") { [weak self] in
-            self?.requestScreenHelpPermissions()
-        }
-    }
-
-    private func showFileAccessStep() {
-        saveOnboardingResumePoint(.fileAccess)
-        guard !FullDiskAccessPermission.isGranted else {
-            startOnboardingDemo()
-            return
-        }
-        showOnboardingStep(
-            "Want me to dig through your apps when you ask — like finding an old text or a link you lost? Only when you ask.",
-            animation: "Processing",
-            choices: [
-                .init(title: "Yeah, go ahead") { [weak self] in self?.requestFileAccessPermission() },
-                .init(title: "Maybe later") { [weak self] in self?.startOnboardingDemo() },
-            ]
-        )
-    }
-
-    private func requestFileAccessPermission() {
-        saveOnboardingResumePoint(.fileAccess)
-        onboardingPermissionsRequested.insert(.fullDiskAccess)
-        showPermissionDialog(permission: .fullDiskAccess, doneButtonTitle: "Done") { [weak self] in
-            self?.startOnboardingDemo()
-        }
+        showOnboardingControlsStep(createdPageURL: nil)
     }
 
     private func selectOnboardingModel(_ model: SidekickModel) {
         applySelectedModel(model)
         log("model selected: \(model.id)")
         showListeningStep()
-    }
-
-    private func startOnboardingDemo() {
-        saveOnboardingResumePoint(.demo)
-        permissionDrag?.hide()
-        cancelOnboardingDemoWork()
-        overlay?.clear()
-        if conversation == nil {
-            setUpBrain()
-        }
-        if isSidekickHidden {
-            showSidekick()
-        }
-        isOnboardingActive = true
-        playOnboardingAnimation("GetAttention")
-        syncBubbleAnchorToSidekick()
-        chatBubble?.showReplyForReading(SidekickOnboardingDemo.guidedIntroText)
-        scheduleOnboardingDemoWork(after: 1.4) { [weak self] in
-            self?.runOnboardingDemo()
-        }
-    }
-
-    private func runOnboardingDemo() {
-        guard isOnboardingActive else { return }
-        cancelOnboardingDemoWork()
-        overlay?.clear()
-        syncBubbleAnchorToSidekick()
-        chatBubble?.showThinking(SidekickOnboardingDemo.guidedWorkingText)
-        playActivityState(.working)
-
-        scheduleOnboardingDemoWork(after: 0.8) { [weak self] in
-            guard let self, self.isOnboardingActive else { return }
-            self.log("onboarding-demo: current-screen prompt")
-            self.playOnboardingAnimation("Explain")
-            self.sendMessage(
-                SidekickOnboardingDemo.demoRequestText,
-                initialThinkingStatus: SidekickOnboardingDemo.guidedWorkingText,
-                visibleUserLine: SidekickOnboardingDemo.visibleTaskLine
-            )
-            self.showOnboardingControlsWhenDemoSettles(createdPageURL: nil)
-        }
-    }
-
-    private func showOnboardingControlsWhenDemoSettles(createdPageURL: URL?, attempt: Int = 0) {
-        guard isOnboardingActive else { return }
-        if isTurnRunning, attempt < 45 {
-            scheduleOnboardingDemoWork(after: 2.0) { [weak self] in
-                self?.showOnboardingControlsWhenDemoSettles(createdPageURL: createdPageURL, attempt: attempt + 1)
-            }
-            return
-        }
-        scheduleOnboardingDemoWork(after: overlay?.hasContent == true ? 5.0 : 1.5) { [weak self] in
-            self?.showOnboardingControlsStep(createdPageURL: createdPageURL)
-        }
     }
 
     private func showOnboardingControlsStep(createdPageURL: URL?) {
@@ -3993,7 +3976,6 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
     }
 
     private func completeBubbleOnboarding(createdPageURL: URL?) {
-        cancelOnboardingDemoWork()
         isOnboardingActive = false
         permissionDrag?.hide()
         if createdPageURL == nil {
@@ -4005,17 +3987,6 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         }
         playOnboardingAnimation("Congratulate")
         chatBubble?.showReplyForReading("All set — I'm all yours! Press Control+Space to type, or hold Control+Option to talk.")
-    }
-
-    private func scheduleOnboardingDemoWork(after delay: TimeInterval, _ action: @escaping () -> Void) {
-        let work = DispatchWorkItem(block: action)
-        onboardingDemoWorkItems.append(work)
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
-    }
-
-    private func cancelOnboardingDemoWork() {
-        onboardingDemoWorkItems.forEach { $0.cancel() }
-        onboardingDemoWorkItems.removeAll()
     }
 
     private func voiceKeyStatusText() -> String {
@@ -4458,14 +4429,21 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         """
     }
 
-    /// Show the focused permission helper: a Sidekick tile + an "Open System Settings"
-    /// button. The bubble is hidden while this panel is active so the user has one
-    /// instruction surface, not two competing ones.
+    /// Show the focused permission helper. Permissions that accept an app bundle
+    /// in System Settings use the character itself as the draggable item.
     private func showPermissionDialog(
         permission: OnboardingPermission,
         doneButtonTitle: String = "Done",
         onDone: (() -> Void)? = nil
     ) {
+        guard permission == .microphone else {
+            showPermissionCharacterDragPrompt(
+                permission: permission,
+                doneButtonTitle: doneButtonTitle,
+                onDone: onDone
+            )
+            return
+        }
         permissionDrag?.hide()
         chatBubble?.hide()
         playOnboardingAnimation(permission.animationName)
@@ -4479,6 +4457,41 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         )
         permissionDrag = controller
         controller.show()
+    }
+
+    private func showPermissionCharacterDragPrompt(
+        permission: OnboardingPermission,
+        doneButtonTitle: String,
+        onDone: (() -> Void)?
+    ) {
+        permissionDrag?.hide()
+        if isSidekickHidden {
+            showSidekick()
+        }
+        syncBubbleAnchorToSidekick()
+        playOnboardingAnimation(permission.animationName)
+        sidekickCharacter?.windowController.permissionDragAppURL = Bundle.main.bundleURL
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(permission.settingsAnchor)") {
+            NSWorkspace.shared.open(url)
+        }
+        let done = SidekickBubbleController.Choice(title: doneButtonTitle) { [weak self] in
+            self?.clearPermissionCharacterDrag()
+            onDone?()
+        }
+        chatBubble?.showChoicesTyping(
+            "Drag me into \(permission.name) in System Settings.",
+            choices: [done]
+        )
+        permissionCharacterDragClear?.cancel()
+        let clear = DispatchWorkItem { [weak self] in self?.clearPermissionCharacterDrag() }
+        permissionCharacterDragClear = clear
+        DispatchQueue.main.asyncAfter(deadline: .now() + 180, execute: clear)
+    }
+
+    private func clearPermissionCharacterDrag() {
+        permissionCharacterDragClear?.cancel()
+        permissionCharacterDragClear = nil
+        sidekickCharacter?.windowController.permissionDragAppURL = nil
     }
 
     @objc private func selectVoice(_ sender: NSMenuItem) {

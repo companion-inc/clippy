@@ -671,7 +671,12 @@ public final class SidekickBubbleController: NSObject, NSTextViewDelegate, NSWin
         showReply(text, allowsRichMedia: false)
     }
 
-    public func showChoices(_ prompt: String, choices: [Choice], autoHide: TimeInterval? = nil) {
+    public func showChoices(
+        _ prompt: String,
+        choices: [Choice],
+        autoHide: TimeInterval? = nil,
+        onAutoHide: (() -> Void)? = nil
+    ) {
         stopTyping()
         stopThinking()
         cancelAutoHide()
@@ -691,10 +696,15 @@ public final class SidekickBubbleController: NSObject, NSTextViewDelegate, NSWin
         attachToAnchorWindow()
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        scheduleAutoHide(autoHide)
+        scheduleAutoHide(autoHide, onFire: onAutoHide)
     }
 
-    public func showChoicesTyping(_ prompt: String, choices: [Choice], autoHide: TimeInterval? = nil) {
+    public func showChoicesTyping(
+        _ prompt: String,
+        choices: [Choice],
+        autoHide: TimeInterval? = nil,
+        onAutoHide: (() -> Void)? = nil
+    ) {
         stopTyping()
         stopThinking()
         cancelAutoHide()
@@ -717,7 +727,7 @@ public final class SidekickBubbleController: NSObject, NSTextViewDelegate, NSWin
                 timer.invalidate()
                 self.typingTimer = nil
                 self.choiceTypingActive = false
-                self.showChoices(prompt, choices: choices, autoHide: autoHide)
+                self.showChoices(prompt, choices: choices, autoHide: autoHide, onAutoHide: onAutoHide)
                 return
             }
             let nextIndex = prompt.index(after: index)
@@ -1091,10 +1101,11 @@ public final class SidekickBubbleController: NSObject, NSTextViewDelegate, NSWin
         return min(height, spec.balloon.maxInputHeight)
     }
 
-    private func scheduleAutoHide(_ delay: TimeInterval?) {
+    private func scheduleAutoHide(_ delay: TimeInterval?, onFire: (() -> Void)? = nil) {
         cancelAutoHide()
         guard let delay else { return }
         autoHideTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+            onFire?()
             self?.hide()
         }
     }

@@ -16,11 +16,14 @@ public enum SidekickOnboardingResumePoint: String, CaseIterable, Sendable {
     public static let defaultsKey = "SidekickOnboardingResumePoint"
 
     public static func savedPoint(from rawValue: String?) -> Self {
-        if rawValue == "demoComposer" {
-            return .demo
-        }
-        if rawValue == "permission" || rawValue == "permissionWalkthrough" {
-            return .screenHelp
+        if rawValue == "permission"
+            || rawValue == "permissionWalkthrough"
+            || rawValue == "screenHelp"
+            || rawValue == "fileAccess"
+            || rawValue == "demo"
+            || rawValue == "demoComposer"
+        {
+            return .controls
         }
         guard let rawValue, let point = Self(rawValue: rawValue) else {
             return .welcome
@@ -30,19 +33,14 @@ public enum SidekickOnboardingResumePoint: String, CaseIterable, Sendable {
 }
 
 public enum SidekickOnboardingDemo {
-    public static let guidedIntroText = "Okay, watch this — I'll find something on your screen and point right at it."
-    public static let guidedWorkingText = "Looking at your screen"
+    public static let guidedIntroText = ""
+    public static let guidedWorkingText = ""
     public static let visibleTaskLine = ""
     public static let controlsText = """
     That's it! Click me to chat, double-click me for quick options, press Control+Space to type from anywhere, or hold Control+Option to talk. Right-click me for everything else.
     """
 
-    /// The demo is just a normal Sidekick turn. We send the same plain request a
-    /// user could type and let the regular pipeline do the rest: it always
-    /// attaches a fresh screenshot, recognizes the pointing intent, and appends
-    /// the standard visual-grounding contract. No bespoke demo prompt and no
-    /// extra "avoid private content" hedging — Sidekick is already running locally
-    /// on the user's own screen at their request, so the demo behaves exactly
-    /// like real use.
-    public static let demoRequestText = "Point out something interesting on my screen."
+    /// First-run onboarding no longer performs a screen-reading demo. Screen,
+    /// Accessibility, and file permissions are requested later at the feature boundary.
+    public static let demoRequestText = ""
 }

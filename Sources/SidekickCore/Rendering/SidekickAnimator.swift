@@ -70,6 +70,12 @@ public final class SidekickAnimator {
         endHandler = nil
     }
 
+    func advanceFrameSynchronouslyForTesting() {
+        pendingStep?.cancel()
+        pendingStep = nil
+        step()
+    }
+
     private func step() {
         guard let animation = currentAnimation else {
             return
@@ -81,8 +87,10 @@ public final class SidekickAnimator {
 
         let atLastFrame = currentFrameIndex >= lastIndex
         let usesExitBranching = animation.useExitBranching ?? false
-        if !(atLastFrame && usesExitBranching) {
-            currentFrame = animation.frames[currentFrameIndex]
+        let nextFrame = animation.frames[currentFrameIndex]
+        let isBlankTerminator = atLastFrame && nextFrame.hasRenderableImages == false
+        if !(atLastFrame && usesExitBranching) && isBlankTerminator == false {
+            currentFrame = nextFrame
         }
 
         draw()
@@ -149,5 +157,14 @@ public final class SidekickAnimator {
             endHandler = nil
         }
         handler(name, state)
+    }
+}
+
+private extension RasterFrame {
+    var hasRenderableImages: Bool {
+        guard let images, images.isEmpty == false else {
+            return false
+        }
+        return images.contains { $0.count >= 2 }
     }
 }

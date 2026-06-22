@@ -72,6 +72,13 @@ public final class SidekickWindowController {
         }
     }
 
+    /// While set, dragging the character carries the signed app bundle into
+    /// macOS Privacy permission lists instead of moving the character.
+    public var permissionDragAppURL: URL? {
+        get { contentView.permissionDragAppURL }
+        set { contentView.permissionDragAppURL = newValue }
+    }
+
     public init(
         rendererLayer: CALayer,
         size: CGSize = CGSize(width: 160, height: 160),

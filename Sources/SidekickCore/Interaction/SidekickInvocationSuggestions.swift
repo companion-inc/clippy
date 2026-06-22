@@ -63,7 +63,7 @@ public enum SidekickInvocationSuggestions {
         """
         [Sidekick double-click option picker]
         The user double-clicked Sidekick. This is an intentional invocation, but the user's exact intention may not be clear.
-        Look at the current screen screenshot and desktop metadata, infer why the user probably invoked Sidekick right now, then write the menu Sidekick should show: one short bubble line and exactly 3 useful things Sidekick could do here to help the user.
+        Look at the current accessibility tree and desktop metadata, infer why the user probably invoked Sidekick right now, then write the menu Sidekick should show: one short bubble line and exactly 3 useful things Sidekick could do here to help the user.
 
         Fill the structured recommendation response fields:
         - message: the exact short Sidekick speech-bubble line above the options. It should acknowledge the likely situation or intent, not name the app generically.
@@ -73,6 +73,7 @@ public enum SidekickInvocationSuggestions {
         - title: a short menu label, 24 characters or fewer
         - prompt: the exact instruction Sidekick should run if the user picks it
 
+        Use the AX tree as the primary signal for visible text, focused controls, unread/error states, form fields, and available actions. Do not ask for OCR or a screenshot just to recommend these options.
         Pick options by intent, not by app category. Prefer the actions a user would plausibly want after summoning Sidekick on this exact screen: continue stuck work, explain the confusing part, fill or draft visible content, point to the next control, summarize only when that is clearly useful, or help decide between visible choices.
         Avoid generic screen descriptions, generic app-name headings, and broad choices that could apply anywhere. Do not include a manual "something else" option; the app adds that separately. Do not include provider names or implementation details.
         For actions that send, delete, purchase, submit, or change accounts, make the prompt draft or inspect first and ask before committing.

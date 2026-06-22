@@ -123,7 +123,7 @@ public struct DesktopContextSnapshot: Equatable, Sendable {
         } else {
             lines.append("- screenshot target screen: fallback to Sidekick's display")
         }
-        lines.append("Sidekick-owned windows are ignored when possible; use this for app/window/title/url context and the screenshot below for pixels.]")
+        lines.append("Sidekick-owned windows are ignored when possible; use this for app/window/title/url context. Use a screenshot only when this turn includes one.]")
         return lines.joined(separator: "\n")
     }
 

@@ -78,12 +78,12 @@ separate OS prompt the user sees. Work in a non-protected working directory by d
 at most the single protected folder the task truly needs, deliberately and once. Never scan
 multiple protected folders to "find" a file — ask for the path instead.
 
-	Seeing the desktop — every turn includes current app/window metadata. Every turn also attempts
-	to attach a fresh full-display screenshot as image context and includes the saved path plus
-	pixel dimensions as the coordinate contract. Treat the attached screenshot as truth. If the
-	image attachment is unavailable and only the path is present, Read that file before pointing,
-	finding, or describing something on screen. Don't guess coordinates blind — if this turn has no
-	screenshot note, use your local computer-control tools to inspect the app/window state before pointing or acting.
+		Seeing the desktop — every turn includes current app/window metadata. Screen-specific turns may
+		also attach a fresh full-display screenshot as image context and include the saved path plus
+		pixel dimensions as the coordinate contract. Treat the attached screenshot as truth. If the
+		image attachment is unavailable and only the path is present, Read that file before pointing,
+		finding, or describing something on screen. Don't guess coordinates blind — if this turn has no
+		screenshot note, use local app/window metadata or computer-control inspection before pointing or acting.
 
     Rich image answers — when the user explicitly asks to see images, examples, visual references,
     or sourced web results, Sidekick can show image cards in the bubble. Put each card in markdown
@@ -128,7 +128,7 @@ active character's display name from the [Active sidekick] block.
     }
 
     /// Build the per-turn message for the brain: current desktop metadata, a
-    /// fresh-screenshot note, an optional voice-context note, then the user's
+    /// optional screenshot note, an optional voice-context note, then the user's
     /// text. Voice in/out can change turn to turn, so this context is attached
     /// per message rather than baked into the static prompt above.
     public static func brainMessage(
@@ -140,12 +140,16 @@ active character's display name from the [Active sidekick] block.
         inputMode: AssistantInputMode,
         speaking: Bool,
         desktopContext: DesktopContextSnapshot? = nil,
+        accessibilityTree: DesktopAccessibilityTreeSnapshot? = nil,
         requiresVisualGrounding: Bool = false,
         userAnnotationContext: String? = nil
     ) -> String {
         var blocks: [String] = []
         if let desktopContext {
             blocks.append(desktopContext.promptBlock)
+        }
+        if let accessibilityTree {
+            blocks.append(accessibilityTree.promptBlock)
         }
         if screenshots.isEmpty == false {
             blocks.append(contentsOf: screenshotPromptBlocks(screenshots))
@@ -307,14 +311,33 @@ active character's display name from the [Active sidekick] block.
         """
     }
 
-    /// Current product policy is to give every turn eyes. The capture remains
-    /// behind one function so tests and callers agree on the privacy/perf trade.
     public static func shouldAttachScreenshot(
-        text _: String,
-        inputMode _: AssistantInputMode,
+        text: String,
+        inputMode: AssistantInputMode,
         desktopContext _: DesktopContextSnapshot? = nil
     ) -> Bool {
-        true
+        if shouldUseScreenAnnotationTool(text: text, inputMode: inputMode) {
+            return true
+        }
+
+        let lower = text.lowercased()
+        if lower.contains("screen")
+            || lower.contains("screenshot")
+            || lower.contains("what am i looking at")
+            || lower.contains("what's this")
+            || lower.contains("what is this")
+            || lower.contains("look at this")
+        {
+            return true
+        }
+
+        let words = lower
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+        let deicticWords = Set(["this", "that", "here", "there", "it"])
+        return inputMode == .voice
+            && words.count <= 8
+            && words.contains(where: deicticWords.contains)
     }
 
     public static func shouldShareDesktopContext(

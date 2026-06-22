@@ -41,6 +41,10 @@ private func pcm16Constant(amplitude: Int16, sampleCount: Int) -> Data {
     return data
 }
 
+private final class AutoHideProbe {
+    var didFire = false
+}
+
 private extension SidekickBackgroundScreenSuggestionState {
     func with(
         enabled: Bool? = nil,
@@ -340,12 +344,82 @@ private extension SidekickBackgroundScreenSuggestionState {
     #expect(block.contains("screenshot target screen: index 1"))
 }
 
-@Test func brainMessageOrdersDesktopContextScreenshotVoiceThenText() throws {
+@Test func accessibilityTreePromptBlockIncludesSemanticsAndActions() {
+    let tree = DesktopAccessibilityTreeSnapshot(
+        appName: "Messages",
+        bundleIdentifier: "com.apple.MobileSMS",
+        processIdentifier: 37209,
+        nodes: [
+            .init(
+                depth: 0,
+                role: "AXWindow",
+                subrole: nil,
+                roleDescription: "standard window",
+                title: "Messages",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: true,
+                frame: CGRect(x: 0, y: 0, width: 900, height: 700),
+                actions: []
+            ),
+            .init(
+                depth: 1,
+                role: "AXStaticText",
+                subrole: nil,
+                roleDescription: "text",
+                title: nil,
+                label: "Unread, Summary, Transaction declined at Bold Software",
+                value: nil,
+                identifier: "thread-summary",
+                focused: nil,
+                frame: CGRect(x: 12, y: 50, width: 350, height: 80),
+                actions: ["AXPress", "Name:Mark as Read", "Name:Reply"]
+            ),
+        ],
+        issue: nil
+    )
+
+    let block = tree.promptBlock
+
+    #expect(block.contains("Current accessibility tree snapshot"))
+    #expect(block.contains("source app: Messages (com.apple.MobileSMS, pid 37209)"))
+    #expect(block.contains("captured AX nodes: 2"))
+    #expect(block.contains("AXStaticText"))
+    #expect(block.contains("Unread, Summary, Transaction declined"))
+    #expect(block.contains("Name:Mark as Read"))
+    #expect(block.contains("do not require OCR"))
+    #expect(block.contains("primary signal"))
+    #expect(block.contains("primary wake signal") == false)
+}
+
+@Test func brainMessageOrdersDesktopContextAccessibilityTreeScreenshotVoiceThenText() throws {
     let context = DesktopContextSnapshot(
         app: .init(name: "Google Chrome", bundleIdentifier: "com.google.Chrome", processIdentifier: 123),
         window: nil,
         screen: nil,
         browser: nil
+    )
+    let accessibilityTree = DesktopAccessibilityTreeSnapshot(
+        appName: "Google Chrome",
+        bundleIdentifier: "com.google.Chrome",
+        processIdentifier: 123,
+        nodes: [
+            .init(
+                depth: 0,
+                role: "AXWindow",
+                subrole: nil,
+                roleDescription: "window",
+                title: "Example",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: true,
+                frame: nil,
+                actions: ["AXRaise"]
+            ),
+        ],
+        issue: nil
     )
     let msg = SidekickAgentInstructions.brainMessage(
         text: "whats on my screen",
@@ -354,17 +428,21 @@ private extension SidekickBackgroundScreenSuggestionState {
         screenshotPixelHeight: 2234,
         inputMode: .voice,
         speaking: true,
-        desktopContext: context)
-    // Desktop context first, screenshot second, voice note third, user's words last.
+        desktopContext: context,
+        accessibilityTree: accessibilityTree)
+    // Desktop context first, AX tree second, screenshot third, voice note fourth, user's words last.
     let contextIdx = try #require(msg.range(of: "Current desktop context")?.lowerBound)
+    let axIdx = try #require(msg.range(of: "Current accessibility tree")?.lowerBound)
     let shotIdx = try #require(msg.range(of: "Current full-display screenshot")?.lowerBound)
     let voiceIdx = try #require(msg.range(of: "Voice mode")?.lowerBound)
     let textIdx = try #require(msg.range(of: "whats on my screen")?.lowerBound)
-    #expect(contextIdx < shotIdx)
+    #expect(contextIdx < axIdx)
+    #expect(axIdx < shotIdx)
     #expect(shotIdx < voiceIdx)
     #expect(voiceIdx < textIdx)
     #expect(msg.contains("3456x2234 px"))
     #expect(msg.contains("active app: Google Chrome"))
+    #expect(msg.contains("AXRaise"))
 
     // A typed, silent turn carries desktop metadata + text but no voice note.
     let quiet = SidekickAgentInstructions.brainMessage(
@@ -512,12 +590,12 @@ private extension SidekickBackgroundScreenSuggestionState {
     #expect(msg.contains("Do not emit [POINT:none]"))
 }
 
-@Test func screenshotPolicyCapturesEveryTurnIncludingSensitiveApps() {
-    #expect(SidekickAgentInstructions.shouldAttachScreenshot(text: "Say exactly: perf ok.", inputMode: .text))
+@Test func screenshotPolicyCapturesOnlyScreenSpecificTurns() {
+    #expect(SidekickAgentInstructions.shouldAttachScreenshot(text: "Say exactly: perf ok.", inputMode: .text) == false)
     #expect(SidekickAgentInstructions.shouldAttachScreenshot(text: "what's on my screen", inputMode: .text))
     #expect(SidekickAgentInstructions.shouldAttachScreenshot(text: "highlight this button", inputMode: .text))
     #expect(SidekickAgentInstructions.shouldAttachScreenshot(text: "fix that", inputMode: .voice))
-    #expect(SidekickAgentInstructions.shouldAttachScreenshot(text: "summarize the docs", inputMode: .voice))
+    #expect(SidekickAgentInstructions.shouldAttachScreenshot(text: "summarize the docs", inputMode: .voice) == false)
 
     let messagesContext = DesktopContextSnapshot(
         app: .init(name: "Messages", bundleIdentifier: "com.apple.MobileSMS", processIdentifier: 123),
@@ -535,7 +613,7 @@ private extension SidekickBackgroundScreenSuggestionState {
         text: "its in my downloads now can u do it",
         inputMode: .text,
         desktopContext: messagesContext
-    ))
+    ) == false)
     #expect(SidekickAgentInstructions.shouldShareDesktopContext(
         text: "its in my downloads now can u do it",
         inputMode: .text,
@@ -545,7 +623,7 @@ private extension SidekickBackgroundScreenSuggestionState {
         text: "do this",
         inputMode: .text,
         desktopContext: messagesContext
-    ))
+    ) == false)
     #expect(SidekickAgentInstructions.shouldShareDesktopContext(
         text: "this document is in downloads now",
         inputMode: .text,
@@ -557,6 +635,11 @@ private extension SidekickBackgroundScreenSuggestionState {
         desktopContext: messagesContext
     ))
     #expect(SidekickAgentInstructions.shouldShareDesktopContext(
+        text: "point to the send button",
+        inputMode: .text,
+        desktopContext: messagesContext
+    ))
+    #expect(SidekickAgentInstructions.shouldAttachScreenshot(
         text: "point to the send button",
         inputMode: .text,
         desktopContext: messagesContext
@@ -1311,15 +1394,30 @@ private extension SidekickBackgroundScreenSuggestionState {
 @Test func sidekickModelLadderKeepsWakeOptionsAndExecutionSeparate() {
     #expect(SidekickModel.all == [.opus48, .gpt55])
 
-    #expect(SidekickModel.notificationWakeModel(for: .codex) == .gpt54Nano)
-    #expect(SidekickModel.recommendationModel(for: .codex) == .gpt54Mini)
+    #expect(SidekickModel.notificationWakeModel(for: .codex) == .gpt54Mini)
+    #expect(SidekickModel.recommendationModel(for: .codex) == .gpt54)
     #expect(SidekickModel.notificationWakeModel(for: .claude) == .haiku45)
     #expect(SidekickModel.recommendationModel(for: .claude) == .sonnet46)
-
-    #expect(SidekickModel.all.contains(.gpt54Nano) == false)
+    #expect(SidekickModel.all.contains(.gpt54) == false)
     #expect(SidekickModel.all.contains(.gpt54Mini) == false)
     #expect(SidekickModel.all.contains(.haiku45) == false)
     #expect(SidekickModel.all.contains(.sonnet46) == false)
+    #expect(SidekickHiddenBrainRouting.backendPreference(
+        selectedModel: .gpt55,
+        role: .backgroundScreenWake
+    ) == [.codex, .claude])
+    #expect(SidekickHiddenBrainRouting.backendPreference(
+        selectedModel: .gpt55,
+        role: .invocationRecommendations
+    ) == [.codex, .claude])
+    #expect(SidekickHiddenBrainRouting.backendPreference(
+        selectedModel: .opus48,
+        role: .backgroundScreenWake
+    ) == [.claude, .codex])
+    #expect(SidekickHiddenBrainRouting.backendPreference(
+        selectedModel: .opus48,
+        role: .invocationRecommendations
+    ) == [.claude, .codex])
 }
 
 @Test func backgroundScreenSuggestionsRunOnlyWhileIdle() {
@@ -1360,6 +1458,491 @@ private extension SidekickBackgroundScreenSuggestionState {
     ))
     #expect(SidekickBackgroundScreenSuggestions.wakePrompt().contains("every few seconds"))
     #expect(SidekickBackgroundScreenSuggestions.wakeSchema.jsonObject["required"] as? [String] == ["shouldShowOptions", "reason"])
+}
+
+@Test func backgroundScreenWakePromptIncludesProactiveFeedback() throws {
+    let suiteName = "sidekick-feedback-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = SidekickSuggestionFeedbackStore(defaults: defaults)
+    let key = SidekickSuggestionFeedbackKey(
+        appIdentifier: "com.apple.MobileSMS",
+        surface: "focused-draft"
+    )
+    let now = Date(timeIntervalSince1970: 1_000)
+
+    store.recordImpression(for: key, now: now)
+    let summary = store.recordIgnore(for: key, now: now.addingTimeInterval(10))
+    let localDecision = SidekickProactiveIntentDecision(
+        action: .watchForChange,
+        intent: "watch_focused_draft",
+        score: 0.78,
+        reason: "User is actively composing.",
+        overridesFeedbackCooldown: false
+    )
+    let prompt = SidekickBackgroundScreenSuggestions.wakePrompt(
+        feedback: summary,
+        localDecision: localDecision,
+        now: now.addingTimeInterval(20)
+    )
+
+    #expect(prompt.contains("Recent proactive suggestion feedback"))
+    #expect(prompt.contains("Local proactive intent ranker"))
+    #expect(prompt.contains("watch_focused_draft"))
+    #expect(prompt.contains("expected user engagement"))
+    #expect(prompt.contains("interruption cost"))
+    #expect(prompt.contains("com.apple.MobileSMS|focused-draft"))
+    #expect(prompt.contains("shown: 1"))
+    #expect(prompt.contains("ignored by auto-hide: 1"))
+    #expect(prompt.contains("consecutive ignores: 1"))
+    #expect(prompt.contains("negative feedback"))
+}
+
+@Test func proactiveSuggestionFeedbackLearnsIgnoreCooldownAndEngagementReset() throws {
+    let suiteName = "sidekick-feedback-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = SidekickSuggestionFeedbackStore(defaults: defaults)
+    let key = SidekickSuggestionFeedbackKey(
+        appIdentifier: "com.apple.MobileSMS",
+        surface: "focused-draft"
+    )
+    let now = Date(timeIntervalSince1970: 2_000)
+
+    #expect(store.shouldSuppress(key, now: now) == false)
+    store.recordImpression(for: key, now: now)
+    let ignored = store.recordIgnore(for: key, now: now.addingTimeInterval(10))
+
+    #expect(ignored.impressions == 1)
+    #expect(ignored.ignores == 1)
+    #expect(ignored.consecutiveIgnores == 1)
+    #expect(store.shouldSuppress(key, now: now.addingTimeInterval(20)))
+    #expect(store.shouldSuppress(key, now: now.addingTimeInterval(200)) == false)
+
+    let engaged = store.recordEngagement(for: key, now: now.addingTimeInterval(220))
+    #expect(engaged.engagements == 1)
+    #expect(engaged.consecutiveIgnores == 0)
+    #expect(store.shouldSuppress(key, now: now.addingTimeInterval(221)) == false)
+}
+
+@Test func proactiveSuggestionFeedbackGroupsFocusedDraftByAppAndSurface() {
+    let context = DesktopContextSnapshot(
+        app: .init(name: "Messages", bundleIdentifier: "com.apple.MobileSMS", processIdentifier: 42),
+        window: nil,
+        screen: nil,
+        browser: nil
+    )
+    let tree = DesktopAccessibilityTreeSnapshot(
+        appName: "Messages",
+        bundleIdentifier: "com.apple.MobileSMS",
+        processIdentifier: 42,
+        nodes: [
+            .init(
+                depth: 0,
+                role: "AXWindow",
+                subrole: nil,
+                roleDescription: "window",
+                title: "Messages",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: nil,
+                frame: nil,
+                actions: []
+            ),
+            .init(
+                depth: 1,
+                role: "AXTextArea",
+                subrole: nil,
+                roleDescription: "text area",
+                title: nil,
+                label: nil,
+                value: "This is my draft reply.",
+                identifier: "message-composer",
+                focused: true,
+                frame: nil,
+                actions: ["AXConfirm"]
+            ),
+        ],
+        issue: nil
+    )
+
+    let key = SidekickSuggestionFeedback.contextKey(
+        desktopContext: context,
+        accessibilityTree: tree
+    )
+
+    #expect(key.appIdentifier == "com.apple.MobileSMS")
+    #expect(key.surface == "focused-draft")
+}
+
+@Test func proactiveIntentRankerWatchesImportantViewingWithoutInterrupting() {
+    let context = DesktopContextSnapshot(
+        app: .init(name: "Arc", bundleIdentifier: "company.thebrowser.Browser", processIdentifier: 42),
+        window: .init(
+            title: "Important launch video - YouTube",
+            ownerName: "Arc",
+            ownerProcessIdentifier: 42,
+            windowIdentifier: 7,
+            bounds: CGRect(x: 0, y: 0, width: 1200, height: 800)
+        ),
+        screen: nil,
+        browser: .init(title: "Important launch video - YouTube", url: "https://youtube.com/watch?v=demo")
+    )
+    let tree = DesktopAccessibilityTreeSnapshot(
+        appName: "Arc",
+        bundleIdentifier: "company.thebrowser.Browser",
+        processIdentifier: 42,
+        nodes: [
+            .init(
+                depth: 0,
+                role: "AXWindow",
+                subrole: nil,
+                roleDescription: "window",
+                title: "Important launch video - YouTube",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: []
+            ),
+            .init(
+                depth: 1,
+                role: "AXButton",
+                subrole: nil,
+                roleDescription: "button",
+                title: "Pause",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: ["AXPress"]
+            ),
+        ],
+        issue: nil
+    )
+
+    let decision = SidekickProactiveIntentRanker.rank(
+        desktopContext: context,
+        accessibilityTree: tree
+    )
+
+    #expect(decision.action == .watchForChange)
+    #expect(decision.intent == "watch_important_viewing")
+}
+
+@Test func proactiveIntentRankerKeepsFocusedDraftQuiet() {
+    let context = DesktopContextSnapshot(
+        app: .init(name: "Messages", bundleIdentifier: "com.apple.MobileSMS", processIdentifier: 42),
+        window: nil,
+        screen: nil,
+        browser: nil
+    )
+    let tree = DesktopAccessibilityTreeSnapshot(
+        appName: "Messages",
+        bundleIdentifier: "com.apple.MobileSMS",
+        processIdentifier: 42,
+        nodes: [
+            .init(
+                depth: 0,
+                role: "AXWindow",
+                subrole: nil,
+                roleDescription: "window",
+                title: "Messages",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: []
+            ),
+            .init(
+                depth: 1,
+                role: "AXTextArea",
+                subrole: nil,
+                roleDescription: "text area",
+                title: nil,
+                label: nil,
+                value: "I am still writing the reply and do not need grammar help yet.",
+                identifier: "composer",
+                focused: true,
+                frame: nil,
+                actions: ["AXConfirm"]
+            ),
+        ],
+        issue: nil
+    )
+
+    let decision = SidekickProactiveIntentRanker.rank(
+        desktopContext: context,
+        accessibilityTree: tree
+    )
+
+    #expect(decision.action == .watchForChange)
+    #expect(decision.intent == "watch_focused_draft")
+}
+
+@Test func proactiveIntentRankerShowsOptionsForVisibleErrorDespiteCooldown() throws {
+    let suiteName = "sidekick-feedback-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = SidekickSuggestionFeedbackStore(defaults: defaults)
+    let key = SidekickSuggestionFeedbackKey(appIdentifier: "com.apple.systempreferences", surface: "error-state")
+    let now = Date(timeIntervalSince1970: 3_000)
+    store.recordImpression(for: key, now: now)
+    let feedback = store.recordIgnore(for: key, now: now.addingTimeInterval(5))
+    let context = DesktopContextSnapshot(
+        app: .init(name: "System Settings", bundleIdentifier: "com.apple.systempreferences", processIdentifier: 42),
+        window: nil,
+        screen: nil,
+        browser: nil
+    )
+    let tree = DesktopAccessibilityTreeSnapshot(
+        appName: "System Settings",
+        bundleIdentifier: "com.apple.systempreferences",
+        processIdentifier: 42,
+        nodes: [
+            .init(
+                depth: 0,
+                role: "AXWindow",
+                subrole: nil,
+                roleDescription: "window",
+                title: "Accessibility",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: []
+            ),
+            .init(
+                depth: 1,
+                role: "AXStaticText",
+                subrole: nil,
+                roleDescription: "text",
+                title: nil,
+                label: "Failed to enable Accessibility. Permission denied.",
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: []
+            ),
+        ],
+        issue: nil
+    )
+
+    let decision = SidekickProactiveIntentRanker.rank(
+        desktopContext: context,
+        accessibilityTree: tree,
+        feedback: feedback,
+        now: now.addingTimeInterval(10)
+    )
+
+    #expect(feedback.shouldSuppress(now: now.addingTimeInterval(10)))
+    #expect(decision.action == .showOptions)
+    #expect(decision.intent == "explain_or_fix_error")
+    #expect(decision.overridesFeedbackCooldown)
+}
+
+@Test func proactiveIntentRankerAsksWakeModelForAmbiguousDialog() {
+    let context = DesktopContextSnapshot(
+        app: .init(name: "Installer", bundleIdentifier: "com.apple.installer", processIdentifier: 42),
+        window: nil,
+        screen: nil,
+        browser: nil
+    )
+    let tree = DesktopAccessibilityTreeSnapshot(
+        appName: "Installer",
+        bundleIdentifier: "com.apple.installer",
+        processIdentifier: 42,
+        nodes: [
+            .init(
+                depth: 0,
+                role: "AXWindow",
+                subrole: "AXDialog",
+                roleDescription: "dialog",
+                title: "Installer",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: []
+            ),
+            .init(
+                depth: 1,
+                role: "AXButton",
+                subrole: nil,
+                roleDescription: "button",
+                title: "Continue",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: ["AXPress"]
+            ),
+            .init(
+                depth: 1,
+                role: "AXButton",
+                subrole: nil,
+                roleDescription: "button",
+                title: "Cancel",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: ["AXPress"]
+            ),
+        ],
+        issue: nil
+    )
+
+    let decision = SidekickProactiveIntentRanker.rank(
+        desktopContext: context,
+        accessibilityTree: tree
+    )
+
+    #expect(decision.action == .evaluateWithWakeModel)
+    #expect(decision.intent == "help_with_dialog")
+}
+
+@Test func proactiveIntentRankerIgnoresBrowserDebuggingInfobarDialog() {
+    let context = DesktopContextSnapshot(
+        app: .init(name: "Chrome", bundleIdentifier: "com.google.Chrome", processIdentifier: 42),
+        window: .init(
+            title: "Companion Library",
+            ownerName: "Chrome",
+            ownerProcessIdentifier: 42,
+            windowIdentifier: 7,
+            bounds: CGRect(x: 0, y: 0, width: 1200, height: 800)
+        ),
+        screen: nil,
+        browser: .init(title: "Companion Library", url: "https://companion.ai/library")
+    )
+    let tree = DesktopAccessibilityTreeSnapshot(
+        appName: "Chrome",
+        bundleIdentifier: "com.google.Chrome",
+        processIdentifier: 42,
+        nodes: [
+            .init(
+                depth: 0,
+                role: "AXWindow",
+                subrole: nil,
+                roleDescription: "window",
+                title: "Companion Library",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: []
+            ),
+            .init(
+                depth: 1,
+                role: "AXGroup",
+                subrole: "AXDialog",
+                roleDescription: "dialog",
+                title: nil,
+                label: "Chrome is being controlled by automated test software.",
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: []
+            ),
+            .init(
+                depth: 2,
+                role: "AXButton",
+                subrole: nil,
+                roleDescription: "button",
+                title: "Close",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: ["AXPress"]
+            ),
+        ],
+        issue: nil
+    )
+
+    let decision = SidekickProactiveIntentRanker.rank(
+        desktopContext: context,
+        accessibilityTree: tree
+    )
+
+    #expect(decision.action == .doNothing)
+    #expect(decision.intent == "do_nothing")
+}
+
+@Test func proactiveIntentRankerLearnsRepeatedIgnoredNotificationFatigue() throws {
+    let suiteName = "sidekick-feedback-\(UUID().uuidString)"
+    let defaults = try #require(UserDefaults(suiteName: suiteName))
+    defer { defaults.removePersistentDomain(forName: suiteName) }
+    let store = SidekickSuggestionFeedbackStore(defaults: defaults)
+    let key = SidekickSuggestionFeedbackKey(appIdentifier: "com.apple.MobileSMS", surface: "general")
+    let now = Date(timeIntervalSince1970: 4_000)
+    store.recordImpression(for: key, now: now)
+    _ = store.recordIgnore(for: key, now: now.addingTimeInterval(5))
+    store.recordImpression(for: key, now: now.addingTimeInterval(200))
+    let feedback = store.recordIgnore(for: key, now: now.addingTimeInterval(205))
+    let context = DesktopContextSnapshot(
+        app: .init(name: "Messages", bundleIdentifier: "com.apple.MobileSMS", processIdentifier: 42),
+        window: nil,
+        screen: nil,
+        browser: nil
+    )
+    let tree = DesktopAccessibilityTreeSnapshot(
+        appName: "Messages",
+        bundleIdentifier: "com.apple.MobileSMS",
+        processIdentifier: 42,
+        nodes: [
+            .init(
+                depth: 0,
+                role: "AXWindow",
+                subrole: nil,
+                roleDescription: "window",
+                title: "Messages",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: []
+            ),
+            .init(
+                depth: 1,
+                role: "AXStaticText",
+                subrole: nil,
+                roleDescription: "text",
+                title: nil,
+                label: "Unread message from Sam",
+                value: nil,
+                identifier: nil,
+                focused: false,
+                frame: nil,
+                actions: []
+            ),
+        ],
+        issue: nil
+    )
+
+    let decision = SidekickProactiveIntentRanker.rank(
+        desktopContext: context,
+        accessibilityTree: tree,
+        feedback: feedback,
+        now: now.addingTimeInterval(210)
+    )
+
+    #expect(feedback.shouldSuppress(now: now.addingTimeInterval(210)))
+    #expect(decision.action == .watchForChange)
+    #expect(decision.intent == "handle_notification")
 }
 
 @Test func brainFallbackPolicyOffersChatGPTForClaudeUsageLimit() {
@@ -1658,10 +2241,13 @@ private extension SidekickBackgroundScreenSuggestionState {
 @Test @MainActor func sidekickBubbleAutoHidesChoicesWhenConfigured() {
     let bubble = SidekickBubbleController()
     defer { bubble.hide() }
+    let probe = AutoHideProbe()
 
     bubble.showChoices("Pick one.", choices: [
         .init(title: "Do it") {},
-    ], autoHide: 0.05)
+    ], autoHide: 0.05) {
+        probe.didFire = true
+    }
 
     #expect(bubble.isPresentingChoices)
     let deadline = Date().addingTimeInterval(0.5)
@@ -1669,6 +2255,7 @@ private extension SidekickBackgroundScreenSuggestionState {
         _ = RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(0.02))
     }
     #expect(bubble.isVisible == false)
+    #expect(probe.didFire)
 }
 
 @Test @MainActor func sidekickBubbleDoesNotOpenInputWhileChoicePromptIsTyping() {
@@ -1999,11 +2586,15 @@ private extension SidekickBackgroundScreenSuggestionState {
     let prompt = SidekickInvocationSuggestions.recommendationPrompt()
     #expect(prompt.contains("one short bubble line and exactly 3 useful things"))
     #expect(prompt.contains("exact intention may not be clear"))
+    #expect(prompt.contains("current accessibility tree and desktop metadata"))
     #expect(prompt.contains("infer why the user probably invoked Sidekick right now"))
     #expect(prompt.contains("structured recommendation response fields"))
+    #expect(prompt.contains("Use the AX tree as the primary signal"))
+    #expect(prompt.contains("Do not ask for OCR or a screenshot just to recommend these options"))
     #expect(prompt.contains("Pick options by intent, not by app category"))
     #expect(prompt.contains("on this exact screen"))
     #expect(prompt.contains("Do not include a manual \"something else\" option"))
+    #expect(prompt.contains("current screen screenshot") == false)
     #expect(prompt.contains("Return only") == false)
     #expect(prompt.contains("JSON") == false)
     #expect(prompt.contains(#""message""#) == false)
@@ -2076,13 +2667,13 @@ private extension SidekickBackgroundScreenSuggestionState {
     #expect(SidekickSpec.current.animation(for: .attention)?.animationName == "GetAttention")
 }
 
-@Test func onboardingDemoSendsPlainGroundingRequestThroughNormalPipeline() {
+@Test func onboardingControlsDoNotRunScreenOrFilePermissionDemo() {
     let request = SidekickOnboardingDemo.demoRequestText
 
-    // The demo is a normal turn: a short, natural request a user could type —
-    // no bespoke demo prompt and none of the "avoid private content" hedging the
-    // real product never applies. Sidekick runs locally on the user's own screen.
-    #expect(request == "Point out something interesting on my screen.")
+    #expect(request == "")
+    #expect(SidekickOnboardingDemo.guidedIntroText == "")
+    #expect(SidekickOnboardingDemo.guidedWorkingText == "")
+    #expect(SidekickOnboardingDemo.visibleTaskLine == "")
     #expect(request.contains("[POINT") == false)
     #expect(request.contains("[HIGHLIGHT") == false)
     #expect(request.localizedCaseInsensitiveContains("do not quote") == false)
@@ -2090,18 +2681,12 @@ private extension SidekickBackgroundScreenSuggestionState {
     #expect(request.localizedCaseInsensitiveContains("sensitive") == false)
     #expect(request.localizedCaseInsensitiveContains("onboarding demo task") == false)
 
-    // It flows through the regular routing: the pipeline recognizes the pointing
-    // intent and grounds on the live screen, and stays passive (no app driving).
-    #expect(SidekickAgentInstructions.shouldUseScreenAnnotationTool(text: request, inputMode: .text))
+    #expect(SidekickAgentInstructions.shouldAttachScreenshot(text: request, inputMode: .text) == false)
+    #expect(SidekickAgentInstructions.shouldUseScreenAnnotationTool(text: request, inputMode: .text) == false)
     #expect(SidekickAgentInstructions.shouldUseComputerControl(text: request, inputMode: .text) == false)
 
-    #expect(SidekickOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("screen"))
-    #expect(SidekickOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("point"))
-    #expect(SidekickOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("window") == false)
-    #expect(SidekickOnboardingDemo.guidedIntroText.localizedCaseInsensitiveContains("input") == false)
-    #expect(SidekickOnboardingDemo.guidedWorkingText == "Looking at your screen")
-    #expect(SidekickOnboardingDemo.visibleTaskLine == "")
-    // Controls trimmed to the essentials: core shortcuts stay, annotation trivia is gone.
+    #expect(SidekickOnboardingDemo.controlsText.localizedCaseInsensitiveContains("screen") == false)
+    #expect(SidekickOnboardingDemo.controlsText.localizedCaseInsensitiveContains("full disk") == false)
     #expect(SidekickOnboardingDemo.controlsText.localizedCaseInsensitiveContains("click me"))
     #expect(SidekickOnboardingDemo.controlsText.localizedCaseInsensitiveContains("double-click me"))
     #expect(SidekickOnboardingDemo.controlsText.contains("Control+Space"))
@@ -2116,9 +2701,12 @@ private extension SidekickBackgroundScreenSuggestionState {
     #expect(SidekickOnboardingResumePoint.defaultsKey == "SidekickOnboardingResumePoint")
     #expect(SidekickOnboardingResumePoint.savedPoint(from: nil) == .welcome)
     #expect(SidekickOnboardingResumePoint.savedPoint(from: "not-a-step") == .welcome)
-    #expect(SidekickOnboardingResumePoint.savedPoint(from: "permission") == .screenHelp)
-    #expect(SidekickOnboardingResumePoint.savedPoint(from: "permissionWalkthrough") == .screenHelp)
-    #expect(SidekickOnboardingResumePoint.savedPoint(from: "demoComposer") == .demo)
+    #expect(SidekickOnboardingResumePoint.savedPoint(from: "permission") == .controls)
+    #expect(SidekickOnboardingResumePoint.savedPoint(from: "permissionWalkthrough") == .controls)
+    #expect(SidekickOnboardingResumePoint.savedPoint(from: "screenHelp") == .controls)
+    #expect(SidekickOnboardingResumePoint.savedPoint(from: "fileAccess") == .controls)
+    #expect(SidekickOnboardingResumePoint.savedPoint(from: "demo") == .controls)
+    #expect(SidekickOnboardingResumePoint.savedPoint(from: "demoComposer") == .controls)
     #expect(SidekickOnboardingResumePoint.allCases.contains(.screenHelp))
     #expect(SidekickOnboardingResumePoint.allCases.contains(.fileAccess))
     #expect(SidekickOnboardingResumePoint.allCases.contains(.controls))
@@ -2209,6 +2797,26 @@ private extension SidekickBackgroundScreenSuggestionState {
     #expect(animator.isAnimationRunning == false)
 }
 
+@Test @MainActor func sidekickAnimatorKeepsMerlinVisibleAfterBlankTerminatorFrame() throws {
+    let root = characterRoot("Merlin")
+    let sheet = try SidekickSpriteSheet(packRoot: root)
+    let renderer = SpriteKitRasterCharacterRenderer(size: sheet.frameSize)
+    let animator = SidekickAnimator(sheet: sheet, renderer: renderer)
+    var ended = false
+
+    #expect(animator.play("GetAttention") { _, state in
+        ended = state == .exited
+    })
+    for _ in 0..<20 where ended == false {
+        animator.advanceFrameSynchronouslyForTesting()
+    }
+
+    #expect(ended)
+    #expect(animator.isAnimationRunning == false)
+    #expect(renderer.sprite.isHidden == false)
+    #expect(renderer.sprite.texture != nil)
+}
+
 @Test @MainActor func sidekickWindowMoveReportsFrameChanges() {
     let controller = SidekickWindowController(
         rendererView: NSView(frame: CGRect(origin: .zero, size: CGSize(width: 24, height: 24))),
@@ -2223,6 +2831,20 @@ private extension SidekickBackgroundScreenSuggestionState {
 
     #expect(reportedFrame?.origin == CGPoint(x: 120, y: 140))
     #expect(reportedFrame?.size == CGSize(width: 24, height: 24))
+}
+
+@Test @MainActor func sidekickWindowCanCarryPermissionBundleDuringCharacterDrag() {
+    let controller = SidekickWindowController(
+        rendererView: NSView(frame: CGRect(origin: .zero, size: CGSize(width: 24, height: 24))),
+        size: CGSize(width: 24, height: 24)
+    ) { _ in true }
+    let appURL = URL(fileURLWithPath: "/Applications/Sidekick.app", isDirectory: true)
+
+    controller.permissionDragAppURL = appURL
+
+    #expect(controller.permissionDragAppURL == appURL)
+    controller.permissionDragAppURL = nil
+    #expect(controller.permissionDragAppURL == nil)
 }
 
 @Test @MainActor func sidekickWindowSingleClickActivatesAfterDoubleClickWindow() async throws {

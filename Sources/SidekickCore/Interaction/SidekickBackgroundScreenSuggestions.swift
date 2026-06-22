@@ -97,22 +97,34 @@ public enum SidekickBackgroundScreenSuggestions {
         ],
     ])
 
-    public static func wakePrompt() -> String {
-        """
+    public static func wakePrompt(
+        feedback: SidekickSuggestionFeedbackSummary? = nil,
+        localDecision: SidekickProactiveIntentDecision? = nil,
+        now: Date = Date()
+    ) -> String {
+        var prompt = """
         [Sidekick idle background screen wake check]
-        Sidekick is quietly checking the screen while the user is idle. This check may run every few seconds, so be very selective.
+        Sidekick is quietly checking the current desktop state while the user is idle. This check may run every few seconds, so be very selective.
 
         Decide whether Sidekick should interrupt by showing option buttons now.
+        Use the accessibility tree as the primary signal: UI text, unread/error states, controls, focused fields, and available actions.
 
-        Return shouldShowOptions=true only when the current screen clearly has a high-value, timely, actionable thing Sidekick can help with, such as:
+        Return shouldShowOptions=true only when the current AX tree clearly has a high-value, timely, actionable thing Sidekick can help with, such as:
         - an error, failed action, blocked setup, or confusing modal
         - a message/composer/form where drafting, explaining, or choosing the next step is plainly useful
         - a visible decision point with meaningful choices
-        - an urgent notification or reminder visible on screen
+        - an urgent notification or reminder exposed in the accessibility tree
 
         Return false for passive reading, normal browsing, dashboards, videos, finished work, idle desktops, already-visible Sidekick choices, or anything that is merely visible but not asking for help.
         This wake check does not perform the task and does not write option labels. It only decides whether the medium option generator should run.
         """
+        if let localDecision {
+            prompt += "\n\n\(localDecision.promptBlock)"
+        }
+        if let feedbackBlock = feedback?.promptBlock(now: now) {
+            prompt += "\n\n\(feedbackBlock)"
+        }
+        return prompt
     }
 
     public static func parseWakeDecision(from text: String) -> SidekickBackgroundScreenWakeDecision? {
