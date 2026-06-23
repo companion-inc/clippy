@@ -1,6 +1,6 @@
 # Sidekick Migration Status
 
-Understanding: 99/100 - current repo state, prior rename memory, local clippy.js source, imported packs, generic sidekick selection, character-aware prompts, wrapped option headers, product paths, release scripts, CI rename, folder/remote rename, packaging, live relaunch, command-channel sidekick switching, and immediate post-switch rendering are verified. Prompt-layer files remain intentionally untouched because their prerequisite editing skills are unavailable locally.
+Understanding: 99/100 - current repo state, prior rename memory, local clippy.js source, imported packs, generic sidekick selection, character-aware prompts, wrapped option headers, product paths, release scripts, CI rename, folder/remote rename, README character roster, packaging, live relaunch, command-channel sidekick switching, and immediate post-switch rendering are verified. Prompt-layer files remain intentionally untouched because their prerequisite editing skills are unavailable locally.
 
 ## Goal
 
@@ -59,3 +59,4 @@ Rename the product/repo/folder from Clippy to Sidekick, keep Clippy as one selec
 - Verification: `Scripts/package-sidekick-app.sh debug` built and signed `.build/debug/Sidekick.app`.
 - Verification: relaunched `.build/debug/Sidekick.app`; live `Sidekick` PID is 37157 at `/Users/advaitpaliwal/Companion/Code/sidekick/.build/arm64-apple-macosx/debug/Sidekick.app/Contents/MacOS/Sidekick`, with `SidekickComputerUseRuntime` PID 37224 and `SidekickRecordReplayMCP` PID 37227.
 - Verification: immediate `sidekick:bonzi` plus `snapshot` produced visible `/tmp/frame-99.png`; `/tmp/chat.png` showed `Switched to Bonzi.`.
+- Updated `README.md` so Sidekick is the product shell, Clippy is one selectable character, and the full Bonzi, Clippy, F1, Genie, Genius, Links, Merlin, Peedy, Rocky, and Rover roster is listed with repo-backed animation examples.
