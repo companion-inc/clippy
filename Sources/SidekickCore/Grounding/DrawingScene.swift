@@ -177,7 +177,7 @@ public struct DrawingObject: Equatable, Sendable {
         case let .path(points, shape):
             let length = Self.pathLength(points, closesPath: shape == .polygon)
             return TimeInterval(min(1.25, max(0.35, Double(length / 900))))
-        case .ring, .region:
+        case .ring, .region, .rectangle:
             return 0.18
         }
     }
@@ -217,6 +217,7 @@ public enum DrawingGeometry: Equatable, Sendable {
     case dot(center: CGPoint)
     case ring(center: CGPoint, radius: CGFloat, kind: AnnotationMark.RingKind)
     case region(center: CGPoint, radius: CGFloat)
+    case rectangle(frame: CGRect)
     case path(points: [CGPoint], shape: GroundingTag.ShapeKind)
 
     public init?(mark: AnnotationMark, referenceFrame: CGRect) {
@@ -227,6 +228,8 @@ public enum DrawingGeometry: Equatable, Sendable {
             self = .ring(center: center.local(to: referenceFrame), radius: radius, kind: kind)
         case let .region(center, radius):
             self = .region(center: center.local(to: referenceFrame), radius: radius)
+        case let .rectangle(frame):
+            self = .rectangle(frame: frame.local(to: referenceFrame))
         case let .path(points, shape):
             self = .path(points: points.map { $0.local(to: referenceFrame) }, shape: shape)
         case let .partialPath(points, shape, _):
@@ -242,6 +245,8 @@ public enum DrawingGeometry: Equatable, Sendable {
             return .ring(center: center.global(from: referenceFrame), radius: radius, kind: kind)
         case let .region(center, radius):
             return .region(center: center.global(from: referenceFrame), radius: radius)
+        case let .rectangle(frame):
+            return .rectangle(frame: frame.global(from: referenceFrame))
         case let .path(points, shape):
             let globalPoints = points.map { $0.global(from: referenceFrame) }
             guard let progress = drawProgress, progress < 0.999 else {
@@ -257,6 +262,8 @@ public enum DrawingGeometry: Equatable, Sendable {
             return center.global(from: referenceFrame)
         case let .ring(center, _, _), let .region(center, _):
             return center.global(from: referenceFrame)
+        case let .rectangle(frame):
+            return CGPoint(x: frame.midX, y: frame.midY).global(from: referenceFrame)
         case let .path(points, _):
             return points.first?.global(from: referenceFrame)
         }
@@ -266,7 +273,7 @@ public enum DrawingGeometry: Equatable, Sendable {
         switch self {
         case let .path(points, _):
             return points.map { $0.global(from: referenceFrame) }
-        case .dot, .ring, .region:
+        case .dot, .ring, .region, .rectangle:
             return nil
         }
     }
@@ -279,5 +286,15 @@ private extension CGPoint {
 
     func global(from frame: CGRect) -> CGPoint {
         CGPoint(x: x + frame.minX, y: y + frame.minY)
+    }
+}
+
+private extension CGRect {
+    func local(to frame: CGRect) -> CGRect {
+        CGRect(x: minX - frame.minX, y: minY - frame.minY, width: width, height: height)
+    }
+
+    func global(from frame: CGRect) -> CGRect {
+        CGRect(x: minX + frame.minX, y: minY + frame.minY, width: width, height: height)
     }
 }

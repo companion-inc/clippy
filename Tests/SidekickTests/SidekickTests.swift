@@ -929,6 +929,94 @@ private extension SidekickBackgroundScreenSuggestionState {
     #expect(bubble.debugCitationText == "")
 }
 
+@Test func sidekickBubbleUsesSidePlacementAtTopLeftEdge() {
+    let visible = CGRect(x: 0, y: 0, width: 1_000, height: 800)
+    let anchor = CGRect(x: 40, y: 640, width: 160, height: 160)
+    let contentSize = CGSize(width: 200, height: 70)
+
+    let placement = SidekickBubbleController.bubblePlacement(
+        anchorFrame: anchor,
+        contentSize: contentSize,
+        visibleFrame: visible
+    )
+    let bubbleFrame = CGRect(origin: placement.origin, size: placement.size)
+
+    #expect(placement.tailEdge == .left)
+    #expect(bubbleFrame.minX >= anchor.maxX)
+    #expect(bubbleFrame.maxX <= visible.maxX - 8)
+    #expect(bubbleFrame.maxY <= visible.maxY - 8)
+    #expect(bubbleFrame.intersects(anchor) == false)
+}
+
+@Test func sidekickBubbleUsesSidePlacementAtTopRightEdge() {
+    let visible = CGRect(x: 0, y: 0, width: 1_000, height: 800)
+    let anchor = CGRect(x: 800, y: 640, width: 160, height: 160)
+    let contentSize = CGSize(width: 200, height: 70)
+
+    let placement = SidekickBubbleController.bubblePlacement(
+        anchorFrame: anchor,
+        contentSize: contentSize,
+        visibleFrame: visible
+    )
+    let bubbleFrame = CGRect(origin: placement.origin, size: placement.size)
+
+    #expect(placement.tailEdge == .right)
+    #expect(bubbleFrame.maxX <= anchor.minX)
+    #expect(bubbleFrame.minX >= visible.minX + 8)
+    #expect(bubbleFrame.maxY <= visible.maxY - 8)
+    #expect(bubbleFrame.intersects(anchor) == false)
+}
+
+@Test func sidekickBubbleStillPrefersAbovePlacementAwayFromTopEdge() {
+    let visible = CGRect(x: 0, y: 0, width: 1_000, height: 800)
+    let anchor = CGRect(x: 420, y: 300, width: 160, height: 160)
+    let contentSize = CGSize(width: 200, height: 70)
+
+    let placement = SidekickBubbleController.bubblePlacement(
+        anchorFrame: anchor,
+        contentSize: contentSize,
+        visibleFrame: visible
+    )
+    let bubbleFrame = CGRect(origin: placement.origin, size: placement.size)
+
+    #expect(placement.tailEdge == .bottom)
+    #expect(bubbleFrame.minY >= anchor.maxY)
+    #expect(bubbleFrame.minX >= visible.minX + 8)
+    #expect(bubbleFrame.maxX <= visible.maxX - 8)
+    #expect(bubbleFrame.intersects(anchor) == false)
+}
+
+@Test @MainActor func visibleSidekickBubbleRepositionsWhenAnchorMovesAcrossTopEdge() {
+    guard let visible = NSScreen.main?.visibleFrame else { return }
+    let size = CGSize(width: 160, height: 160)
+    let leftAnchor = CGRect(
+        x: visible.minX + 24,
+        y: visible.maxY - size.height,
+        width: size.width,
+        height: size.height
+    )
+    let rightAnchor = CGRect(
+        x: visible.maxX - size.width - 24,
+        y: visible.maxY - size.height,
+        width: size.width,
+        height: size.height
+    )
+    let bubble = SidekickBubbleController()
+    defer { bubble.hide() }
+
+    bubble.setAnchor(leftAnchor)
+    bubble.openInput(prefilledText: "move with me")
+    let leftFrame = bubble.window.frame
+
+    bubble.setAnchor(rightAnchor)
+    let rightFrame = bubble.window.frame
+
+    #expect(leftFrame.minX >= leftAnchor.maxX)
+    #expect(rightFrame.maxX <= rightAnchor.minX)
+    #expect(leftFrame.intersects(leftAnchor) == false)
+    #expect(rightFrame.intersects(rightAnchor) == false)
+}
+
 @Test func sidekickAgentInstructionsExposeRichImageCardContract() {
     #expect(SidekickAgentInstructions.systemPrompt.contains("Rich image answers"))
     #expect(SidekickAgentInstructions.systemPrompt.contains("![short caption](direct-image-url-or-local-file-path)"))
@@ -1078,7 +1166,7 @@ private extension SidekickBackgroundScreenSuggestionState {
         workingDirectory: nil,
         systemPrompt: nil,
         computerUseRuntime: MCPServerRuntime(serverName: "cua-driver", command: "/tmp/cua-driver", args: ["mcp"], enabledTools: ["click"]),
-        annotationRuntime: MCPServerRuntime(serverName: "sidekick-annotation", command: "/tmp/SidekickMCP", enabledTools: ["annotate"]),
+        annotationRuntime: MCPServerRuntime(serverName: "sidekick-annotation", command: "/tmp/SidekickMCP", enabledTools: ["annotate", "clear_annotations", "outline_components"]),
         recordReplayRuntime: MCPServerRuntime(serverName: "sidekick-record-replay", command: "/tmp/SidekickRecordReplayMCP", enabledTools: ["event_stream_start", "event_stream_status", "event_stream_stop"]),
         diagnosticsLogURL: nil
     )
@@ -1094,7 +1182,7 @@ private extension SidekickBackgroundScreenSuggestionState {
     #expect(logged.contains(#""sidekick-annotation""#))
     #expect(logged.contains(#""sidekick-record-replay""#))
     #expect(logged.contains(#""enabled_tools":["click"]"#))
-    #expect(logged.contains(#""enabled_tools":["annotate"]"#))
+    #expect(logged.contains(#""enabled_tools":["annotate","clear_annotations","outline_components"]"#))
     #expect(logged.contains(#""event_stream_start""#))
 }
 

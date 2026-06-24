@@ -11,7 +11,7 @@ public enum SidekickAnnotationMCPConfig {
                 return MCPServerRuntime(
                     serverName: "sidekick-annotation",
                     command: path,
-                    enabledTools: ["annotate", "clear_annotations"]
+                    enabledTools: ["annotate", "clear_annotations", "outline_components"]
                 )
             }
         }

@@ -171,6 +171,8 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
     private var ttsSpokenChars = 0   // how much of the streaming reply has been queued to TTS
     private var streamingReplySegmentID: String?
     private var commandTimer: Timer?
+    private var bubbleAnchorTimer: Timer?
+    private var lastBubbleAnchorFrame: CGRect?
     private var activeActivityState: AgentActivityState = .idle
     private var activeTurnUsedUserAnnotation = false
     private var turnGeneration = 0
@@ -284,6 +286,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         stopBackgroundScreenSuggestions()
         annotationHold?.stop()
         userAnnotationController?.cancel()
+        stopBubbleAnchorTracking()
         stopWakeWordMonitor()
         ptt?.stop()
         ProcessInfo.processInfo.enableAutomaticTermination(Self.automaticTerminationReason)
@@ -328,8 +331,9 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
             self?.handleSubmittedText(text)
         }
         sidekickCharacter.windowController.onFrameChanged = { [weak self] frame in
-            self?.chatBubble?.setAnchor(frame, repositionVisible: false)
+            self?.syncBubbleAnchorToSidekick(frame: frame)
         }
+        startBubbleAnchorTracking()
         sidekickCharacter.windowController.rightClickHandler = { [weak self] event, view in
             let point = view.window?.convertPoint(toScreen: event.locationInWindow) ?? NSEvent.mouseLocation
             self?.showRetroMenu(topLeft: point)
@@ -433,6 +437,13 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
             return
         }
         log("\(recommendationLogPrefix) ax-tree: nodes=\(accessibilityTree.nodes.count)")
+        if proactiveAutoHide == false {
+            showComponentOutlines(
+                for: accessibilityTree,
+                context: context,
+                reason: "double-click"
+            )
+        }
         lastShots = []
         lastShot = nil
         let prompt = SidekickAgentInstructions.brainMessage(
@@ -559,6 +570,39 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
     private func showInvocationFallback() {
         _ = playOnce("GetAttention")
         showTextInputBubble()
+    }
+
+    private func showFocusedAppComponentOutlines(reason: String) {
+        let context = DesktopContextSnapshot.capture()
+        let accessibilityTree = DesktopAccessibilityTreeSnapshot.capture(desktopContext: context)
+        guard accessibilityTree.nodes.isEmpty == false else {
+            let issue = accessibilityTree.issue.map { " issue=\($0)" } ?? ""
+            log("component-outlines skipped reason=\(reason)\(issue)")
+            return
+        }
+        showComponentOutlines(for: accessibilityTree, context: context, reason: reason)
+    }
+
+    private func showComponentOutlines(
+        for accessibilityTree: DesktopAccessibilityTreeSnapshot,
+        context: DesktopContextSnapshot,
+        reason: String
+    ) {
+        let frames = accessibilityTree.componentOutlineFrames(screen: context.screen, limit: 12)
+        let marks = frames.map { AnnotationMark.rectangle(frame: $0) }
+        guard marks.isEmpty == false else {
+            log("component-outlines empty reason=\(reason)")
+            return
+        }
+        let scene: DrawingScene
+        if let anchor = DrawingWindowAnchor(desktopContext: context) {
+            scene = DrawingScene(marks: marks, anchor: .window(anchor))
+        } else {
+            scene = DrawingScene(marks: marks)
+        }
+        let screen = context.targetScreen() ?? screenForSidekick()
+        overlay?.show(scene, on: screen)
+        log("component-outlines shown reason=\(reason) count=\(marks.count) source=ax")
     }
 
     private func switchSidekick(to rawID: String, announce: Bool = true) {
@@ -2398,10 +2442,31 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func syncBubbleAnchorToSidekick() {
-        if let frame = sidekickCharacter?.frame {
-            chatBubble?.setAnchor(frame)
+    private func startBubbleAnchorTracking() {
+        stopBubbleAnchorTracking()
+        syncBubbleAnchorToSidekick()
+        bubbleAnchorTimer = Timer.scheduledTimer(withTimeInterval: 0.08, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.syncBubbleAnchorToSidekick()
+            }
         }
+    }
+
+    private func stopBubbleAnchorTracking() {
+        bubbleAnchorTimer?.invalidate()
+        bubbleAnchorTimer = nil
+        lastBubbleAnchorFrame = nil
+    }
+
+    private func syncBubbleAnchorToSidekick(frame providedFrame: CGRect? = nil) {
+        guard let frame = providedFrame ?? sidekickCharacter?.frame else {
+            return
+        }
+        guard lastBubbleAnchorFrame?.equalTo(frame) != true else {
+            return
+        }
+        lastBubbleAnchorFrame = frame
+        chatBubble?.setAnchor(frame)
     }
 
     /// Speak the reply as it streams: enqueue each newly-completed sentence (tags
@@ -4552,7 +4617,7 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
 
     /// With SIDEKICK_CMD_FILE set, polls a command file so the app can be driven
     /// headlessly: `ask:<text>`, `askfront:<bundle>|<url>|<text>`, `open`,
-    /// `snapshot`, `sidekick:<id>`, `ground:`, `groundshot:`, `move:`, `park:`, `state:`.
+    /// `snapshot`, `outline`, `sidekick:<id>`, `ground:`, `groundshot:`, `move:`, `park:`, `state:`.
     private func startCommandChannel() {
         // Always on: the local MCP server (SidekickMCP) relays the model's tool calls
         // into this file, and debug commands use it too. Env var overrides the path.
@@ -4595,6 +4660,8 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
             } else if command == "snapshot" {
                 writeSnapshot(index: 99, directory: snapshotDirectory ?? "/tmp")
                 writeChatSnapshot(directory: snapshotDirectory ?? "/tmp")
+            } else if command == "outline" {
+                showFocusedAppComponentOutlines(reason: "debug-command")
             } else if command.hasPrefix("move:") {
                 moveSidekick(command: String(command.dropFirst(5)))
             } else if command.hasPrefix("park:") {

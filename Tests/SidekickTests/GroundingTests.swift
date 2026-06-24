@@ -129,6 +129,25 @@ import Testing
     ])
 }
 
+@Test func windowAnchoredDrawingSceneReprojectsRectanglesWhenWindowMoves() {
+    let anchor = DrawingWindowAnchor(
+        ownerProcessIdentifier: 42,
+        windowIdentifier: 7,
+        ownerName: "TestApp",
+        title: "Demo",
+        browserURL: nil,
+        initialFrame: CGRect(x: 100, y: 200, width: 400, height: 300)
+    )
+    let mark = AnnotationMark.rectangle(frame: CGRect(x: 150, y: 260, width: 90, height: 34))
+    let scene = DrawingScene(marks: [mark], anchor: .window(anchor))
+
+    let moved = CGRect(x: 320, y: 480, width: 400, height: 300)
+    #expect(scene.resolvedMarks(windowFrameProvider: { _ in moved }) == [
+        .rectangle(frame: CGRect(x: 370, y: 540, width: 90, height: 34)),
+    ])
+    #expect(scene.primaryPoint(windowFrameProvider: { _ in moved }) == CGPoint(x: 415, y: 557))
+}
+
 @Test func windowAnchoredDrawingSceneReprojectsPointDotsWhenWindowMoves() {
     let anchor = DrawingWindowAnchor(
         ownerProcessIdentifier: 42,
@@ -235,6 +254,116 @@ import Testing
 
     #expect(DesktopContextSnapshot.appKitFrame(for: window, screen: screen)
         == CGRect(x: 100, y: 450, width: 400, height: 300))
+}
+
+@Test func accessibilityTreeComponentOutlinesConvertAXFramesToAppKitRectangles() {
+    let screen = DesktopContextSnapshot.ScreenInfo(
+        index: 0,
+        appKitFrame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+        displayBounds: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+        displayIdentifier: 1
+    )
+    let tree = DesktopAccessibilityTreeSnapshot(
+        appName: "Demo",
+        bundleIdentifier: "com.example.demo",
+        processIdentifier: 42,
+        nodes: [
+            .init(
+                depth: 0,
+                role: "AXWindow",
+                subrole: nil,
+                roleDescription: "standard window",
+                title: "Demo",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: true,
+                frame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+                actions: []
+            ),
+            .init(
+                depth: 1,
+                role: "AXButton",
+                subrole: nil,
+                roleDescription: "button",
+                title: "Continue",
+                label: nil,
+                value: nil,
+                identifier: "continue",
+                focused: nil,
+                frame: CGRect(x: 120, y: 50, width: 96, height: 32),
+                actions: ["AXPress"]
+            ),
+            .init(
+                depth: 1,
+                role: "AXTextField",
+                subrole: nil,
+                roleDescription: "text field",
+                title: nil,
+                label: "Search",
+                value: nil,
+                identifier: "search",
+                focused: true,
+                frame: CGRect(x: 240, y: 700, width: 200, height: 36),
+                actions: []
+            ),
+        ],
+        issue: nil
+    )
+
+    let frames = tree.componentOutlineFrames(screen: screen, limit: 8)
+
+    #expect(frames.contains(CGRect(x: 120, y: 718, width: 96, height: 32)))
+    #expect(frames.contains(CGRect(x: 240, y: 64, width: 200, height: 36)))
+    #expect(frames.contains(CGRect(x: 0, y: 0, width: 1_000, height: 800)) == false)
+    #expect(tree.componentOutlineMarks(screen: screen, limit: 1).count == 1)
+}
+
+@Test func accessibilityTreeComponentOutlinesDeduplicateNestedControls() {
+    let screen = DesktopContextSnapshot.ScreenInfo(
+        index: 0,
+        appKitFrame: CGRect(x: 0, y: 0, width: 900, height: 700),
+        displayBounds: CGRect(x: 0, y: 0, width: 900, height: 700),
+        displayIdentifier: 1
+    )
+    let tree = DesktopAccessibilityTreeSnapshot(
+        appName: "Demo",
+        bundleIdentifier: nil,
+        processIdentifier: 42,
+        nodes: [
+            .init(
+                depth: 1,
+                role: "AXButton",
+                subrole: nil,
+                roleDescription: "button",
+                title: "Save",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: nil,
+                frame: CGRect(x: 300, y: 100, width: 90, height: 30),
+                actions: ["AXPress"]
+            ),
+            .init(
+                depth: 2,
+                role: "AXStaticText",
+                subrole: nil,
+                roleDescription: "text",
+                title: nil,
+                label: "Save",
+                value: nil,
+                identifier: nil,
+                focused: nil,
+                frame: CGRect(x: 301, y: 101, width: 88, height: 28),
+                actions: ["AXPress"]
+            ),
+        ],
+        issue: nil
+    )
+
+    #expect(tree.componentOutlineFrames(screen: screen, limit: 8) == [
+        CGRect(x: 300, y: 570, width: 90, height: 30),
+    ])
 }
 
 @Test func keepsMultipleTagsInDocumentOrder() {

@@ -296,3 +296,213 @@ public struct DesktopAccessibilityTreeSnapshot: Equatable, Sendable {
         return String(trimmed.prefix(240))
     }
 }
+
+extension DesktopAccessibilityTreeSnapshot {
+    public func componentOutlineMarks(
+        screen: DesktopContextSnapshot.ScreenInfo? = nil,
+        limit: Int = 24
+    ) -> [AnnotationMark] {
+        componentOutlineFrames(screen: screen, limit: limit).map { .rectangle(frame: $0) }
+    }
+
+    public func componentOutlineFrames(
+        screen: DesktopContextSnapshot.ScreenInfo? = nil,
+        limit: Int = 24
+    ) -> [CGRect] {
+        guard limit > 0 else { return [] }
+        let candidates = nodes.enumerated().compactMap { index, node -> ComponentOutlineCandidate? in
+            guard let score = node.componentOutlineScore,
+                  let rawFrame = node.frame?.standardized,
+                  rawFrame.width >= 8,
+                  rawFrame.height >= 8,
+                  let appKitFrame = DesktopContextSnapshot.appKitFrame(forDisplayBounds: rawFrame, screen: screen)
+            else {
+                return nil
+            }
+
+            let clippedFrame: CGRect
+            if let screen {
+                let intersection = appKitFrame.standardized.intersection(screen.appKitFrame)
+                guard intersection.isNull == false, intersection.width >= 8, intersection.height >= 8 else {
+                    return nil
+                }
+                clippedFrame = intersection
+                let screenArea = max(1, screen.appKitFrame.area)
+                guard clippedFrame.area <= screenArea * 0.45 || node.focused == true else {
+                    return nil
+                }
+            } else {
+                clippedFrame = appKitFrame.standardized
+            }
+
+            return ComponentOutlineCandidate(
+                index: index,
+                frame: Self.pixelAligned(clippedFrame),
+                score: score,
+                area: clippedFrame.area
+            )
+        }
+
+        var selected: [CGRect] = []
+        for candidate in candidates.sorted(by: ComponentOutlineCandidate.precedes) {
+            guard selected.contains(where: { Self.isDuplicate(candidate.frame, of: $0) }) == false else {
+                continue
+            }
+            selected.append(candidate.frame)
+            if selected.count >= limit {
+                break
+            }
+        }
+        return selected
+    }
+
+    private static func pixelAligned(_ rect: CGRect) -> CGRect {
+        CGRect(
+            x: rect.minX.rounded(),
+            y: rect.minY.rounded(),
+            width: rect.width.rounded(),
+            height: rect.height.rounded()
+        )
+    }
+
+    private static func isDuplicate(_ lhs: CGRect, of rhs: CGRect) -> Bool {
+        let intersection = lhs.intersection(rhs)
+        guard intersection.isNull == false else { return false }
+        let overlap = intersection.area / max(1, min(lhs.area, rhs.area))
+        let sameSize = abs(lhs.width - rhs.width) <= 2 && abs(lhs.height - rhs.height) <= 2
+        let sameOrigin = abs(lhs.minX - rhs.minX) <= 2 && abs(lhs.minY - rhs.minY) <= 2
+        return overlap > 0.92 || (sameSize && sameOrigin)
+    }
+}
+
+private struct ComponentOutlineCandidate {
+    let index: Int
+    let frame: CGRect
+    let score: Int
+    let area: CGFloat
+
+    static func precedes(_ lhs: ComponentOutlineCandidate, _ rhs: ComponentOutlineCandidate) -> Bool {
+        if lhs.score != rhs.score {
+            return lhs.score > rhs.score
+        }
+        if lhs.area != rhs.area {
+            return lhs.area < rhs.area
+        }
+        return lhs.index < rhs.index
+    }
+}
+
+private enum ComponentOutlineHeuristics {
+    static let primaryRoles: Set<String> = [
+        "AXButton",
+        "AXCheckBox",
+        "AXRadioButton",
+        "AXPopUpButton",
+        "AXComboBox",
+        "AXTextField",
+        "AXTextArea",
+        "AXSearchField",
+        "AXSlider",
+        "AXLink",
+        "AXMenuItem",
+        "AXMenuButton",
+        "AXTab",
+        "AXDisclosureTriangle",
+        "AXIncrementor",
+        "AXColorWell",
+        "AXSwitch",
+    ]
+
+    static let secondaryRoles: Set<String> = [
+        "AXCell",
+        "AXRow",
+        "AXOutlineRow",
+        "AXImage",
+        "AXStaticText",
+        "AXGroup",
+    ]
+
+    static let excludedRoles: Set<String> = [
+        "AXApplication",
+        "AXWindow",
+        "AXSheet",
+        "AXDrawer",
+        "AXPopover",
+        "AXMenuBar",
+        "AXMenu",
+        "AXToolbar",
+        "AXScrollArea",
+        "AXScrollBar",
+        "AXSplitGroup",
+    ]
+
+    static let actionablePrefixes = [
+        "AXPress",
+        "AXConfirm",
+        "AXPick",
+        "AXShowMenu",
+        "AXIncrement",
+        "AXDecrement",
+        "Name:",
+    ]
+}
+
+private extension DesktopAccessibilityTreeSnapshot.Node {
+    var componentOutlineScore: Int? {
+        let role = role ?? ""
+        guard ComponentOutlineHeuristics.excludedRoles.contains(role) == false else {
+            return nil
+        }
+
+        let actionable = actions.contains { action in
+            ComponentOutlineHeuristics.actionablePrefixes.contains { action.hasPrefix($0) }
+        }
+        let hasVisibleText = [title, label, value, identifier].contains { value in
+            value?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        }
+        let focusedBoost = focused == true ? 60 : 0
+        let roleDescription = (roleDescription ?? "").lowercased()
+        let describedAsControl = [
+            "button",
+            "field",
+            "link",
+            "menu",
+            "checkbox",
+            "tab",
+            "slider",
+            "radio",
+        ].contains { roleDescription.contains($0) }
+
+        var score: Int
+        if ComponentOutlineHeuristics.primaryRoles.contains(role) {
+            score = 100
+        } else if ComponentOutlineHeuristics.secondaryRoles.contains(role), actionable || focused == true || describedAsControl {
+            score = 62
+        } else if actionable {
+            score = 55
+        } else if focused == true {
+            score = 50
+        } else if describedAsControl {
+            score = 45
+        } else {
+            return nil
+        }
+
+        if role == "AXStaticText", actionable == false, focused != true, describedAsControl == false {
+            return nil
+        }
+        if hasVisibleText {
+            score += 8
+        }
+        score += focusedBoost
+        score += min(max(depth, 0), 8)
+        return score
+    }
+}
+
+private extension CGRect {
+    var area: CGFloat {
+        guard isNull == false else { return 0 }
+        return max(0, width) * max(0, height)
+    }
+}

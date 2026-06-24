@@ -178,6 +178,11 @@ public struct DesktopContextSnapshot: Equatable, Sendable {
         return appKitFrame(forWindowBounds: window.bounds, screen: screen)
     }
 
+    public static func appKitFrame(forDisplayBounds bounds: CGRect, screen: ScreenInfo? = nil) -> CGRect? {
+        guard let screen = screen ?? screenInfo(forWindowBounds: bounds) else { return nil }
+        return appKitFrame(forWindowBounds: bounds, screen: screen)
+    }
+
     private static func activeWindow(excludingProcessIdentifier excludedPID: Int) -> WindowInfo? {
         visibleWindows(excludingProcessIdentifier: excludedPID).first
     }

@@ -6,6 +6,7 @@ public enum AnnotationMark: Equatable, Sendable {
     case dot(center: CGPoint, progress: CGFloat)
     case ring(center: CGPoint, radius: CGFloat, kind: RingKind)
     case region(center: CGPoint, radius: CGFloat)
+    case rectangle(frame: CGRect)
     case path(points: [CGPoint], shape: GroundingTag.ShapeKind)
     case partialPath(points: [CGPoint], shape: GroundingTag.ShapeKind, progress: CGFloat)
 
@@ -209,7 +210,7 @@ extension AnnotationMark {
              let .partialPath(points, shape, _):
             let length = Self.pathLength(points, closesPath: shape == .polygon)
             return TimeInterval(min(1.25, max(0.35, Double(length / 900))))
-        case .ring, .region:
+        case .ring, .region, .rectangle:
             return 0.18
         }
     }
@@ -223,7 +224,7 @@ extension AnnotationMark {
             return .partialPath(points: points, shape: shape, progress: clamped)
         case let .partialPath(points, shape, _):
             return .partialPath(points: points, shape: shape, progress: clamped)
-        case .ring, .region:
+        case .ring, .region, .rectangle:
             return clamped >= 1 ? self : self
         }
     }
@@ -313,6 +314,10 @@ final class AnnotationDrawView: NSView {
                     palette: palette(around: regionSamplePoints(center: center, radius: scaledRadius)),
                     fill: false
                 )
+            case let .rectangle(frame):
+                let rect = local(frame)
+                let palette = palette(around: rectangleSamplePoints(frame))
+                drawComponentOutline(ctx, rect: rect, palette: palette)
             case let .path(points, shape):
                 let pts = points.map(local)
                 guard let first = pts.first else { break }
@@ -369,6 +374,16 @@ final class AnnotationDrawView: NSView {
             CGPoint(x: center.x + radius, y: center.y - radius),
             CGPoint(x: center.x - radius, y: center.y + radius),
             CGPoint(x: center.x + radius, y: center.y + radius),
+        ]
+    }
+
+    private func rectangleSamplePoints(_ rect: CGRect) -> [CGPoint] {
+        [
+            CGPoint(x: rect.midX, y: rect.midY),
+            CGPoint(x: rect.minX, y: rect.minY),
+            CGPoint(x: rect.maxX, y: rect.minY),
+            CGPoint(x: rect.minX, y: rect.maxY),
+            CGPoint(x: rect.maxX, y: rect.maxY),
         ]
     }
 
@@ -446,6 +461,17 @@ final class AnnotationDrawView: NSView {
         } else {
             strokePath(ctx, path: path, color: palette.primary, width: 4 * markScale)
         }
+    }
+
+    private func drawComponentOutline(_ ctx: CGContext, rect: CGRect, palette: AnnotationPalette) {
+        let r = rect.standardized.insetBy(dx: -2 * markScale, dy: -2 * markScale)
+        let corner = min(8 * markScale, max(3 * markScale, min(r.width, r.height) * 0.12))
+        let path = CGPath(roundedRect: r, cornerWidth: corner, cornerHeight: corner, transform: nil)
+        ctx.setFillColor(palette.primary.withAlphaComponent(0.08).cgColor)
+        ctx.addPath(path)
+        ctx.fillPath()
+        strokePath(ctx, path: path, color: palette.inkBacking, width: 7 * markScale)
+        strokePath(ctx, path: path, color: palette.primary, width: 2.5 * markScale)
     }
 
     private func drawCrosshair(_ ctx: CGContext, center: CGPoint, radius: CGFloat, palette: AnnotationPalette, dashed: Bool) {
@@ -582,6 +608,15 @@ final class AnnotationDrawView: NSView {
 
     private func local(_ p: CGPoint) -> CGPoint {
         CGPoint(x: p.x - screenOrigin.x, y: p.y - screenOrigin.y)
+    }
+
+    private func local(_ rect: CGRect) -> CGRect {
+        CGRect(
+            x: rect.minX - screenOrigin.x,
+            y: rect.minY - screenOrigin.y,
+            width: rect.width,
+            height: rect.height
+        )
     }
 
     private func globalPoint(for event: NSEvent) -> CGPoint {

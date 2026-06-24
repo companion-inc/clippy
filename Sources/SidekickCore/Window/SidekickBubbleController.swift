@@ -313,6 +313,11 @@ public final class SidekickBubbleController: NSObject, NSTextViewDelegate, NSWin
 
     private enum Mode { case message, input, choices }
     private enum InputEditingCommand { case selectAll, copy, cut, paste }
+    struct BubblePlacement {
+        let origin: CGPoint
+        let size: CGSize
+        let tailEdge: SidekickBalloonStyle.TailEdge
+    }
 
     private func uiFont(_ size: CGFloat, bold: Bool = false) -> NSFont {
         SidekickBalloonStyle.font(size, bold: bold, spec: spec.balloon)
@@ -343,6 +348,8 @@ public final class SidekickBubbleController: NSObject, NSTextViewDelegate, NSWin
     private var inputDismissedByAnchorClickAt: TimeInterval?
     private static let anchorClickDismissalReplayWindow: TimeInterval = 0.35
     public static let proactiveChoiceAutoHideDelay: TimeInterval = 30
+    private static let screenInset: CGFloat = 8
+    private static let sideAnchorGap: CGFloat = 0
 
     public init(spec: SidekickSpec = .current) {
         self.spec = spec
@@ -437,8 +444,8 @@ public final class SidekickBubbleController: NSObject, NSTextViewDelegate, NSWin
 
     public func setAnchor(_ frame: CGRect, repositionVisible: Bool = true) {
         anchorFrame = frame
-        if repositionVisible, window.isVisible {
-            positionWindow()
+        if repositionVisible {
+            relayout()
         }
     }
 
@@ -857,8 +864,15 @@ public final class SidekickBubbleController: NSObject, NSTextViewDelegate, NSWin
     // MARK: - Layout (one active region; bubble grows to fit)
 
     private func relayout() {
+        let parentBeforePositioning = window.parent
+        parentBeforePositioning?.removeChildWindow(window)
+        defer {
+            if window.isVisible {
+                attachToAnchorWindow()
+            }
+        }
+
         let contentWidth = measuredContentWidth()
-        let shapeWidth = contentWidth + spec.balloon.pad * 2
 
         let messageHasText = messageText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
         let hasImageCards = mode == .message && imageCardViews.isEmpty == false
@@ -886,19 +900,26 @@ public final class SidekickBubbleController: NSObject, NSTextViewDelegate, NSWin
             contentHeight = promptHeight + (choiceButtons.isEmpty ? 0 : 7 + buttonsHeight)
         }
 
-        let shapeHeight = spec.balloon.tailHeight + spec.balloon.pad + contentHeight + spec.balloon.pad
-        let windowWidth = shapeWidth
-        let windowHeight = shapeHeight
-        let shapeOrigin = CGPoint.zero
-        let shapeSize = CGSize(width: shapeWidth, height: shapeHeight)
-        window.setContentSize(CGSize(width: windowWidth, height: windowHeight))
-        balloonLayer.frame = CGRect(origin: shapeOrigin, size: shapeSize)
-        balloonLayer.path = SidekickBalloonStyle.path(size: shapeSize, spec: spec.balloon)
+        let placement = Self.bubblePlacement(
+            anchorFrame: anchorFrame,
+            contentSize: CGSize(width: contentWidth, height: contentHeight),
+            visibleFrame: visibleFrameForAnchor(),
+            balloon: spec.balloon
+        )
+        window.setContentSize(placement.size)
+        root.frame = CGRect(origin: .zero, size: placement.size)
+        balloonLayer.frame = CGRect(origin: .zero, size: placement.size)
+        balloonLayer.path = SidekickBalloonStyle.path(
+            size: placement.size,
+            spec: spec.balloon,
+            tailEdge: placement.tailEdge,
+            tailTipPosition: tailTipPosition(for: placement)
+        )
 
-        let contentY = shapeOrigin.y + spec.balloon.tailHeight + spec.balloon.pad
+        let contentOrigin = Self.contentOrigin(for: placement.tailEdge, balloon: spec.balloon)
         let contentRect = CGRect(
-            x: shapeOrigin.x + spec.balloon.pad,
-            y: contentY,
+            x: contentOrigin.x,
+            y: contentOrigin.y,
             width: contentWidth,
             height: contentHeight
         )
@@ -942,34 +963,153 @@ public final class SidekickBubbleController: NSObject, NSTextViewDelegate, NSWin
             }
         }
 
-        positionWindow()
+        window.setFrameOrigin(placement.origin)
     }
 
-    private func positionWindow() {
-        let parentBeforePositioning = window.parent
-        parentBeforePositioning?.removeChildWindow(window)
-        defer {
-            if window.isVisible {
-                attachToAnchorWindow()
-            }
+    private func visibleFrameForAnchor() -> CGRect? {
+        let anchorCenter = CGPoint(x: anchorFrame.midX, y: anchorFrame.midY)
+        let screen = NSScreen.screens.first { $0.frame.contains(anchorCenter) } ?? NSScreen.main
+        return screen?.visibleFrame
+    }
+
+    private func tailTipPosition(for placement: BubblePlacement) -> CGFloat? {
+        switch placement.tailEdge {
+        case .bottom:
+            return nil
+        case .left, .right:
+            return anchorFrame.midY - placement.origin.y
+        }
+    }
+
+    static func bubblePlacement(
+        anchorFrame: CGRect,
+        contentSize: CGSize,
+        visibleFrame: CGRect?,
+        balloon: SidekickBalloonSpec = .current
+    ) -> BubblePlacement {
+        let bottomSize = bottomTailSize(contentSize: contentSize, balloon: balloon)
+        let preferredAbove = preferredAboveBubbleOrigin(
+            anchorFrame: anchorFrame,
+            bubbleSize: bottomSize,
+            balloon: balloon
+        )
+        guard let visibleFrame else {
+            return BubblePlacement(origin: preferredAbove, size: bottomSize, tailEdge: .bottom)
         }
 
-        let size = window.frame.size
+        let maxAboveY = visibleFrame.maxY - bottomSize.height - screenInset
+        if preferredAbove.y <= maxAboveY {
+            let origin = CGPoint(
+                x: clamped(
+                    preferredAbove.x,
+                    min: visibleFrame.minX + screenInset,
+                    max: visibleFrame.maxX - bottomSize.width - screenInset
+                ),
+                y: max(preferredAbove.y, visibleFrame.minY + screenInset)
+            )
+            return BubblePlacement(origin: origin, size: bottomSize, tailEdge: .bottom)
+        }
+
+        return sidePlacement(
+            anchorFrame: anchorFrame,
+            contentSize: contentSize,
+            visibleFrame: visibleFrame,
+            balloon: balloon
+        )
+    }
+
+    private static func sidePlacement(
+        anchorFrame: CGRect,
+        contentSize: CGSize,
+        visibleFrame: CGRect,
+        balloon: SidekickBalloonSpec
+    ) -> BubblePlacement {
+        let sideSize = sideTailSize(contentSize: contentSize, balloon: balloon)
+        let rightX = anchorFrame.maxX + sideAnchorGap
+        let leftX = anchorFrame.minX - sideSize.width - sideAnchorGap
+        let leftSpace = anchorFrame.minX - visibleFrame.minX
+        let rightSpace = visibleFrame.maxX - anchorFrame.maxX
+        let rightFits = rightX + sideSize.width <= visibleFrame.maxX - screenInset
+        let leftFits = leftX >= visibleFrame.minX + screenInset
+
+        let useRight: Bool
+        if rightFits != leftFits {
+            useRight = rightFits
+        } else {
+            useRight = rightSpace >= leftSpace
+        }
+
+        let desiredX = useRight ? rightX : leftX
+        let sideY = clamped(
+            anchorFrame.midY - sideSize.height / 2,
+            min: visibleFrame.minY + screenInset,
+            max: visibleFrame.maxY - sideSize.height - screenInset
+        )
+        let clampedX = clamped(
+            desiredX,
+            min: visibleFrame.minX + screenInset,
+            max: visibleFrame.maxX - sideSize.width - screenInset
+        )
+        let clampedFrame = CGRect(origin: CGPoint(x: clampedX, y: sideY), size: sideSize)
+        let origin = CGPoint(
+            x: clampedFrame.intersects(anchorFrame) ? desiredX : clampedX,
+            y: sideY
+        )
+
+        return BubblePlacement(
+            origin: origin,
+            size: sideSize,
+            tailEdge: useRight ? .left : .right
+        )
+    }
+
+    private static func bottomTailSize(contentSize: CGSize, balloon: SidekickBalloonSpec) -> CGSize {
+        CGSize(
+            width: contentSize.width + balloon.pad * 2,
+            height: balloon.tailHeight + balloon.pad * 2 + contentSize.height
+        )
+    }
+
+    private static func sideTailSize(contentSize: CGSize, balloon: SidekickBalloonSpec) -> CGSize {
+        CGSize(
+            width: balloon.tailHeight + balloon.pad * 2 + contentSize.width,
+            height: balloon.pad * 2 + contentSize.height
+        )
+    }
+
+    private static func contentOrigin(
+        for tailEdge: SidekickBalloonStyle.TailEdge,
+        balloon: SidekickBalloonSpec
+    ) -> CGPoint {
+        switch tailEdge {
+        case .bottom:
+            CGPoint(x: balloon.pad, y: balloon.tailHeight + balloon.pad)
+        case .left:
+            CGPoint(x: balloon.tailHeight + balloon.pad, y: balloon.pad)
+        case .right:
+            CGPoint(x: balloon.pad, y: balloon.pad)
+        }
+    }
+
+    private static func preferredAboveBubbleOrigin(
+        anchorFrame: CGRect,
+        bubbleSize size: CGSize,
+        balloon: SidekickBalloonSpec
+    ) -> CGPoint {
         let shapeOriginX: CGFloat = 0
         let shapeOriginY: CGFloat = 0
         let shapeWidth = size.width
-        let tailTipX = shapeOriginX + shapeWidth / 2 + spec.balloon.tailTipOffset
+        let tailTipX = shapeOriginX + shapeWidth / 2 + balloon.tailTipOffset
         let tailTipY = shapeOriginY + 0.5
-        var x = anchorFrame.midX - tailTipX
-        var y = anchorFrame.maxY + 4 - tailTipY
-        let anchorCenter = CGPoint(x: anchorFrame.midX, y: anchorFrame.midY)
-        let screen = NSScreen.screens.first { $0.frame.contains(anchorCenter) } ?? NSScreen.main
-        if let visible = screen?.visibleFrame {
-            x = min(max(x, visible.minX + 8), visible.maxX - size.width - 8)
-            if y + size.height > visible.maxY { y = visible.maxY - size.height - 8 }
-            y = max(y, visible.minY + 8)
-        }
-        window.setFrameOrigin(CGPoint(x: x, y: y))
+        return CGPoint(
+            x: anchorFrame.midX - tailTipX,
+            y: anchorFrame.maxY + 4 - tailTipY
+        )
+    }
+
+    private static func clamped(_ value: CGFloat, min minValue: CGFloat, max maxValue: CGFloat) -> CGFloat {
+        guard maxValue >= minValue else { return minValue }
+        return min(max(value, minValue), maxValue)
     }
 
     private func measuredContentWidth() -> CGFloat {

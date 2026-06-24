@@ -105,6 +105,9 @@ enum SidekickAnnotationMCP {
             case "clear_annotations":
                 try appendCommand("clearground")
                 sendToolText(id: id, "Cleared Sidekick annotations.")
+            case "outline_components":
+                try appendCommand("outline")
+                sendToolText(id: id, "Queued Sidekick component outlines.")
             default:
                 sendError(id: id, code: -32602, message: "Unknown tool \(name).")
             }
@@ -270,6 +273,15 @@ enum SidekickAnnotationMCP {
         [
             "name": "clear_annotations",
             "description": "Clear Sidekick's annotation overlay.",
+            "inputSchema": [
+                "type": "object",
+                "additionalProperties": false,
+                "properties": [:],
+            ],
+        ],
+        [
+            "name": "outline_components",
+            "description": "Ask the running Sidekick app to outline actionable visible UI components using Sidekick's yellow annotation overlay.",
             "inputSchema": [
                 "type": "object",
                 "additionalProperties": false,
