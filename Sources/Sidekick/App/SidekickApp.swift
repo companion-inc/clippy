@@ -437,13 +437,6 @@ final class SidekickApp: NSObject, NSApplicationDelegate {
             return
         }
         log("\(recommendationLogPrefix) ax-tree: nodes=\(accessibilityTree.nodes.count)")
-        if proactiveAutoHide == false {
-            showComponentOutlines(
-                for: accessibilityTree,
-                context: context,
-                reason: "double-click"
-            )
-        }
         lastShots = []
         lastShot = nil
         let prompt = SidekickAgentInstructions.brainMessage(

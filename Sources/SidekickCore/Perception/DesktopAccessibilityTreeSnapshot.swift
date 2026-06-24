@@ -328,7 +328,7 @@ extension DesktopAccessibilityTreeSnapshot {
                 }
                 clippedFrame = intersection
                 let screenArea = max(1, screen.appKitFrame.area)
-                guard clippedFrame.area <= screenArea * 0.45 || node.focused == true else {
+                guard clippedFrame.area <= screenArea * 0.45 else {
                     return nil
                 }
             } else {
@@ -434,6 +434,11 @@ private enum ComponentOutlineHeuristics {
         "AXScrollArea",
         "AXScrollBar",
         "AXSplitGroup",
+        "AXWebArea",
+        "AXDocument",
+        "AXBrowser",
+        "AXLayoutArea",
+        "AXLayoutItem",
     ]
 
     static let actionablePrefixes = [
@@ -476,12 +481,10 @@ private extension DesktopAccessibilityTreeSnapshot.Node {
         var score: Int
         if ComponentOutlineHeuristics.primaryRoles.contains(role) {
             score = 100
-        } else if ComponentOutlineHeuristics.secondaryRoles.contains(role), actionable || focused == true || describedAsControl {
+        } else if ComponentOutlineHeuristics.secondaryRoles.contains(role), actionable || describedAsControl {
             score = 62
         } else if actionable {
             score = 55
-        } else if focused == true {
-            score = 50
         } else if describedAsControl {
             score = 45
         } else {

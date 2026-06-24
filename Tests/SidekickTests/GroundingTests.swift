@@ -366,6 +366,66 @@ import Testing
     ])
 }
 
+@Test func accessibilityTreeComponentOutlinesRejectFocusedPageContainers() {
+    let screen = DesktopContextSnapshot.ScreenInfo(
+        index: 0,
+        appKitFrame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+        displayBounds: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+        displayIdentifier: 1
+    )
+    let tree = DesktopAccessibilityTreeSnapshot(
+        appName: "Browser",
+        bundleIdentifier: nil,
+        processIdentifier: 42,
+        nodes: [
+            .init(
+                depth: 0,
+                role: "AXWebArea",
+                subrole: nil,
+                roleDescription: "web area",
+                title: "Dashboard",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: true,
+                frame: CGRect(x: 0, y: 0, width: 1_000, height: 800),
+                actions: ["AXPress"]
+            ),
+            .init(
+                depth: 1,
+                role: "AXGroup",
+                subrole: nil,
+                roleDescription: "group",
+                title: nil,
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: true,
+                frame: CGRect(x: 80, y: 120, width: 360, height: 240),
+                actions: []
+            ),
+            .init(
+                depth: 2,
+                role: "AXButton",
+                subrole: nil,
+                roleDescription: "button",
+                title: "Continue",
+                label: nil,
+                value: nil,
+                identifier: nil,
+                focused: nil,
+                frame: CGRect(x: 120, y: 180, width: 140, height: 40),
+                actions: ["AXPress"]
+            ),
+        ],
+        issue: nil
+    )
+
+    #expect(tree.componentOutlineFrames(screen: screen, limit: 8) == [
+        CGRect(x: 120, y: 580, width: 140, height: 40),
+    ])
+}
+
 @Test func keepsMultipleTagsInDocumentOrder() {
     let parsed = GroundingParser.parse("[POINT:5,5:one] then [HIGHLIGHT:9,9,3:two]")
     #expect(parsed.tags.count == 2)
