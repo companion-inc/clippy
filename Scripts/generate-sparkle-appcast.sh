@@ -19,8 +19,8 @@ if [ ! -f "$archive_path" ]; then
   exit 1
 fi
 
-download_prefix="${SIDEKICK_DOWNLOAD_URL_PREFIX:-${CLIPPY_DOWNLOAD_URL_PREFIX:-https://github.com/companion-inc/sidekick/releases/download/$release_tag/}}"
-product_link="${SIDEKICK_PRODUCT_LINK:-${CLIPPY_PRODUCT_LINK:-https://github.com/companion-inc/sidekick/releases/latest}}"
+download_prefix="${SIDEKICK_DOWNLOAD_URL_PREFIX:-${CLIPPY_DOWNLOAD_URL_PREFIX:-https://github.com/advaitpaliwal/sidekick/releases/download/$release_tag/}}"
+product_link="${SIDEKICK_PRODUCT_LINK:-${CLIPPY_PRODUCT_LINK:-https://github.com/advaitpaliwal/sidekick/releases/latest}}"
 
 workdir="$(mktemp -d)"
 cleanup() { rm -rf "$workdir"; }
