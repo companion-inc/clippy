@@ -11,15 +11,15 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/companion-inc/sidekick/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/companion-inc/sidekick/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/companion-inc/sidekick/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/companion-inc/sidekick?sort=semver"></a>
+  <a href="https://github.com/advaitpaliwal/sidekick/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/advaitpaliwal/sidekick/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="https://github.com/advaitpaliwal/sidekick/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/advaitpaliwal/sidekick?sort=semver"></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/license-MIT-black"></a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/companion-inc/sidekick/releases/latest/download/Sidekick.dmg"><strong>Download for macOS</strong></a>
+  <a href="https://github.com/advaitpaliwal/sidekick/releases/download/v0.1.23/Clippy.dmg"><strong>Download legacy Clippy v0.1.23 for macOS</strong></a>
   ·
-  <a href="https://github.com/companion-inc/sidekick/releases/latest">Latest release</a>
+  <a href="https://github.com/advaitpaliwal/sidekick/releases/latest">Latest release</a>
   ·
   <a href="Docs/STATUS.md">Status</a>
   ·
@@ -76,17 +76,20 @@ sprite atlas, a `character.json` animation definition, and a generated
 
 ## Download
 
-Download the current macOS build:
+The available historical download is **Clippy v0.1.23** (June 19, 2026),
+not a release of the current Sidekick source:
 
 ```text
-https://github.com/companion-inc/sidekick/releases/latest/download/Sidekick.dmg
+https://github.com/advaitpaliwal/sidekick/releases/download/v0.1.23/Clippy.dmg
 ```
 
-Open the DMG, drag `Sidekick.app` into Applications, and launch it. When macOS
-blocks the first launch of a locally signed build, Control-click `Sidekick.app`,
-choose `Open`, and approve the prompt once.
+This is the existing `Clippy.dmg`, containing `Clippy.app`; it has not been
+renamed or rebuilt as Sidekick. It does not establish availability of the current
+Sidekick features described above. For the current Sidekick source, see
+[Build From Source](#build-from-source).
 
-Sidekick checks for signed updates automatically in the background. You can also
+Source-built Sidekick is configured to check for signed updates in the background.
+Changing the repository links does not publish a new app or regenerate the signed feed. You can also
 open the Sidekick menu and choose **Check for Updates...**.
 
 Sidekick asks for permissions only when the relevant feature needs them:
@@ -143,6 +146,13 @@ an existing binary, or install the Cua driver in one of the script's default
 locations.
 
 ## Developer Commands
+
+Check repository/download URLs and legacy override compatibility without
+packaging, signing, or accessing credentials:
+
+```sh
+python3 Scripts/test-repository-links.py
+```
 
 The running app listens for optional debug commands through `SIDEKICK_CMD_FILE`:
 

@@ -19,7 +19,7 @@ build_number="${SIDEKICK_BUILD_NUMBER:-${CLIPPY_BUILD_NUMBER:-${GITHUB_RUN_NUMBE
 if [ -z "$build_number" ]; then
   build_number="$(git rev-list --count HEAD 2>/dev/null || echo 1)"
 fi
-sparkle_feed_url="${SIDEKICK_SPARKLE_FEED_URL:-${CLIPPY_SPARKLE_FEED_URL:-https://github.com/companion-inc/sidekick/releases/latest/download/appcast.xml}}"
+sparkle_feed_url="${SIDEKICK_SPARKLE_FEED_URL:-${CLIPPY_SPARKLE_FEED_URL:-https://github.com/advaitpaliwal/sidekick/releases/latest/download/appcast.xml}}"
 sparkle_public_ed_key="${SIDEKICK_SPARKLE_PUBLIC_ED_KEY:-${CLIPPY_SPARKLE_PUBLIC_ED_KEY:-p/STOfduNWVMNYn1sjYX3pbM5PnywVU/8WrGUJjpoAI=}}"
 
 cd "$repo_root"
